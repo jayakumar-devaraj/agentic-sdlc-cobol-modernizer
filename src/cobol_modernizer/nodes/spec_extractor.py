@@ -49,6 +49,7 @@ from pydantic import BaseModel
 
 from cobol_modernizer.core.guardrails import InjectionFlag, prepare_untrusted_cobol_for_prompt
 from cobol_modernizer.core.model_routing import resolve_model
+from cobol_modernizer.core.source_units import iter_source_units
 from cobol_modernizer.parsing.cobol_parser import (
     Paragraph,
     extract_paragraphs,
@@ -97,21 +98,6 @@ class SpecExtractionResult(BaseModel):
     spec_markdown: str
 
 
-def _iter_source_units(resolved: ResolvedProgram) -> list[tuple[str, str]]:
-    """`(source_label, source_text)` for the program itself, then every copybook it `COPY`s.
-
-    Order matches the program's own `COPY` order (as `tenant_repo.resolve_program` preserves it),
-    so a caller iterating this list gets a stable, deterministic, source-order sequence -- the
-    same order used for both field extraction and prompt construction, which is what lets
-    `unsupported_fields`/prompt sections stay traceable to "the program itself" vs. a specific
-    named copybook.
-    """
-    units = [(resolved.program_name, resolved.source_text)]
-    for statement in resolved.copy_statements:
-        units.append((statement.copybook_name, resolved.copybook_sources[statement.copybook_name]))
-    return units
-
-
 def extract_field_mappings(
     resolved: ResolvedProgram,
 ) -> tuple[list[PicMapping], list[UnsupportedField]]:
@@ -131,7 +117,7 @@ def extract_field_mappings(
     mappings: list[PicMapping] = []
     unsupported: list[UnsupportedField] = []
 
-    for source_label, source_text in _iter_source_units(resolved):
+    for source_label, source_text in iter_source_units(resolved):
         for field in extract_working_storage_fields(source_text):
             if "PIC" not in field.raw_text.upper():
                 continue
@@ -152,16 +138,22 @@ def extract_field_mappings(
     return mappings, unsupported
 
 
-def _render_known_facts(
+def render_known_facts(
     program_name: str,
-    paragraphs: list[Paragraph],
+    paragraph_names: list[str],
     field_mappings: list[PicMapping],
     unsupported_fields: list[UnsupportedField],
 ) -> str:
-    """Render the deterministic facts block the prompt's system instructions call "Known Facts"."""
+    """Render the deterministic facts block the prompt's system instructions call "Known Facts".
+
+    Public (not `_`-prefixed) so `nodes/spec_critic.py` can re-derive the exact same Known Facts
+    block a narration was built against from `SpecExtractionResult`'s own fields, rather than a
+    second, parallel implementation that could silently drift out of sync with what
+    `spec_extractor` actually sent the model.
+    """
     lines = [f"# Known Facts for {program_name}", "", "## Paragraph flow (source order)"]
-    for paragraph in paragraphs:
-        lines.append(f"- {paragraph.name}")
+    for name in paragraph_names:
+        lines.append(f"- {name}")
 
     lines += [
         "",
@@ -198,11 +190,16 @@ def build_prompt(
     silently worked around. Injection-phrase heuristic flags, in contrast, are collected and
     returned rather than acted on; the caller (or a future human-in-the-loop gate) weighs them.
     """
-    known_facts = _render_known_facts(resolved.program_name, paragraphs, field_mappings, unsupported_fields)
+    known_facts = render_known_facts(
+        resolved.program_name,
+        [paragraph.name for paragraph in paragraphs],
+        field_mappings,
+        unsupported_fields,
+    )
 
     wrapped_sections: list[str] = []
     injection_flags: list[InjectionFlag] = []
-    for source_label, source_text in _iter_source_units(resolved):
+    for source_label, source_text in iter_source_units(resolved):
         result = prepare_untrusted_cobol_for_prompt(source_text, source_label=source_label)
         wrapped_sections.append(result.wrapped_text)
         injection_flags.extend(result.injection_flags)

@@ -13,13 +13,15 @@ was never treated as proof on its own.
 pytest --cov=cobol_modernizer --cov-report=term-missing --cov-fail-under=90
 ```
 
-As of this report: **119 tests passed, 98.17% overall coverage.**
+As of this report: **142 tests passed, 98.03% overall coverage.**
 
 | Module | Coverage |
 |---|---|
 | `cli.py` | 92% |
 | `core/guardrails.py` | 100% |
 | `core/model_routing.py` | 100% |
+| `core/source_units.py` | 100% |
+| `nodes/spec_critic.py` | 97% |
 | `nodes/spec_extractor.py` | 96% |
 | `parsing/cobol_parser.py` | 98% |
 | `prompts_registry_client/loader.py` | 100% |
@@ -30,8 +32,9 @@ As of this report: **119 tests passed, 98.17% overall coverage.**
 
 `cli.py`'s uncovered lines are the `not_implemented` skeleton branches for `design`/`generate`
 that Milestones C2–C4 replace with real logic — not a gap in what currently exists.
-`nodes/spec_extractor.py`'s uncovered lines are `_default_narrate`'s body (the real Anthropic API
-call) — see "Not yet covered" below for why, and what covers the rest of the module instead.
+`nodes/spec_extractor.py` and `nodes/spec_critic.py`'s uncovered lines are `_default_narrate`'s
+and `_default_critique`'s bodies respectively (the real Anthropic API calls) — see "Not yet
+covered" below for why, and what covers the rest of each module instead.
 
 ## Functional verification
 
@@ -152,6 +155,56 @@ are already verified against, not a synthetic stand-in:
 **Command**: `pytest tests/system/test_spec_extractor.py -v`
 **Result**: 9/9 passed.
 
+### `nodes/spec_critic.py` — real spec_extractor output for CBACT04C, faithful and corrupted
+
+**Verified**: every deterministic fidelity check, and the confidence-composition rules ADR-0007
+documents, run against a real `SpecExtractionResult` for `CBACT04C` (produced by `extract_spec`
+itself, not a hand-built stand-in) — plus a `faithful_narrate` fake that reproduces the real Known
+Facts block verbatim, and targeted `_corrupt_*` mutations of a copy of that real text so each
+negative test proves exactly one failure mode:
+
+- **Field-reference fidelity**: correctly passes the faithful narration, correctly detects a real
+  precision drift (`ACCT-CURR-BAL` narrated as precision 99 instead of the real 12) and a dropped
+  field row (`DIS-INT-RATE`). A real bug was caught while verifying this, not after: `pic_mapper`
+  always names `FILLER` fields literally `"FILLER"`, never `None` — the check's original
+  `field_name is None` guard was dead code, and `CBACT04C`'s five real `FILLER` fields (one per
+  copybook) were silently colliding under one dict key. Fixed to skip by name; a regression test
+  confirms all 5 real `FILLER` mappings exist and produce no false-positive mismatch.
+- **Paragraph coverage** and **unsupported-construct carry-forward**: correctly pass the faithful
+  narration and correctly detect a dropped paragraph mention (`1400-COMPUTE-FEES`). The
+  carry-forward check's own real limitation is confirmed directly, not assumed: every unsupported
+  field in `CBACT04C`'s two real `REDEFINES` groups cross-references its siblings' names inside
+  its own `reason` text (`cobol_parser`'s `sibling_text`), so no real field name there is ever
+  fully absent from a faithful narration to begin with — a fabricated field name isolates the
+  check's actual detection behavior instead.
+- **Confidence composition**: a mechanically-proven fidelity issue forces `overall_confidence` to
+  `0.0` even when a fake critique call returns a `0.99` score for everything — confirms the
+  deterministic check cannot be talked past. With no fidelity issues, `overall_confidence` is
+  confirmed to be the minimum (not average) of per-rule scores, and `1.0` when the critique
+  returns no rules at all.
+- **Structured-output parsing**: valid JSON, a JSON payload wrapped in a `` ```json `` fence
+  despite the prompt forbidding it, non-JSON text, a non-array response, a missing required field,
+  and an out-of-range confidence value are each confirmed to behave exactly as ADR-0007 specifies
+  — the fence is stripped, every other malformed case raises `SpecCritiqueParseError` rather than
+  being guessed past.
+- **End-to-end wiring**: `critique_spec` resolves a real, non-empty model identifier and loads the
+  real (non-stub) system prompt content, confirmed via a fake `critique` callable that captures
+  what it was called with.
+
+**Command**: `pytest tests/system/test_spec_critic.py -v`
+**Result**: 21/21 passed.
+
+### `core/source_units.py` — real CBACT04C source-unit ordering
+
+**Verified**: `iter_source_units` against the real `CBACT04C` fixture returns the program itself
+first, then its five real copybooks in real `COPY` order, each paired with its own real source
+text — extracted from `nodes/spec_extractor.py`'s own private helper once `nodes/spec_critic.py`
+needed the identical behavior (no behavior change; `spec_extractor`'s own tests still pass
+unmodified after the extraction).
+
+**Command**: `pytest tests/system/test_source_units.py -v`
+**Result**: 2/2 passed.
+
 ### CI itself — verified on GitHub, not just locally
 
 Every module above was also verified green on a **real GitHub Actions run**, not assumed from a
@@ -163,16 +216,19 @@ mermaid-diagram-parse check reused from `agentic-sdlc-control-plane`.
 
 ## Not yet covered (honest gaps, not silently skipped)
 
-- **`spec_extractor`'s real model call is untested against a live Anthropic API.** This
-  development environment has no `ANTHROPIC_API_KEY` (or equivalent) available to `_default_narrate`,
-  so it has never actually been invoked — only every deterministic step upstream of it (field
-  mapping, paragraph extraction, prompt construction, guardrail wrapping) is verified against real
-  data; every test injects a fake `narrate` in its place. This is a real gap, not a mock standing
-  in for a "done" claim — revisit once a real credential is available (Milestone C5 integration,
-  or whenever this repo is actually invoked with one), by running `extract_spec` against
-  `CBACT04C` with the default `narrate` and manually reviewing the resulting `spec.md` prose
-  against the source, the way `.claude/agents/qa.md` requires for anything a unit test can't
-  meaningfully reach.
+- **Neither `spec_extractor` nor `spec_critic`'s real model calls are tested against a live
+  Anthropic API.** This development environment has no `ANTHROPIC_API_KEY` (or equivalent)
+  available to `_default_narrate`/`_default_critique`, so neither has ever actually been invoked —
+  only every deterministic step upstream of each (field mapping, paragraph extraction, prompt
+  construction, guardrail wrapping, fidelity checks, JSON parsing) is verified against real data;
+  every test injects a fake `narrate`/`critique` in its place. This is a real gap, not a mock
+  standing in for a "done" claim — revisit once a real credential is available (Milestone C5
+  integration, or whenever this repo is actually invoked with one), by running `extract_spec` then
+  `critique_spec` against `CBACT04C` with the default callables and manually reviewing both the
+  resulting `spec.md` prose and the critic's per-rule scores against the source, the way
+  `.claude/agents/qa.md` requires for anything a unit test can't meaningfully reach. This also
+  means ADR-0004's own deferred question — whether `spec_critic`'s cheaper model tier holds up
+  empirically once real critiques exist — is still unanswered.
 - **Auditing/provenance** (`CLAUDE.md`'s stated concern: every generated artifact traces back to
   the exact COBOL source line it came from) is now source-label-precise (every fact
   `spec_extractor` emits names the exact program or copybook it came from) but not yet
