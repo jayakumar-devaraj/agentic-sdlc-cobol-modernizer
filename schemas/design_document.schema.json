@@ -1,0 +1,385 @@
+{
+  "$defs": {
+    "GateItem": {
+      "description": "One fact a human (via control-plane's gate) should look at before approving `design.json`.\n\n`summary` is a short, skimmable one-liner; `detail` carries the full context (the original\nexception message, fidelity-check finding, rationale, or matched text) -- a reviewer scanning\n`gate_items` reads summaries first, then opens `detail` on whichever ones warrant it.",
+      "properties": {
+        "category": {
+          "enum": [
+            "unsupported_construct",
+            "fidelity_issue",
+            "low_confidence_rule",
+            "injection_flag"
+          ],
+          "title": "Category",
+          "type": "string"
+        },
+        "detail": {
+          "title": "Detail",
+          "type": "string"
+        },
+        "program_name": {
+          "title": "Program Name",
+          "type": "string"
+        },
+        "summary": {
+          "title": "Summary",
+          "type": "string"
+        }
+      },
+      "required": [
+        "category",
+        "program_name",
+        "summary",
+        "detail"
+      ],
+      "title": "GateItem",
+      "type": "object"
+    },
+    "InjectionFlag": {
+      "description": "One best-effort heuristic match of a classic prompt-injection phrasing.\n\nThis is defense-in-depth, not a guarantee -- see the module docstring. `pattern` names which\nheuristic matched (not a specific regex, which is an implementation detail); `matched_text`\nand `line_number` are provided so a caller (or a human reviewing a flagged gate item) can see\nexactly what triggered the flag without re-scanning the source themselves.",
+      "properties": {
+        "line_number": {
+          "title": "Line Number",
+          "type": "integer"
+        },
+        "matched_text": {
+          "title": "Matched Text",
+          "type": "string"
+        },
+        "pattern": {
+          "title": "Pattern",
+          "type": "string"
+        }
+      },
+      "required": [
+        "pattern",
+        "matched_text",
+        "line_number"
+      ],
+      "title": "InjectionFlag",
+      "type": "object"
+    },
+    "PicFieldType": {
+      "description": "What kind of Java shape a PIC clause maps to.",
+      "enum": [
+        "numeric",
+        "alphanumeric"
+      ],
+      "title": "PicFieldType",
+      "type": "string"
+    },
+    "PicMapping": {
+      "description": "Deterministic result of mapping one COBOL field declaration's PIC clause.\n\nFor `field_type == ALPHANUMERIC`, `precision`/`scale` are `None` and `java_type` is\n`\"String\"` -- callers must not treat an alphanumeric field as a `BigDecimal` candidate.",
+      "properties": {
+        "field_name": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Field Name"
+        },
+        "field_type": {
+          "$ref": "#/$defs/PicFieldType"
+        },
+        "java_type": {
+          "title": "Java Type",
+          "type": "string"
+        },
+        "precision": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Precision"
+        },
+        "raw_pic": {
+          "title": "Raw Pic",
+          "type": "string"
+        },
+        "scale": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Scale"
+        },
+        "signed": {
+          "default": false,
+          "title": "Signed",
+          "type": "boolean"
+        },
+        "source_text": {
+          "title": "Source Text",
+          "type": "string"
+        },
+        "string_length": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "String Length"
+        },
+        "usage": {
+          "$ref": "#/$defs/UsageClause",
+          "default": "DISPLAY"
+        }
+      },
+      "required": [
+        "raw_pic",
+        "field_type",
+        "java_type",
+        "source_text"
+      ],
+      "title": "PicMapping",
+      "type": "object"
+    },
+    "ProgramDesignEntry": {
+      "description": "One program's full `spec_extractor` + `spec_critic` output, as it goes into `design.json`.",
+      "properties": {
+        "critique": {
+          "$ref": "#/$defs/SpecCritiqueResult"
+        },
+        "program_name": {
+          "title": "Program Name",
+          "type": "string"
+        },
+        "spec_extraction": {
+          "$ref": "#/$defs/SpecExtractionResult"
+        }
+      },
+      "required": [
+        "program_name",
+        "spec_extraction",
+        "critique"
+      ],
+      "title": "ProgramDesignEntry",
+      "type": "object"
+    },
+    "RuleConfidence": {
+      "description": "One claim from `spec.md`, independently scored against the real COBOL source.\n\n`rule` is a self-contained restatement of the claim (not just \"see spec.md line N\") so it's\nidentifiable without cross-referencing the narration again. `confidence` is in `[0.0, 1.0]`.",
+      "properties": {
+        "confidence": {
+          "title": "Confidence",
+          "type": "number"
+        },
+        "rationale": {
+          "title": "Rationale",
+          "type": "string"
+        },
+        "rule": {
+          "title": "Rule",
+          "type": "string"
+        }
+      },
+      "required": [
+        "rule",
+        "confidence",
+        "rationale"
+      ],
+      "title": "RuleConfidence",
+      "type": "object"
+    },
+    "SpecCritiqueResult": {
+      "description": "Everything `spec_critic` produces for one program's `spec_extractor` output.\n\n`overall_confidence` is `0.0` whenever `fidelity_issues` is non-empty, regardless of\n`rule_confidence` -- see the module docstring's decision (1). Otherwise it is the minimum of\n`rule_confidence`'s scores (decision (2)), or `1.0` if the critic model found no checkable\nrules at all (an empty spec has nothing to be unconfident about, which is itself something\n`fidelity_issues`' paragraph-coverage check would already have caught if it were a defect).",
+      "properties": {
+        "fidelity_issues": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Fidelity Issues",
+          "type": "array"
+        },
+        "overall_confidence": {
+          "title": "Overall Confidence",
+          "type": "number"
+        },
+        "program_name": {
+          "title": "Program Name",
+          "type": "string"
+        },
+        "rule_confidence": {
+          "items": {
+            "$ref": "#/$defs/RuleConfidence"
+          },
+          "title": "Rule Confidence",
+          "type": "array"
+        }
+      },
+      "required": [
+        "program_name",
+        "fidelity_issues",
+        "rule_confidence",
+        "overall_confidence"
+      ],
+      "title": "SpecCritiqueResult",
+      "type": "object"
+    },
+    "SpecExtractionResult": {
+      "description": "Everything `spec_extractor` produces for one program.\n\n`spec_markdown` is the model's narration; every other field is deterministic and independent\nof it -- a caller that only needs the field/paragraph facts (e.g. `spec_critic`, checking\nextraction quality) does not need to re-derive them from `spec_markdown` prose.",
+      "properties": {
+        "field_mappings": {
+          "items": {
+            "$ref": "#/$defs/PicMapping"
+          },
+          "title": "Field Mappings",
+          "type": "array"
+        },
+        "injection_flags": {
+          "items": {
+            "$ref": "#/$defs/InjectionFlag"
+          },
+          "title": "Injection Flags",
+          "type": "array"
+        },
+        "paragraph_names": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Paragraph Names",
+          "type": "array"
+        },
+        "program_name": {
+          "title": "Program Name",
+          "type": "string"
+        },
+        "spec_markdown": {
+          "title": "Spec Markdown",
+          "type": "string"
+        },
+        "unsupported_fields": {
+          "items": {
+            "$ref": "#/$defs/UnsupportedField"
+          },
+          "title": "Unsupported Fields",
+          "type": "array"
+        }
+      },
+      "required": [
+        "program_name",
+        "paragraph_names",
+        "field_mappings",
+        "unsupported_fields",
+        "injection_flags",
+        "spec_markdown"
+      ],
+      "title": "SpecExtractionResult",
+      "type": "object"
+    },
+    "UnsupportedField": {
+      "description": "One field declaration `pic_mapper` refused to map deterministically.\n\nPer ADR-0002, `REDEFINES`/`OCCURS ... DEPENDING ON` (`UnsupportedPicConstructError`) and any\n`PIC` clause `pic_mapper` cannot resolve without guessing (`ValueError`) are both caught here,\none field at a time -- see the module docstring. `reason` is the caught exception's own\nmessage, verbatim, so a human reviewing this as a gate item sees exactly why without\nre-deriving it themselves.",
+      "properties": {
+        "field_name": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Field Name"
+        },
+        "raw_text": {
+          "title": "Raw Text",
+          "type": "string"
+        },
+        "reason": {
+          "title": "Reason",
+          "type": "string"
+        },
+        "source_label": {
+          "title": "Source Label",
+          "type": "string"
+        }
+      },
+      "required": [
+        "source_label",
+        "field_name",
+        "raw_text",
+        "reason"
+      ],
+      "title": "UnsupportedField",
+      "type": "object"
+    },
+    "UsageClause": {
+      "description": "COBOL `USAGE` clauses this module can identify.\n\n`DISPLAY` is COBOL's implicit default when no `USAGE` clause is present (zoned decimal for\nnumeric fields) -- it is not itself evidence that a `USAGE` clause was written.",
+      "enum": [
+        "DISPLAY",
+        "COMP",
+        "COMP-1",
+        "COMP-2",
+        "COMP-3",
+        "BINARY"
+      ],
+      "title": "UsageClause",
+      "type": "string"
+    }
+  },
+  "description": "The `design.json` contract: everything control-plane's gate needs to review one `design`\ninvocation across every program it covered.\n\nSee the module docstring for why `unified_design` is untyped. Build this via\n`build_design_document`, not by hand, so `gate_items` can never go stale relative to\n`programs`.",
+  "properties": {
+    "gate_items": {
+      "items": {
+        "$ref": "#/$defs/GateItem"
+      },
+      "title": "Gate Items",
+      "type": "array"
+    },
+    "generated_at": {
+      "format": "date-time",
+      "title": "Generated At",
+      "type": "string"
+    },
+    "programs": {
+      "items": {
+        "$ref": "#/$defs/ProgramDesignEntry"
+      },
+      "title": "Programs",
+      "type": "array"
+    },
+    "schema_version": {
+      "default": "1.0.0",
+      "title": "Schema Version",
+      "type": "string"
+    },
+    "unified_design": {
+      "anyOf": [
+        {
+          "additionalProperties": true,
+          "type": "object"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Unified Design"
+    }
+  },
+  "required": [
+    "generated_at",
+    "programs",
+    "gate_items"
+  ],
+  "title": "DesignDocument",
+  "type": "object"
+}

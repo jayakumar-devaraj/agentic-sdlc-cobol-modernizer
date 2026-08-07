@@ -1,0 +1,223 @@
+"""Tests for core/contracts.py against real spec_extractor/spec_critic output for CBACT04C.
+
+Uses the hand-verified golden fixture (`tests/fixtures/golden/CBACT04C/spec.md`) as the real
+extraction to build gate items from -- not synthetic data -- so `build_gate_items`'s real counts
+(9 unsupported-construct items, from the two real REDEFINES groups) are checked against a fixture
+already independently verified in `test_golden_fixture.py`, not invented for this test alone.
+"""
+
+from __future__ import annotations
+
+import json
+from pathlib import Path
+
+import pytest
+
+from cobol_modernizer.core.contracts import (
+    LOW_CONFIDENCE_THRESHOLD,
+    SCHEMA_VERSION,
+    DesignCliResult,
+    DesignDocument,
+    GateItem,
+    GenerateCliResult,
+    ProgramDesignEntry,
+    build_design_document,
+    build_gate_items,
+)
+from cobol_modernizer.nodes.spec_critic import critique_spec
+from cobol_modernizer.nodes.spec_extractor import SpecExtractionResult, extract_field_mappings
+from cobol_modernizer.parsing.cobol_parser import extract_paragraphs
+from cobol_modernizer.tools.tenant_repo import resolve_program
+
+FIXTURE_ROOT = Path(__file__).parent.parent / "fixtures" / "tenant_repo_sample"
+GOLDEN_SPEC_MD = Path(__file__).parent.parent / "fixtures" / "golden" / "CBACT04C" / "spec.md"
+
+
+@pytest.fixture(scope="module")
+def golden_extraction() -> SpecExtractionResult:
+    resolved = resolve_program(FIXTURE_ROOT, "CBACT04C")
+    paragraphs = extract_paragraphs(resolved.source_text)
+    field_mappings, unsupported_fields = extract_field_mappings(resolved)
+    return SpecExtractionResult(
+        program_name="CBACT04C",
+        paragraph_names=[p.name for p in paragraphs],
+        field_mappings=field_mappings,
+        unsupported_fields=unsupported_fields,
+        injection_flags=[],
+        spec_markdown=GOLDEN_SPEC_MD.read_text(encoding="utf-8"),
+    )
+
+
+def _entry_with_rule_scores(extraction: SpecExtractionResult, scores: list[float]) -> ProgramDesignEntry:
+    def fake_critique(model, system_prompt, user_content):
+        return json.dumps(
+            [{"rule": f"rule {i}", "confidence": score, "rationale": f"r{i}"} for i, score in enumerate(scores)]
+        )
+
+    critique = critique_spec(FIXTURE_ROOT, extraction, critique=fake_critique)
+    return ProgramDesignEntry(program_name="CBACT04C", spec_extraction=extraction, critique=critique)
+
+
+# --- build_gate_items: real unsupported-construct and injection-flag counts -------------------
+
+
+def test_build_gate_items_surfaces_every_real_unsupported_field(golden_extraction):
+    entry = _entry_with_rule_scores(golden_extraction, [0.95])
+    items = build_gate_items([entry])
+
+    unsupported_items = [i for i in items if i.category == "unsupported_construct"]
+    assert len(unsupported_items) == 9
+    assert all(i.program_name == "CBACT04C" for i in unsupported_items)
+    field_names = {i.summary for i in unsupported_items}
+    assert any("TWO-BYTES-LEFT" in name for name in field_names)
+
+
+def test_build_gate_items_finds_no_injection_flags_in_real_source(golden_extraction):
+    entry = _entry_with_rule_scores(golden_extraction, [0.95])
+    items = build_gate_items([entry])
+    assert [i for i in items if i.category == "injection_flag"] == []
+
+
+def test_build_gate_items_surfaces_a_present_injection_flag(golden_extraction):
+    # Real CBACT04C source triggers zero injection flags (test above) -- this exercises the
+    # injection_flag branch directly with a fabricated flag, the same style as
+    # test_guardrails.py's own adversarial synthetic cases for the heuristic scan itself.
+    from cobol_modernizer.core.guardrails import InjectionFlag
+
+    flagged_extraction = golden_extraction.model_copy(
+        update={
+            "injection_flags": [
+                InjectionFlag(pattern="ignore_instructions", matched_text="ignore all previous instructions", line_number=42)
+            ]
+        }
+    )
+    entry = _entry_with_rule_scores(flagged_extraction, [0.95])
+    items = build_gate_items([entry])
+
+    injection_items = [i for i in items if i.category == "injection_flag"]
+    assert len(injection_items) == 1
+    assert injection_items[0].program_name == "CBACT04C"
+    assert "ignore_instructions" in injection_items[0].summary
+    assert "line 42" in injection_items[0].detail
+
+
+def test_build_gate_items_has_no_fidelity_issues_for_the_fidelity_clean_golden_fixture(golden_extraction):
+    entry = _entry_with_rule_scores(golden_extraction, [0.95])
+    items = build_gate_items([entry])
+    assert [i for i in items if i.category == "fidelity_issue"] == []
+
+
+# --- build_gate_items: low-confidence rule threshold -------------------------------------------
+
+
+def test_build_gate_items_flags_rules_below_threshold_only(golden_extraction):
+    scores = [0.95, 0.5, LOW_CONFIDENCE_THRESHOLD, LOW_CONFIDENCE_THRESHOLD - 0.01, 0.1]
+    entry = _entry_with_rule_scores(golden_extraction, scores)
+    items = build_gate_items([entry])
+
+    low_confidence_items = [i for i in items if i.category == "low_confidence_rule"]
+    # 0.5, 0.1, and (threshold - 0.01) are strictly below the threshold; 0.95 and the threshold
+    # value itself are not (a score exactly at the threshold is not "below" it).
+    assert len(low_confidence_items) == 3
+
+
+def test_build_gate_items_has_no_fidelity_or_low_confidence_items_when_clean_and_confident(
+    golden_extraction,
+):
+    # CBACT04C's own two real REDEFINES groups always produce 9 real unsupported_construct
+    # items, regardless of confidence -- a REDEFINES field genuinely always needs human review.
+    # "Clean and confident" here means no fidelity_issue/low_confidence_rule/injection_flag
+    # items, not zero items overall.
+    entry = _entry_with_rule_scores(golden_extraction, [0.9, 0.95, 1.0])
+    items = build_gate_items([entry])
+    assert [i for i in items if i.category != "unsupported_construct"] == []
+    assert len(items) == 9
+
+
+def test_build_gate_items_surfaces_a_real_fidelity_issue():
+    # A deliberately corrupted narration (dropped paragraph mention) produces a real
+    # fidelity_issue via spec_critic, which must show up as its own GateItem, not just a
+    # zeroed-out overall_confidence a reviewer could miss. "0200-DISCGRP-OPEN" appears exactly
+    # once in the golden fixture (its own heading, confirmed via `grep -c`), unlike
+    # "1400-COMPUTE-FEES" which is also mentioned in prose elsewhere -- so removing this one
+    # heading genuinely makes the paragraph name absent from the whole document, the real
+    # condition check_paragraph_coverage's substring check looks for.
+    resolved = resolve_program(FIXTURE_ROOT, "CBACT04C")
+    paragraphs = extract_paragraphs(resolved.source_text)
+    field_mappings, unsupported_fields = extract_field_mappings(resolved)
+    corrupted_markdown = GOLDEN_SPEC_MD.read_text(encoding="utf-8").replace(
+        "### 0200-DISCGRP-OPEN", "### DROPPED"
+    )
+    extraction = SpecExtractionResult(
+        program_name="CBACT04C",
+        paragraph_names=[p.name for p in paragraphs],
+        field_mappings=field_mappings,
+        unsupported_fields=unsupported_fields,
+        injection_flags=[],
+        spec_markdown=corrupted_markdown,
+    )
+
+    def fake_critique(model, system_prompt, user_content):
+        return json.dumps([{"rule": "x", "confidence": 0.99, "rationale": "y"}])
+
+    critique = critique_spec(FIXTURE_ROOT, extraction, critique=fake_critique)
+    assert critique.fidelity_issues != []  # sanity: the corruption really was caught
+    entry = ProgramDesignEntry(program_name="CBACT04C", spec_extraction=extraction, critique=critique)
+
+    items = build_gate_items([entry])
+    fidelity_items = [i for i in items if i.category == "fidelity_issue"]
+    assert len(fidelity_items) == len(critique.fidelity_issues)
+    assert any("0200-DISCGRP-OPEN" in i.detail for i in fidelity_items)
+
+
+# --- build_design_document: gate_items always derived, never stale ----------------------------
+
+
+def test_build_design_document_derives_gate_items_from_programs(golden_extraction):
+    entry = _entry_with_rule_scores(golden_extraction, [0.1])
+    document = build_design_document([entry])
+
+    assert document.schema_version == SCHEMA_VERSION
+    assert document.programs == [entry]
+    assert document.gate_items == build_gate_items([entry])
+    assert document.unified_design is None
+
+
+def test_design_document_round_trips_through_json(golden_extraction):
+    entry = _entry_with_rule_scores(golden_extraction, [0.95])
+    document = build_design_document([entry])
+
+    raw = document.model_dump_json()
+    restored = DesignDocument.model_validate_json(raw)
+    assert restored == document
+
+
+# --- CLI result contracts -----------------------------------------------------------------------
+
+
+def test_design_cli_result_reports_facts_not_gate_policy():
+    result = DesignCliResult(
+        status="ok",
+        programs=["CBACT04C"],
+        output_path="/tmp/design.json",
+        gate_item_count=9,
+        detail="wrote design.json",
+    )
+    assert result.phase == "design"
+    # No "gate_required"/"blocked" status exists on this model at all -- see ADR-0008 decision 3.
+    assert result.status in ("ok", "error")
+
+
+def test_generate_cli_result_minimal_shape():
+    result = GenerateCliResult(status="ok", output_path="/tmp/out", detail="done")
+    assert result.phase == "generate"
+
+
+def test_gate_item_requires_a_known_category():
+    with pytest.raises(ValueError, match="category"):
+        GateItem(
+            category="not_a_real_category",
+            program_name="CBACT04C",
+            summary="x",
+            detail="y",
+        )

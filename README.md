@@ -25,9 +25,12 @@ the specialist nodes below land incrementally across Milestones C2–C4 (tracked
 Today the CLI skeleton and every tool the first two `design`-phase nodes depend on (`parsing/`,
 `pic_mapper`, `tenant_repo`, `guardrails`, `knowledge_store`, `model_routing`, `source_units`) are
 real and independently tested, and `spec_extractor` + `spec_critic` are both implemented and
-verified standalone against real CardDemo source (`docs/qa/verification-report.md`) — but neither
-is wired into the CLI's `design` subcommand yet (Milestone C3, plan step 36). The diagrams below
-describe the target composition, not yet an end-to-end running pipeline.
+verified standalone against real CardDemo source (`docs/qa/verification-report.md`). The
+`design.json` contract itself — including `gate_items`, the concrete payload control-plane's gate
+reviews (see "How human review actually happens" below) — is also real and schema-checked
+(`core/contracts.py`, `schemas/*.schema.json`, ADR-0008). None of this is wired into the CLI's
+`design` subcommand yet (Milestone C3, plan step 36), so there is no end-to-end run today — the
+diagrams below describe the target composition, verified piece by piece as each lands.
 
 ### How this repo fits in the platform
 
@@ -111,6 +114,34 @@ an open-ended one — a third failed compile returns a result to control-plane r
 forever. `design.json` must be fully self-contained (ADR-0003): invocation 2 has no access to
 anything invocation 1 reasoned about that isn't written into that file.
 
+### How human review actually happens (the HITL story, in one place)
+
+This repo has **no** human-in-the-loop gate of its own, and that's a deliberate strength, not a
+missing feature — a gate needs to be durable (survive a crash, not just this bounded subprocess),
+sit at a complete checkpoint boundary, and never be judged by the same component that produced the
+work. `agentic-sdlc-control-plane` already has all three: a Postgres-checkpointed graph, 5
+`interrupt()`-backed gate types, and a hash-chained audit log. Building a second, weaker version of
+that here would be exactly the "second control plane" `docs/adr/0001` exists to prevent.
+
+What this repo *does* own is making sure that gate has something real to review:
+
+1. `spec_extractor` and `spec_critic` never guess past an ambiguous case — a `REDEFINES` field is
+   flagged (`docs/adr/0002`, `docs/adr/0006`), a narration defect forces confidence to `0.0`
+   rather than being averaged away (`docs/adr/0007`), a prompt-injection heuristic match is
+   surfaced, never silently acted on.
+2. `core/contracts.py`'s `build_gate_items()` consolidates all four of those signal types, across
+   every program in one `design` run, into one `gate_items` list in `design.json`
+   (`docs/adr/0008`) — a human reviewing the gate reads one list, not four separate structures per
+   program.
+3. This repo never decides what happens next with a gate item. No approve/reject, no blocking —
+   `gate_items` states facts; whether `gate_item_count > 0` pauses anything is control-plane's gate
+   policy, decided over there, not baked into this repo's CLI contract.
+
+`design.json`'s full shape (and the CLI's own summary-only stdout contract, `DesignCliResult`) is
+formally schema'd — `schemas/design_document.schema.json`, generated from the Pydantic models and
+checked for drift in CI (`tests/system/test_schemas.py`), so an external consumer never has to
+trust a hand-written copy of the contract.
+
 ### What this design deliberately doesn't buy
 
 - **No resume mid-pipeline.** A crash during this repo's own invocation loses that invocation's
@@ -155,7 +186,7 @@ compile.
 ./.venv/Scripts/python -m pytest --cov=cobol_modernizer --cov-report=term-missing --cov-fail-under=90
 ```
 
-149 tests passing, 98% coverage as of this change — the number a real run produces, not a claim.
+164 tests passing, 98% coverage as of this change — the number a real run produces, not a claim.
 Some tests (`tools/knowledge_store.py`'s) need the local Postgres+pgvector instance above; they
 skip with a clear reason rather than failing if it isn't running, and CI runs them for real against
 its own service container rather than letting them skip silently there too.
