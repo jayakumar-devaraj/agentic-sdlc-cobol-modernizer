@@ -21,6 +21,25 @@ The three roles this file refers to are defined as executable agents in
   commit is invisible work. Do not wait to be asked, and do not accumulate a backlog because a
   brief said "ask before pushing" — ask once, early, then keep the remote current.
 
+## Branching and pull-request workflow
+
+**Every task gets its own branch off `main`, goes through a PR, and gets merged before the next
+task starts — never commit directly to `main`.** Verified against this platform's actual practice,
+not assumed: `agentic-sdlc-control-plane`'s real history is 8 merged PRs, zero direct-to-main
+commits. This repo's first several tasks (through the guardrails module) went straight to `main`
+before this was caught and corrected on 2026-08-07 — not retroactively rewritten, since rewriting
+already-pushed history is its own risk, but every task from that point on follows this.
+
+- Branch name: `<type>/<short-kebab-description>` — `feature/`, `fix/`, or `chore/`, matching the
+  exact prefixes control-plane's real branches use.
+- Implement and test on the branch, following the commit discipline above unchanged (small,
+  real-tested, honestly-described commits; push the branch after every commit — the "push after
+  every commit" rule applies to the branch, not just to `main`).
+- Open a PR once the branch is ready. Verify CI is green **on the PR**, not just on a local run.
+- Merge via a real merge commit (not squash, not rebase — matches control-plane's actual merge
+  history), then delete the branch.
+- Only then start the next task.
+
 ## Self-check before continuing
 
 Periodically ask: **"Would someone looking only at GitHub right now see what I have actually
