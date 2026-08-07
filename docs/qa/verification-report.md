@@ -13,13 +13,15 @@ was never treated as proof on its own.
 pytest --cov=cobol_modernizer --cov-report=term-missing --cov-fail-under=90
 ```
 
-As of this report: **149 tests passed, 98.03% overall coverage.**
+As of this report: **164 tests passed, 98.20% overall coverage.**
 
 | Module | Coverage |
 |---|---|
 | `cli.py` | 92% |
+| `core/contracts.py` | 100% |
 | `core/guardrails.py` | 100% |
 | `core/model_routing.py` | 100% |
+| `core/schema_export.py` | 100% |
 | `core/source_units.py` | 100% |
 | `nodes/spec_critic.py` | 97% |
 | `nodes/spec_extractor.py` | 96% |
@@ -231,6 +233,47 @@ exist), so this closes the gate for `CBACT04C` specifically, not the full four-p
 
 **Command**: `pytest tests/system/test_golden_fixture.py -v`
 **Result**: 7/7 passed.
+
+### `core/contracts.py` — `gate_items` against real CBACT04C spec + critique output
+
+**Verified**: `build_gate_items` against a real `ProgramDesignEntry` built from the golden
+`CBACT04C` extraction and a real `critique_spec` run (fake `critique` callable, per this repo's
+established pattern):
+
+- All 9 of `CBACT04C`'s real unsupported fields surface as `unsupported_construct` gate items
+  regardless of how confident the critique is — confirmed a `REDEFINES` field always needs human
+  review, never suppressed by a high confidence score elsewhere in the same program.
+- A deliberately corrupted narration (a dropped paragraph heading, `0200-DISCGRP-OPEN` — chosen
+  because `grep -c` confirmed it appears exactly once in the golden fixture, unlike paragraph
+  names also mentioned in prose) produces a real `spec_critic` fidelity issue, which surfaces as
+  its own `fidelity_issue` gate item — confirmed a reviewer sees *what* is wrong, not just a
+  zeroed `overall_confidence` they could miss.
+- The `0.7` low-confidence threshold (`LOW_CONFIDENCE_THRESHOLD`) correctly separates rule scores
+  at `0.95`/exactly `0.7` (not flagged) from `0.5`/`0.69`/`0.1` (flagged) — confirmed the boundary
+  is "strictly below," not "at or below."
+- The real 9 unsupported-construct items and zero real injection flags from `CBACT04C`'s actual
+  source are both confirmed directly, plus a fabricated `InjectionFlag` exercises the
+  `injection_flag` gate-item path itself (real source triggers none, so this path needed a
+  synthetic case to reach at all — same style as `test_guardrails.py`'s own adversarial cases).
+- `build_design_document` is confirmed to derive `gate_items` from `programs` (never passed
+  separately, so the two can't go stale relative to each other), and `DesignDocument` round-trips
+  losslessly through `model_dump_json()`/`model_validate_json()`.
+
+**Command**: `pytest tests/system/test_contracts.py -v`
+**Result**: 12/12 passed.
+
+### `schemas/*.schema.json` — generated from the live Pydantic models, drift-checked
+
+**Verified**: every committed schema file is confirmed to match `core/contracts.py`'s models
+exactly, generated fresh at test time via the same `core/schema_export.py` mapping
+`scripts/generate_schemas.py` uses (so the generator and the test can't independently drift from
+each other about which models get a schema). The drift check was confirmed to actually catch a
+real mismatch, not just tautologically pass: `schemas/design_cli_result.schema.json` was hand-corrupted
+to `{"tampered": true}`, the test was re-run and failed with a clear message naming the stale file,
+then the real file was regenerated via `scripts/generate_schemas.py` and the test passed again.
+
+**Command**: `pytest tests/system/test_schemas.py -v`
+**Result**: 3/3 passed.
 
 ### CI itself — verified on GitHub, not just locally
 
