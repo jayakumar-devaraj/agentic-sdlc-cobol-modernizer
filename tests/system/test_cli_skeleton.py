@@ -86,3 +86,47 @@ def test_generate_reports_not_implemented_honestly(capsys):
     assert exit_code == 1
     assert payload["status"] == "not_implemented"
     assert payload["phase"] == "generate"
+
+
+# --- Logging goes to stderr, never corrupts the --json stdout contract ---------------------
+
+
+def test_logging_never_pollutes_the_json_stdout_contract(capsys):
+    # main() configures logging fresh on every call, so this doesn't depend on ordering with
+    # other tests. Real assertion: stdout, byte for byte, is valid JSON and nothing else -- a
+    # log line leaking onto stdout would break any caller (chiefly control-plane) parsing this
+    # CLI's output programmatically, per cli.py's own docstring contract.
+    main(
+        [
+            "design",
+            "--programs",
+            "CBACT04C",
+            "--tenant-repo",
+            "/tmp/tenant",
+            "--output",
+            "/tmp/out",
+            "--json",
+        ]
+    )
+    captured = capsys.readouterr()
+    json.loads(captured.out)  # raises if stdout is not exactly one clean JSON value
+
+
+def test_logging_writes_invocation_lifecycle_to_stderr(capsys):
+    main(
+        [
+            "design",
+            "--programs",
+            "CBACT04C",
+            "--tenant-repo",
+            "/tmp/tenant",
+            "--output",
+            "/tmp/out",
+            "--json",
+        ]
+    )
+    captured = capsys.readouterr()
+    assert "invocation started" in captured.err
+    assert "command=design" in captured.err
+    assert "invocation finished" in captured.err
+    assert "status=not_implemented" in captured.err

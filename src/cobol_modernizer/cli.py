@@ -15,7 +15,12 @@ from __future__ import annotations
 
 import argparse
 import json
+import logging
 import sys
+
+from cobol_modernizer.telemetry.logging_config import configure_logging
+
+logger = logging.getLogger(__name__)
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -52,10 +57,14 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def main(argv: list[str] | None = None) -> int:
+    configure_logging()
     parser = build_parser()
     args = parser.parse_args(argv)
 
+    logger.info("invocation started: command=%s tenant_repo=%s", args.command, args.tenant_repo)
+
     if args.command == "design":
+        logger.info("design phase: programs=%s", args.programs)
         result = {
             "status": "not_implemented",
             "phase": "design",
@@ -63,6 +72,7 @@ def main(argv: list[str] | None = None) -> int:
             "detail": "Sub-pipeline lands in Milestones C2-C3; this is the Milestone C1 skeleton.",
         }
     elif args.command == "generate":
+        logger.info("generate phase: design_file=%s", args.design)
         result = {
             "status": "not_implemented",
             "phase": "generate",
@@ -70,6 +80,8 @@ def main(argv: list[str] | None = None) -> int:
         }
     else:
         return 0
+
+    logger.info("invocation finished: command=%s status=%s", args.command, result["status"])
 
     if args.json:
         print(json.dumps(result))
