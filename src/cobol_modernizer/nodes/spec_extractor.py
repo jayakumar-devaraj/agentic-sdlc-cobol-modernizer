@@ -49,6 +49,7 @@ from pydantic import BaseModel
 
 from cobol_modernizer.core.guardrails import InjectionFlag, prepare_untrusted_cobol_for_prompt
 from cobol_modernizer.core.model_routing import resolve_model
+from cobol_modernizer.core.source_units import iter_source_units
 from cobol_modernizer.parsing.cobol_parser import (
     Paragraph,
     extract_paragraphs,
@@ -97,21 +98,6 @@ class SpecExtractionResult(BaseModel):
     spec_markdown: str
 
 
-def _iter_source_units(resolved: ResolvedProgram) -> list[tuple[str, str]]:
-    """`(source_label, source_text)` for the program itself, then every copybook it `COPY`s.
-
-    Order matches the program's own `COPY` order (as `tenant_repo.resolve_program` preserves it),
-    so a caller iterating this list gets a stable, deterministic, source-order sequence -- the
-    same order used for both field extraction and prompt construction, which is what lets
-    `unsupported_fields`/prompt sections stay traceable to "the program itself" vs. a specific
-    named copybook.
-    """
-    units = [(resolved.program_name, resolved.source_text)]
-    for statement in resolved.copy_statements:
-        units.append((statement.copybook_name, resolved.copybook_sources[statement.copybook_name]))
-    return units
-
-
 def extract_field_mappings(
     resolved: ResolvedProgram,
 ) -> tuple[list[PicMapping], list[UnsupportedField]]:
@@ -131,7 +117,7 @@ def extract_field_mappings(
     mappings: list[PicMapping] = []
     unsupported: list[UnsupportedField] = []
 
-    for source_label, source_text in _iter_source_units(resolved):
+    for source_label, source_text in iter_source_units(resolved):
         for field in extract_working_storage_fields(source_text):
             if "PIC" not in field.raw_text.upper():
                 continue
@@ -202,7 +188,7 @@ def build_prompt(
 
     wrapped_sections: list[str] = []
     injection_flags: list[InjectionFlag] = []
-    for source_label, source_text in _iter_source_units(resolved):
+    for source_label, source_text in iter_source_units(resolved):
         result = prepare_untrusted_cobol_for_prompt(source_text, source_label=source_label)
         wrapped_sections.append(result.wrapped_text)
         injection_flags.extend(result.injection_flags)
