@@ -1,0 +1,43 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: pip install -e ".[dev]"
+
+      - name: Lint
+        run: ruff check src/ tests/
+
+      - name: Run tests with coverage
+        # Floor matches agentic-sdlc-control-plane's convention: set at what a real run
+        # produces, so it can only ratchet up, never silently regress.
+        run: pytest --cov=cobol_modernizer --cov-report=term-missing --cov-fail-under=90
+
+      - name: Assert no tenant vocabulary is silently treated as trusted instructions
+        # This repo is the *inverse* of control-plane's domain-agnostic rule (ADR-0001's
+        # design agent note): it is expected to carry COBOL/CardDemo vocabulary. What must
+        # never happen instead is COBOL source text being read as instructions rather than
+        # data — see .claude/agents/development.md. No enforcement exists yet because no
+        # node reads COBOL source yet (Milestone C1); this step is a placeholder that fails
+        # loudly once nodes.spec_extractor exists without a corresponding guardrail test.
+        run: |
+          if [ -f src/cobol_modernizer/nodes/spec_extractor.py ] && [ ! -f tests/system/test_guardrails.py ]; then
+            echo "::error::spec_extractor exists with no guardrail test covering it"
+            exit 1
+          fi
+          echo "no extraction node yet, or guardrail test present"
