@@ -28,6 +28,13 @@ jobs:
         # produces, so it can only ratchet up, never silently regress.
         run: pytest --cov=cobol_modernizer --cov-report=term-missing --cov-fail-under=90
 
+      - name: Assert every mermaid diagram parses
+        # Reused from control-plane, where this has caught a real defect three times -
+        # see scripts/validate-mermaid.mjs for the history.
+        run: |
+          npm install --no-fund --no-audit --no-save mermaid jsdom
+          node scripts/validate-mermaid.mjs
+
       - name: Assert no tenant vocabulary is silently treated as trusted instructions
         # This repo is the *inverse* of control-plane's domain-agnostic rule (ADR-0001's
         # design agent note): it is expected to carry COBOL/CardDemo vocabulary. What must
