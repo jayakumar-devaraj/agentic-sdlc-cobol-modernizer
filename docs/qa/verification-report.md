@@ -13,21 +13,25 @@ was never treated as proof on its own.
 pytest --cov=cobol_modernizer --cov-report=term-missing --cov-fail-under=90
 ```
 
-As of this report: **100 tests passed, 98.38% overall coverage.**
+As of this report: **119 tests passed, 98.17% overall coverage.**
 
 | Module | Coverage |
 |---|---|
 | `cli.py` | 92% |
 | `core/guardrails.py` | 100% |
+| `core/model_routing.py` | 100% |
+| `nodes/spec_extractor.py` | 96% |
 | `parsing/cobol_parser.py` | 98% |
 | `prompts_registry_client/loader.py` | 100% |
-| `telemetry/logging_config.py` | 100% |
 | `tools/knowledge_store.py` | 100% |
 | `tools/pic_mapper.py` | 99% |
 | `tools/tenant_repo.py` | 100% |
+| `telemetry/logging_config.py` | 100% |
 
 `cli.py`'s uncovered lines are the `not_implemented` skeleton branches for `design`/`generate`
 that Milestones C2–C4 replace with real logic — not a gap in what currently exists.
+`nodes/spec_extractor.py`'s uncovered lines are `_default_narrate`'s body (the real Anthropic API
+call) — see "Not yet covered" below for why, and what covers the rest of the module instead.
 
 ## Functional verification
 
@@ -102,6 +106,52 @@ not assumed):
 skipped), `98 passed`, confirmed against the CI run for PR #4
 (https://github.com/jayakumar-devaraj/agentic-sdlc-cobol-modernizer/pull/4).
 
+### `core/model_routing.py` — real config/model_routing.yaml, ADR-0004's actual mechanism
+
+**Verified**: `load_model_routing`/`resolve_model` against the real, checked-in
+`config/model_routing.yaml` every node will actually read (not a fixture standing in for it) —
+confirms it maps all five known node types to non-empty model identifiers, and that
+`resolve_model("spec_extractor", ...)` resolves correctly against that real file. Failure paths
+(missing file, invalid YAML, unknown node key, incomplete config, non-string value) are exercised
+against fixture configs only, never the real one, so a bad fixture can never be mistaken for a
+real-config regression.
+
+**Command**: `pytest tests/system/test_model_routing.py -v`
+**Result**: 10/10 passed.
+
+### `nodes/spec_extractor.py` — real CBACT04C and its five real copybooks
+
+**Verified**: every deterministic step this node performs before calling a model, run against the
+real `CBACT04C.cbl` fixture and its five real copybooks (`CVTRA01Y`, `CVACT03Y`, `CVTRA02Y`,
+`CVACT01Y`, `CVTRA05Y`) — the same fixture `tools/tenant_repo.py` and `parsing/cobol_parser.py`
+are already verified against, not a synthetic stand-in:
+
+- **Field mapping**: 75 of the program's real fields map correctly, including the plan's own
+  verified-real targets — `ACCT-CURR-BAL` (precision 12, scale 2), `DIS-INT-RATE` (precision 6,
+  scale 2), `TRAN-CAT-BAL`/`TRAN-AMT`/`WS-MONTHLY-INT`/`WS-TOTAL-INT` (precision 11, scale 2 each).
+- **Construct isolation**: the program's own two real `REDEFINES` groups
+  (`TWO-BYTES-ALPHA REDEFINES TWO-BYTES-BINARY`, `FILLER REDEFINES DB2-FORMAT-TS`) produce exactly
+  9 correctly-isolated `unsupported_fields` entries, every one flagged with a `REDEFINES` reason —
+  confirmed the other 75 fields, including the `REDEFINES`-target fields themselves
+  (`TWO-BYTES-BINARY`, `DB2-FORMAT-TS`), are unaffected. See ADR-0006 for the design decision this
+  verifies and a real parser interaction it surfaced.
+- **Paragraph flow**: all 22 real paragraphs extracted in real source order, including the plan's
+  own verified-real interest-calculation flow
+  (`1200-GET-INTEREST-RATE` → `1300-COMPUTE-INTEREST` → `1300-B-WRITE-TX` → `1400-COMPUTE-FEES`).
+- **Guardrail wrapping**: every one of the six real source units (the program plus five
+  copybooks) is wrapped in its own labeled `<untrusted-cobol-source>` block, and the real
+  `CBACT04C` source (license header and functional comments included) produces zero
+  false-positive injection flags, consistent with `test_guardrails.py`'s own finding.
+- **The interest formula is preserved verbatim** in the prompt content handed to the model:
+  `COMPUTE WS-MONTHLY-INT = ( TRAN-CAT-BAL * DIS-INT-RATE) / 1200`, exactly as it appears in the
+  real source, never paraphrased.
+- **End-to-end wiring**: `extract_spec` resolves a real, non-empty model identifier from
+  `config/model_routing.yaml` and loads the real (non-stub) system prompt content, confirmed via a
+  fake `narrate` callable that captures what it was called with.
+
+**Command**: `pytest tests/system/test_spec_extractor.py -v`
+**Result**: 9/9 passed.
+
 ### CI itself — verified on GitHub, not just locally
 
 Every module above was also verified green on a **real GitHub Actions run**, not assumed from a
@@ -113,9 +163,24 @@ mermaid-diagram-parse check reused from `agentic-sdlc-control-plane`.
 
 ## Not yet covered (honest gaps, not silently skipped)
 
+- **`spec_extractor`'s real model call is untested against a live Anthropic API.** This
+  development environment has no `ANTHROPIC_API_KEY` (or equivalent) available to `_default_narrate`,
+  so it has never actually been invoked — only every deterministic step upstream of it (field
+  mapping, paragraph extraction, prompt construction, guardrail wrapping) is verified against real
+  data; every test injects a fake `narrate` in its place. This is a real gap, not a mock standing
+  in for a "done" claim — revisit once a real credential is available (Milestone C5 integration,
+  or whenever this repo is actually invoked with one), by running `extract_spec` against
+  `CBACT04C` with the default `narrate` and manually reviewing the resulting `spec.md` prose
+  against the source, the way `.claude/agents/qa.md` requires for anything a unit test can't
+  meaningfully reach.
 - **Auditing/provenance** (`CLAUDE.md`'s stated concern: every generated artifact traces back to
-  the exact COBOL source line it came from) has no implementation yet — nothing produces
-  `spec.md`/`design.json` yet for it to apply to. Tracked against Milestone C2 (`spec_extractor`).
-- **Structured logging** exists now (`telemetry/logging_config.py`, wired into `cli.py`'s
-  invocation lifecycle) but no node yet has a real `run_id`/correlation concept to log against —
-  that arrives with the first real node.
+  the exact COBOL source line it came from) is now source-label-precise (every fact
+  `spec_extractor` emits names the exact program or copybook it came from) but not yet
+  line-precise — see ADR-0006 for why, and what closing this gap would require
+  (`parsing/cobol_parser.py` carrying line numbers through field/paragraph extraction).
+- **Structured logging** exists (`telemetry/logging_config.py`, wired into `cli.py`'s invocation
+  lifecycle) but `spec_extractor` isn't wired into the CLI's `design` subcommand yet (that's
+  Milestone C3's `cli.py` wiring, plan step 36) — so it has no real `run_id`/correlation concept
+  to log against yet, and doesn't log internally itself, consistent with every other tool module
+  in this repo (`pic_mapper`, `cobol_parser`, `tenant_repo`, `guardrails`, `knowledge_store`) being
+  pure functions with no logging of their own.

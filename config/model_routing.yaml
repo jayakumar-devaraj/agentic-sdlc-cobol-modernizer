@@ -1,0 +1,16 @@
+# Static per-node model routing (ADR-0004: docs/adr/0004-a-static-per-node-model-tier-not-a-routing-engine.md).
+#
+# Read once per invocation by src/cobol_modernizer/core/model_routing.py -- not a dynamic
+# scoring engine, just a fixed map for this repo's five known node types. Tentative default
+# tiers, not benchmarked final numbers (see the ADR): the three nodes that produce artifacts
+# everything downstream trusts (spec_extractor, solution_architect, modernization_engineer)
+# default to the strongest available tier; spec_critic and build_validator, whose tasks are
+# narrower, default to a cheaper/faster tier. spec_critic is a deliberate exception the ADR
+# calls out to revisit empirically once Milestone C2's golden fixtures exist -- do not treat
+# its tier here as finalized.
+
+spec_extractor: claude-opus-5
+spec_critic: claude-haiku-4-5-20251001
+solution_architect: claude-opus-5
+modernization_engineer: claude-opus-5
+build_validator: claude-haiku-4-5-20251001

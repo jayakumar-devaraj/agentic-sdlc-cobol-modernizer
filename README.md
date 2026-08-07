@@ -12,6 +12,9 @@ for why.
 - **Internal sub-pipeline**: LangGraph (in-process, in-memory checkpointer — not durable; see
   ADR-0001)
 - **State/validation**: Pydantic
+- **LLM client**: `anthropic` SDK — model per node resolved from `config/model_routing.yaml`
+  (static, not a routing engine; see ADR-0004)
+- **Config**: PyYAML (`config/model_routing.yaml`)
 - **Testing**: pytest, pytest-cov
 
 ## Architecture
@@ -19,7 +22,12 @@ for why.
 This is the design the implementation is built against, not a record of what already exists —
 the specialist nodes below land incrementally across Milestones C2–C4 (tracked in
 [`docs/adr/`](docs/adr/) and the repo's task list), but the shape doesn't change as they do.
-Today only the CLI skeleton is real; everything else in these diagrams is the target.
+Today the CLI skeleton and every tool `spec_extractor` depends on (`parsing/`, `pic_mapper`,
+`tenant_repo`, `guardrails`, `knowledge_store`, `model_routing`) are real and independently
+tested, and `spec_extractor` itself is implemented and verified standalone against real CardDemo
+source (`docs/qa/verification-report.md`) — but it isn't wired into the CLI's `design` subcommand
+yet (Milestone C3, plan step 36). The diagrams below describe the target composition, not yet an
+end-to-end running pipeline.
 
 ### How this repo fits in the platform
 
@@ -147,7 +155,7 @@ compile.
 ./.venv/Scripts/python -m pytest --cov=cobol_modernizer --cov-report=term-missing --cov-fail-under=90
 ```
 
-98 tests passing, 98% coverage as of this change — the number a real run produces, not a claim.
+119 tests passing, 98% coverage as of this change — the number a real run produces, not a claim.
 Some tests (`tools/knowledge_store.py`'s) need the local Postgres+pgvector instance above; they
 skip with a clear reason rather than failing if it isn't running, and CI runs them for real against
 its own service container rather than letting them skip silently there too.
