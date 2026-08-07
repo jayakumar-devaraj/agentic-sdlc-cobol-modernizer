@@ -10,6 +10,26 @@ jobs:
   test:
     runs-on: ubuntu-latest
     timeout-minutes: 15
+    # tools/knowledge_store.py's system tests need a real Postgres+pgvector instance and skip
+    # without one (mirroring control-plane's own durability-test convention) - running them
+    # against a service container here, rather than letting them skip silently in CI forever, is
+    # the whole point of that convention. Port/credentials match
+    # tests/fixtures/db_credentials_sample/local.conn exactly, so the same fixture file used
+    # locally works here unchanged.
+    services:
+      postgres:
+        image: pgvector/pgvector:pg16
+        env:
+          POSTGRES_DB: cobol_modernizer
+          POSTGRES_USER: cobol_modernizer
+          POSTGRES_PASSWORD: cobol_modernizer_dev_only
+        ports:
+          - 5434:5432
+        options: >-
+          --health-cmd "pg_isready -U cobol_modernizer -d cobol_modernizer"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
     steps:
       - uses: actions/checkout@v4
 

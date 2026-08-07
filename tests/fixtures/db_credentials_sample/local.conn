@@ -1,0 +1,12 @@
+# Local-dev-only credentials file for tools/knowledge_store.py's system tests, in the format
+# that module's docstring documents (docs/adr/0005): blank lines and lines starting with "#"
+# are ignored; the first remaining line is a libpq connection string, read verbatim.
+#
+# This points at docker-compose.yml's `postgres` service -- a throwaway container only reachable
+# from this machine (localhost:5434), not the shared platform's own instance. Its password is
+# docker-compose.yml's own hardcoded POSTGRES_PASSWORD default for a local, isolated dev/test
+# database with no route from outside this machine -- not a real secret, so committing it here
+# carries none of the risk a production credential would. Do not reuse this pattern for anything
+# that talks to a real deployment; per ADR-0005, real deployment credentials arrive as a mounted
+# file that is never committed.
+postgresql://cobol_modernizer:cobol_modernizer_dev_only@localhost:5434/cobol_modernizer

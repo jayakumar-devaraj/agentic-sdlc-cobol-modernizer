@@ -46,8 +46,11 @@ flowchart TB
 ```
 
 Every solid arrow into or out of this repo is a single bounded subprocess call. This repo never
-talks to Kafka, Postgres, or the tenant repo's git remote directly — control-plane owns the clone
-and hands this repo a worktree path (`docs/adr/0001`).
+talks to Kafka or the tenant repo's git remote directly — control-plane owns the clone and hands
+this repo a worktree path (`docs/adr/0001`). It does talk to Postgres directly, but only for the
+knowledge store's own schema (`tools/knowledge_store.py`), via a credentials file path, never an
+embedded credential (`docs/adr/0005`) — durable orchestration state stays entirely control-plane's
+concern.
 
 ### This repo's internal pipeline — two separate, independently bounded invocations
 
@@ -116,17 +119,27 @@ anything invocation 1 reasoned about that isn't written into that file.
 ```bash
 py -3.12 -m venv .venv
 ./.venv/Scripts/pip install -e ".[dev]"
-./.venv/Scripts/cobol-modernizer run --program CBACT04C --tenant-repo <path> --output <path> --json
+./.venv/Scripts/cobol-modernizer design --programs CBACT04C --tenant-repo <path> --output <path> --json
+./.venv/Scripts/cobol-modernizer generate --design <path>/design.json --tenant-repo <path> --output <path> --json
 ```
 
-Currently returns a `not_implemented` status — this is expected until Milestone C2.
+Both currently return a `not_implemented` status — this is expected until Milestones C2/C3 (`design`)
+and C4 (`generate`) land. Two subcommands, not one — see `docs/adr/0003` for why.
 
 ## Local development
 
-No local infrastructure of its own to stand up yet. The knowledge store (Milestone C2) and any
-persistent state reuse `agentic-sdlc-control-plane`'s existing Postgres instance rather than a
-second database — a docker-compose stack for this repo is deferred until there's a real service
-to run (the sandboxed Maven compiler, Milestone C4), rather than shipped empty to check a box.
+```bash
+docker compose up -d postgres
+```
+
+Stands up a local Postgres+pgvector instance (`localhost:5434`) for `tools/knowledge_store.py` —
+deliberately isolated from `agentic-sdlc-control-plane`'s own Postgres instance, which real
+deployment reuses instead (`docs/adr/0005`). This is a throwaway dev/test resource this repo fully
+owns; production never points at it. `tests/fixtures/db_credentials_sample/local.conn` has the
+matching local credentials pre-filled (a docker-compose default password for a local-only,
+unreachable-from-outside container, not a real secret — see that file's own header comment). No
+sandboxed-compiler stack yet — that's Milestone C4, added when there's real generated Java to
+compile.
 
 ## Testing
 
@@ -134,7 +147,10 @@ to run (the sandboxed Maven compiler, Milestone C4), rather than shipped empty t
 ./.venv/Scripts/python -m pytest --cov=cobol_modernizer --cov-report=term-missing --cov-fail-under=90
 ```
 
-5 tests passing, 90% coverage as of Milestone C1 — the number a real run produces, not a claim.
+98 tests passing, 98% coverage as of this change — the number a real run produces, not a claim.
+Some tests (`tools/knowledge_store.py`'s) need the local Postgres+pgvector instance above; they
+skip with a clear reason rather than failing if it isn't running, and CI runs them for real against
+its own service container rather than letting them skip silently there too.
 
 ## Deployment / CI
 
