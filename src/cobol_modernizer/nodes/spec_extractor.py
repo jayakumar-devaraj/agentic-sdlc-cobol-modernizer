@@ -138,16 +138,22 @@ def extract_field_mappings(
     return mappings, unsupported
 
 
-def _render_known_facts(
+def render_known_facts(
     program_name: str,
-    paragraphs: list[Paragraph],
+    paragraph_names: list[str],
     field_mappings: list[PicMapping],
     unsupported_fields: list[UnsupportedField],
 ) -> str:
-    """Render the deterministic facts block the prompt's system instructions call "Known Facts"."""
+    """Render the deterministic facts block the prompt's system instructions call "Known Facts".
+
+    Public (not `_`-prefixed) so `nodes/spec_critic.py` can re-derive the exact same Known Facts
+    block a narration was built against from `SpecExtractionResult`'s own fields, rather than a
+    second, parallel implementation that could silently drift out of sync with what
+    `spec_extractor` actually sent the model.
+    """
     lines = [f"# Known Facts for {program_name}", "", "## Paragraph flow (source order)"]
-    for paragraph in paragraphs:
-        lines.append(f"- {paragraph.name}")
+    for name in paragraph_names:
+        lines.append(f"- {name}")
 
     lines += [
         "",
@@ -184,7 +190,12 @@ def build_prompt(
     silently worked around. Injection-phrase heuristic flags, in contrast, are collected and
     returned rather than acted on; the caller (or a future human-in-the-loop gate) weighs them.
     """
-    known_facts = _render_known_facts(resolved.program_name, paragraphs, field_mappings, unsupported_fields)
+    known_facts = render_known_facts(
+        resolved.program_name,
+        [paragraph.name for paragraph in paragraphs],
+        field_mappings,
+        unsupported_fields,
+    )
 
     wrapped_sections: list[str] = []
     injection_flags: list[InjectionFlag] = []
