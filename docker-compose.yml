@@ -1,0 +1,27 @@
+name: agentic-sdlc-cobol-modernizer
+
+# Local-dev-only Postgres for tools/knowledge_store.py (pgvector). Deliberately isolated from
+# agentic-sdlc-control-plane's own Postgres instance, which real deployment reuses (a new
+# cobol_modernizer schema on control-plane's Postgres — see docs/adr/0005) — this container is a
+# throwaway test/dev resource this repo fully owns, never the shared platform instance. This
+# stack didn't exist before this task because there was no real service to run yet; the sandboxed
+# Maven compiler (Milestone C4) is the next real addition here.
+services:
+  postgres:
+    image: pgvector/pgvector:pg16
+    environment:
+      POSTGRES_DB: cobol_modernizer
+      POSTGRES_USER: cobol_modernizer
+      POSTGRES_PASSWORD: cobol_modernizer_dev_only
+    ports:
+      - "5434:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U cobol_modernizer -d cobol_modernizer"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    volumes:
+      - cobol_modernizer_postgres_data:/var/lib/postgresql/data
+
+volumes:
+  cobol_modernizer_postgres_data:
