@@ -1,0 +1,34 @@
+{
+  "description": "The `cobol-modernizer generate --json` stdout contract.\n\nDeliberately minimal -- matches the current `cli.py` stub's shape. Self-healing-loop-specific\nfields (attempt count, compile diagnosis) are Milestone C4 work, once `build_validator` exists\nto define them; inventing them now would be the same speculative-design mistake\n`DesignDocument.unified_design` avoids.",
+  "properties": {
+    "detail": {
+      "title": "Detail",
+      "type": "string"
+    },
+    "output_path": {
+      "title": "Output Path",
+      "type": "string"
+    },
+    "phase": {
+      "const": "generate",
+      "default": "generate",
+      "title": "Phase",
+      "type": "string"
+    },
+    "status": {
+      "enum": [
+        "ok",
+        "error"
+      ],
+      "title": "Status",
+      "type": "string"
+    }
+  },
+  "required": [
+    "status",
+    "output_path",
+    "detail"
+  ],
+  "title": "GenerateCliResult",
+  "type": "object"
+}

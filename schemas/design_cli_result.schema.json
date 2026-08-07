@@ -1,0 +1,47 @@
+{
+  "description": "The `cobol-modernizer design --json` stdout contract -- a summary, not the full `design.json`.\n\nPer ADR-0008 decision 3: `status` reports only whether this invocation itself succeeded: it is\ndeliberately not `\"gate_required\"` or similar -- whether `gate_item_count > 0` should pause\nanything is control-plane's gate policy to decide, not a judgment this repo's CLI bakes in.",
+  "properties": {
+    "detail": {
+      "title": "Detail",
+      "type": "string"
+    },
+    "gate_item_count": {
+      "title": "Gate Item Count",
+      "type": "integer"
+    },
+    "output_path": {
+      "title": "Output Path",
+      "type": "string"
+    },
+    "phase": {
+      "const": "design",
+      "default": "design",
+      "title": "Phase",
+      "type": "string"
+    },
+    "programs": {
+      "items": {
+        "type": "string"
+      },
+      "title": "Programs",
+      "type": "array"
+    },
+    "status": {
+      "enum": [
+        "ok",
+        "error"
+      ],
+      "title": "Status",
+      "type": "string"
+    }
+  },
+  "required": [
+    "status",
+    "programs",
+    "output_path",
+    "gate_item_count",
+    "detail"
+  ],
+  "title": "DesignCliResult",
+  "type": "object"
+}
