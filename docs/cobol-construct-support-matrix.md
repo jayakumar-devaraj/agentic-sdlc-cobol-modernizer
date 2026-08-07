@@ -1,7 +1,8 @@
 # COBOL Construct Support Matrix
 
 Scope boundary for what this repo parses and modernizes. A construct not marked in-scope for
-Track C must be detected and routed to a human-in-the-loop gate, never guessed at (ADR-0002).
+Track C must be detected and routed to a human-in-the-loop gate, never guessed at
+([ADR-0002](adr/0002-a-hand-rolled-parser-for-a-deliberately-bounded-grammar.md)).
 
 Verified against the real source of the four Track C programs and every copybook they `COPY`
 (`CBACT04C`, `CBTRN02C`, `CBACT01C`, `CBCUS01C` and `CVTRA01Y`, `CVTRA02Y`, `CVTRA05Y`,
@@ -17,12 +18,12 @@ Verified against the real source of the four Track C programs and every copybook
 | Sequential / VSAM read-only file I/O | In scope | In scope (full VSAM cluster ops in Track B) | Track C only reads existing files; no VSAM cluster definition/IDCAMS handling. |
 | Straight `COPY` | In scope | In scope | All four Track C programs use straight `COPY`, no `REPLACING`. |
 | `COPY ... REPLACING` | **Out of scope** | In scope | Not present in any Track C program; would require resolving pseudo-text substitution. |
-| `MOVE` / `COMPUTE` / `IF` / `EVALUATE` / `PERFORM` | In scope | In scope | Core `PROCEDURE DIVISION` verbs, hand-rolled parser (ADR-0002) covers these. |
+| `MOVE` / `COMPUTE` / `IF` / `EVALUATE` / `PERFORM` | In scope | In scope | Core `PROCEDURE DIVISION` verbs, hand-rolled parser ([ADR-0002](adr/0002-a-hand-rolled-parser-for-a-deliberately-bounded-grammar.md)) covers these. |
 | `EXEC CICS` (online transaction verbs) | **Out of scope** | In scope | None of the four Track C programs are CICS (`CB`-prefix = batch, confirmed by their filenames and the absence of `EXEC CICS` in their source). |
 | BMS screen maps | **Out of scope** | In scope | No BMS involvement in batch programs. |
 | JCL job-scheduling semantics | **Out of scope** (JCL exists to invoke these programs but is not itself parsed) | In scope | Track C treats "this program is invoked by JCL" as given context, not a parsed artifact. |
 | Embedded SQL / DB2 | **Out of scope** | In scope | Not present in any Track C program. |
-| `REDEFINES` | **Out of scope** | In scope, highest-risk module (Milestone B3) | Not present in the copybooks Track C's four programs use. If encountered elsewhere, must route to a human gate, never auto-resolve (ADR-0001 consequences). |
+| `REDEFINES` | **Out of scope** | In scope, highest-risk module (Milestone B3) | Not present in the copybooks Track C's four programs use. If encountered elsewhere, must route to a human gate, never auto-resolve ([ADR-0001](adr/0001-the-specialist-is-a-subprocess-not-a-second-control-plane.md) consequences). |
 | `OCCURS DEPENDING ON` | **Out of scope** | In scope, same module as `REDEFINES` | Same treatment as `REDEFINES`. |
 | RACF security | **Out of scope** | In scope if relevant | Batch programs read/write files directly; no RACF interaction modeled in Track C. |
 
