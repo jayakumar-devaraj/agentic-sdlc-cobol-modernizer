@@ -1,7 +1,8 @@
 """Real tests against the actual CLI skeleton — not placeholders.
 
-Milestone C1 has no pipeline logic yet, so these tests assert what genuinely exists today: the
-argument contract and the honest "not implemented" response, not a mocked future behaviour.
+Two subcommands (design, generate), not one — see
+docs/adr/0003-two-phase-invocation-split-at-the-human-gate.md for why a single `run` command
+would be wrong for a repo with no durable state (ADR-0001).
 """
 
 from __future__ import annotations
@@ -13,18 +14,21 @@ import pytest
 from cobol_modernizer.cli import build_parser, main
 
 
-def test_run_requires_all_three_arguments():
+def test_design_requires_all_arguments():
     parser = build_parser()
     with pytest.raises(SystemExit):
-        parser.parse_args(["run", "--program", "CBACT04C"])
+        parser.parse_args(["design", "--programs", "CBACT04C"])
 
 
-def test_run_parses_valid_arguments():
+def test_design_accepts_multiple_programs():
     parser = build_parser()
     args = parser.parse_args(
         [
-            "run",
-            "--program",
+            "design",
+            "--programs",
+            "CBCUS01C",
+            "CBACT01C",
+            "CBTRN02C",
             "CBACT04C",
             "--tenant-repo",
             "/tmp/tenant",
@@ -33,19 +37,52 @@ def test_run_parses_valid_arguments():
             "--json",
         ]
     )
-    assert args.program == "CBACT04C"
-    assert args.tenant_repo == "/tmp/tenant"
-    assert args.output == "/tmp/out"
-    assert args.json is True
+    assert args.programs == ["CBCUS01C", "CBACT01C", "CBTRN02C", "CBACT04C"]
 
 
-def test_run_reports_not_implemented_honestly(capsys):
+def test_design_reports_not_implemented_honestly(capsys):
     exit_code = main(
-        ["run", "--program", "CBACT04C", "--tenant-repo", "/tmp/tenant", "--output", "/tmp/out", "--json"]
+        [
+            "design",
+            "--programs",
+            "CBACT04C",
+            "--tenant-repo",
+            "/tmp/tenant",
+            "--output",
+            "/tmp/out",
+            "--json",
+        ]
     )
     captured = capsys.readouterr()
     payload = json.loads(captured.out)
 
     assert exit_code == 1
     assert payload["status"] == "not_implemented"
-    assert payload["program"] == "CBACT04C"
+    assert payload["phase"] == "design"
+
+
+def test_generate_requires_a_design_file():
+    parser = build_parser()
+    with pytest.raises(SystemExit):
+        parser.parse_args(["generate", "--tenant-repo", "/tmp/tenant", "--output", "/tmp/out"])
+
+
+def test_generate_reports_not_implemented_honestly(capsys):
+    exit_code = main(
+        [
+            "generate",
+            "--design",
+            "/tmp/design.json",
+            "--tenant-repo",
+            "/tmp/tenant",
+            "--output",
+            "/tmp/out",
+            "--json",
+        ]
+    )
+    captured = capsys.readouterr()
+    payload = json.loads(captured.out)
+
+    assert exit_code == 1
+    assert payload["status"] == "not_implemented"
+    assert payload["phase"] == "generate"

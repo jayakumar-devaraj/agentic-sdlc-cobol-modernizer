@@ -49,45 +49,56 @@ Every solid arrow into or out of this repo is a single bounded subprocess call. 
 talks to Kafka, Postgres, or the tenant repo's git remote directly — control-plane owns the clone
 and hands this repo a worktree path (`docs/adr/0001`).
 
-### This repo's internal pipeline
+### This repo's internal pipeline — two separate, independently bounded invocations
+
+Not one continuous flow: this repo has no durable state (ADR-0001), so it cannot pause mid-run for
+a human gate and resume later. Control-plane's gate sits *between* two separate process
+invocations, never inside one (ADR-0003).
 
 ```mermaid
 flowchart TB
-    START(["cobol-modernizer run"])
-    SUP["orchestration_supervisor<br/>routes nodes, caps self-healing at 3 attempts"]
+    subgraph phase1["Invocation 1: cobol-modernizer design (exits at design.json)"]
+        SUP1["orchestration_supervisor"]
+        SPEC_CUS["spec_extractor: CBCUS01C"]
+        SPEC_ACT["spec_extractor: CBACT01C"]
+        CRIT_CUS["spec_critic"]
+        CRIT_ACT["spec_critic"]
+        JOIN["join<br/>both branches complete"]
+        SPEC_TRN["spec_extractor: CBTRN02C"]
+        CRIT_TRN["spec_critic"]
+        SPEC_INT["spec_extractor: CBACT04C"]
+        CRIT_INT["spec_critic"]
+        ARCH["solution_architect<br/>emits one design.json for all four programs"]
 
-    SPEC_CUS["spec_extractor: CBCUS01C"]
-    SPEC_ACT["spec_extractor: CBACT01C"]
-    CRIT_CUS["spec_critic"]
-    CRIT_ACT["spec_critic"]
-    JOIN["join<br/>both branches complete"]
+        SUP1 --> SPEC_CUS --> CRIT_CUS --> JOIN
+        SUP1 --> SPEC_ACT --> CRIT_ACT --> JOIN
+        JOIN --> SPEC_TRN --> CRIT_TRN --> SPEC_INT --> CRIT_INT --> ARCH
+    end
 
-    SPEC_TRN["spec_extractor: CBTRN02C"]
-    CRIT_TRN["spec_critic"]
-    SPEC_INT["spec_extractor: CBACT04C"]
-    CRIT_INT["spec_critic"]
+    GATE["control-plane's own durable gate<br/>human reviews design.json<br/>persists across a restart if needed"]
 
-    ARCH["solution_architect<br/>emits design.json"]
-    RETURN1["return to control-plane<br/>for its plan_approval-equivalent gate"]
-    CODE["modernization_engineer<br/>generates Java"]
-    COMPILE["local_compiler<br/>sandboxed mvn compile"]
-    VALID["build_validator<br/>diagnoses failure, patches"]
-    DONE(["structured JSON result to control-plane"])
+    subgraph phase2["Invocation 2: cobol-modernizer generate (fresh process, no memory of invocation 1)"]
+        CODE["modernization_engineer<br/>generates Java from design.json"]
+        COMPILE["local_compiler<br/>sandboxed mvn compile"]
+        VALID["build_validator<br/>diagnoses failure, patches"]
+        DONE(["structured JSON result to control-plane"])
 
-    START --> SUP
-    SUP --> SPEC_CUS --> CRIT_CUS --> JOIN
-    SUP --> SPEC_ACT --> CRIT_ACT --> JOIN
-    JOIN --> SPEC_TRN --> CRIT_TRN --> SPEC_INT --> CRIT_INT --> ARCH
-    ARCH --> RETURN1 --> CODE --> COMPILE
-    COMPILE -->|"success"| DONE
-    COMPILE -->|"fail"| VALID --> CODE
-    VALID -.->|"3rd failed attempt"| DONE
+        CODE --> COMPILE
+        COMPILE -->|"success"| DONE
+        COMPILE -->|"fail"| VALID --> CODE
+        VALID -.->|"3rd failed attempt"| DONE
+    end
+
+    ARCH -->|"design.json written to disk,<br/>process exits"| GATE
+    GATE -->|"approved: control-plane<br/>starts a new process"| CODE
 ```
 
 `CBCUS01C` (customer) and `CBACT01C` (account) share no copybook dependency (verified in
 `docs/cobol-construct-support-matrix.md`) and run as parallel branches; `CBTRN02C` and `CBACT04C`
 both depend on account data and run after the join. The self-healing loop is a bounded retry, not
-an open-ended one — a third failed compile returns to control-plane rather than looping forever.
+an open-ended one — a third failed compile returns a result to control-plane rather than looping
+forever. `design.json` must be fully self-contained (ADR-0003): invocation 2 has no access to
+anything invocation 1 reasoned about that isn't written into that file.
 
 ### What this design deliberately doesn't buy
 
