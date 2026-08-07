@@ -70,19 +70,31 @@ a TODO.
 
 ## AI-assisted engineering practice
 
-This platform demonstrates AI-assisted engineering across three roles per repo, scoped to what
-actually applies:
+This platform demonstrates AI-assisted engineering across three roles per repo. The objective is
+not only a working solution but showing how these practices apply throughout the SDLC — every PR
+doing real work is expected to carry evidence of this, not just the code itself, and not caught up
+retroactively once it's noticed missing (as logging and the QA report below were, on 2026-08-07):
 
-1. **Design**: a design document and architecture diagram for this repo (README + this file).
-2. **Development**: error handling and logging, meaningful Git commit history (see above). This
-   repo's own auditing concern is provenance, not a ledger: every generated artifact (`spec.md`,
-   `design.json`, a compile diagnosis) must trace back to the exact COBOL source line it was
-   derived from. The hash-chained audit ledger itself belongs to `agentic-sdlc-control-plane` —
-   duplicating it here would be a second, independently-maintained log of the same events, which
-   is a defect class control-plane's own `development` agent explicitly forbids.
-3. **QA**: unit tests + coverage report, and/or a functional verification report for anything a
-   unit test can't reach (e.g. the self-healing compile loop recovering from a real injected
-   error, not a mocked one).
+1. **Design**: a design document and architecture diagram for this repo (README + this file), kept
+   current — updated in the same change as whatever it describes, not after.
+2. **Development**: real, tested error handling (the `UnsupportedPicConstructError` family is the
+   established pattern — fail loudly on an unambiguous case, never guess) and structured logging
+   (`telemetry/logging_config.py`, wired into every entrypoint with an invocation lifecycle worth
+   diagnosing — stderr only, never stdout, where a CLI's `--json` contract depends on stdout
+   staying clean), plus meaningful Git commit history (see Commit discipline). This repo's own
+   auditing concern is provenance, not a ledger: every generated artifact (`spec.md`, `design.json`,
+   a compile diagnosis) must trace back to the exact COBOL source line it was derived from, once a
+   node exists to produce one. The hash-chained audit ledger itself belongs to
+   `agentic-sdlc-control-plane` — duplicating it here would be a second, independently-maintained
+   log of the same events, which is a defect class control-plane's own `development` agent
+   explicitly forbids.
+3. **QA**: unit tests + a coverage report, **and** a functional verification report for anything a
+   unit test can't reach on its own (a real database, real fetched source, a real external CLI,
+   the self-healing compile loop recovering from a real injected error rather than a mocked one).
+   `docs/qa/verification-report.md` is the standing home for both — updated in the same PR as
+   whatever it reports on, never accumulated as a backlog. "The tests pass" is not itself a
+   functional-verification entry: state what was verified, the exact command run, and the real
+   result, the same way every entry already there does.
 
 ## This repo's place in the platform
 
