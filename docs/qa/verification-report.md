@@ -13,7 +13,7 @@ was never treated as proof on its own.
 pytest --cov=cobol_modernizer --cov-report=term-missing --cov-fail-under=90
 ```
 
-As of this report: **214 tests passed, 98.22% overall coverage.**
+As of this report: **229 tests passed, 98.22% overall coverage.**
 
 | Module | Coverage |
 |---|---|
@@ -230,9 +230,11 @@ This is made falsifiable, not just asserted once: `test_golden_fixture.py` re-de
 deterministic facts from the live fixture on every run and asserts
 `compute_fidelity_issues(golden_extraction) == []` — the concrete, checkable form of Milestone
 C2's gate, "golden fixture matches exactly," for `CBACT04C`. The gate as stated in the plan covers
-all four Track C programs; only `CBACT04C` has a tenant-repo fixture and a golden spec today (the
-other three — `CBCUS01C`, `CBACT01C`, `CBTRN02C` — are Milestone C3+ work, once their own fixtures
-exist), so this closes the gate for `CBACT04C` specifically, not the full four-program claim.
+all four Track C programs; all four now have byte-verified tenant-repo fixtures, but only
+`CBACT04C` has a golden `spec.md` — deliberately, since the other three's narrative prose has no
+live model output to regress against yet (see "Not yet covered" below). The gate's numeric-field
+clause is met for all four programs by the exhaustive cross-check entry below; this entry closes
+its "golden fixture matches exactly" clause for `CBACT04C` specifically.
 
 **Command**: `pytest tests/system/test_golden_fixture.py -v`
 **Result**: 7/7 passed.
@@ -316,9 +318,9 @@ checks (`CUST-ID`, `DALYTRAN-AMT`, etc.) matching their real `PIC` clauses.
 `CBACT01C`, and `CBTRN02C`, using the same faithful-narrate technique (a narration reproducing the
 real Known Facts block verbatim) already used to verify `spec_extractor` generalizes to these
 programs. This is **not** a substitute for hand-verified narrative prose (`CBACT04C`'s golden
-fixture remains the only one of the four with that level of verification — a real, still-open
-question, see "Not yet covered" below) — it confirms the deterministic checking machinery itself
-behaves correctly against real, structurally different data.
+fixture remains the only one of the four with that level of verification — now a deliberate
+deferral rather than an open question, see "Not yet covered" below) — it confirms the deterministic
+checking machinery itself behaves correctly against real, structurally different data.
 
 `CBACT01C` is the real stress case: its `CODATECN` copybook contributes 28 real unsupported
 fields — the largest set of any Track C program (`CBACT04C`'s is 9) — confirmed correctly carried
@@ -332,6 +334,57 @@ detected for each program.
 
 **Command**: `pytest tests/system/test_spec_critic_track_c_programs.py -v`
 **Result**: 12/12 passed.
+
+### Milestone C2's numeric-field gate, exhaustively, for all four Track C programs
+
+**Verified**: Milestone C2's gate as literally worded — *"`spec.md` for all four Track C programs
+correctly identifies 100% of numeric/`COMP-3` fields, manually cross-checked"* — for the scope the
+pipeline actually parses. Every numeric field's precision, scale, signedness, and `USAGE` clause
+was hand-derived by reading the real `PIC` clause in the real fixture source and applying COBOL's
+own rules (precision is total `9` positions, scale is the count after `V`, `S` means signed)
+**before** running the pipeline, then reconciled against what the pipeline actually produces. The
+assertions are exact-set equality per program, not spot checks, so a numeric field that stopped
+being mapped fails just as loudly as one mapped wrong. Coverage is 9 numeric fields for `CBCUS01C`,
+17 for `CBACT01C`, 27 for `CBTRN02C`, 26 for `CBACT04C`.
+
+Confirmed falsifiable rather than tautological, the same way the schema drift check was:
+`ACCT-CURR-BAL`'s expected scale was hand-corrupted from `2` to `0`, the suite re-run, and it failed
+exactly the three programs that `COPY` `CVACT01Y` (`CBACT01C`, `CBTRN02C`, `CBACT04C`) while
+`CBCUS01C`, which does not, kept passing — then restored and re-run green.
+
+Also confirmed directly, since ADR-0010's merge-by-exact-copybook-name rule depends on it: the same
+copybook maps to byte-identical field data in every program that `COPY`s it (`CVACT01Y`'s full
+`PicMapping` list is equal across all three of its callers). And every real monetary field across
+all four programs — balances, credit limits, transaction amounts, the interest accumulators,
+`DIS-INT-RATE` — is confirmed scale 2 and signed, the platform's headline rounding/precision risk
+checked as a property rather than field by field.
+
+**A real defect was found by this cross-check, not after it**:
+`parsing/cobol_parser.extract_working_storage_fields` slices out only the `WORKING-STORAGE SECTION`
+body and stops at the next section/division header, so a program's `FILE SECTION` (`FD`) record
+layouts and its `LINKAGE SECTION` parameters never reach `pic_mapper` at all — they are neither
+mapped nor flagged as unsupported, they are simply absent. That is the one outcome this repo's error
+handling exists to prevent; `UnsupportedPicConstructError`'s whole purpose is failing loudly instead
+of going quiet. Three real consequences, verified against the fixture source, not hypothesized:
+
+- `CBACT01C`'s `OUT-ACCT-CURR-CYC-DEBIT` and `ARR-ACCT-CURR-CYC-DEBIT` are declared
+  `PIC S9(10)V99 USAGE IS COMP-3` — the **only** `COMP-3` fields anywhere in Track C, and the
+  construct the gate names explicitly. Neither is seen. (`docs/cobol-construct-support-matrix.md`'s
+  claim that no Track C *copybook* declares `COMP-3` remains accurate as written — both of these
+  are in a program's own `FILE SECTION`.)
+- `CBACT04C`'s `PARM-LENGTH` belongs to `EXTERNAL-PARMS`, the record its own
+  `PROCEDURE DIVISION USING EXTERNAL-PARMS` clause names — the program's actual input parameter.
+- All four programs' `FD` record layouts describe the files each batch job reads and writes: 1
+  unreached numeric field in `CBCUS01C`, 10 in `CBACT01C`, 3 in `CBTRN02C`, 6 in `CBACT04C`.
+
+This gap is recorded as its own falsifiable test
+(`test_file_and_linkage_section_records_are_not_extracted_yet`) rather than as prose, so it cannot
+quietly persist — the test is written to fail the moment the parser is extended, with a message
+saying to invert it. Milestone C2's gate is therefore **met for the `WORKING-STORAGE`-plus-copybooks
+scope and not met overall** until that follow-up lands; see "Not yet covered" below.
+
+**Command**: `pytest tests/system/test_numeric_field_coverage.py -v`
+**Result**: 15/15 passed.
 
 ### `nodes/solution_architect.py` — cross-program domain-entity unification, against real data for all four programs
 
@@ -388,13 +441,25 @@ mermaid-diagram-parse check reused from `agentic-sdlc-control-plane`.
   requires for anything a unit test can't meaningfully reach. This also means ADR-0004's own
   deferred question — whether `spec_critic`'s cheaper model tier holds up empirically once real
   critiques exist — is still unanswered.
-- **Only `CBACT04C` has a hand-verified golden fixture.** `CBCUS01C`, `CBACT01C`, and `CBTRN02C`
-  now have real, byte-verified source and confirmed-working `spec_extractor`/`spec_critic`
-  extraction (via the faithful-Known-Facts-narration technique, not hand-written prose) — but none
-  has a `CBACT04C`-level golden `spec.md` a human read and verified line-by-line. Whether that
-  level of verification is required for all four programs before Milestone C2's gate counts as met
-  is a real, not-yet-decided question — see the master plan's Status note, not silently resolved
-  by the deterministic-level verification above.
+- **`FILE SECTION` and `LINKAGE SECTION` fields are never parsed** — the real defect the numeric
+  cross-check above found, and the reason Milestone C2's gate is not yet met in full. Track C's only
+  two `COMP-3` fields are among the fields this hides. Recorded as a falsifiable test, with the
+  detail in that entry; the fix is a `parsing/cobol_parser.py` contract change with real downstream
+  reach (`CBACT04C`'s golden fixture field count, `gate_items` counts, and `solution_architect`'s
+  domain entities all change), so it is its own separate change rather than folded into the
+  verification that found it.
+- **Only `CBACT04C` has a hand-verified golden fixture**, and that is now a deliberate choice
+  rather than an open question. `CBCUS01C`, `CBACT01C`, and `CBTRN02C` have real, byte-verified
+  source, confirmed-working `spec_extractor`/`spec_critic` extraction (via the
+  faithful-Known-Facts-narration technique), and — as of the entry above — exhaustive
+  hand-cross-checked numeric-field verification. What they do not have is `CBACT04C`-level golden
+  narrative *prose*. Writing that today would mean hand-authoring expected prose that nothing in
+  the pipeline currently produces to compare against: `spec.md`'s narration comes from a live model
+  call this environment has no credential for (see the first gap above). The decision is to defer
+  those three golden fixtures until a real credential exists, at which point they become a genuine
+  regression baseline for real model output rather than a hand-written artifact checked only
+  against itself. Milestone C2's gate is being closed on its literal numeric-field wording, which
+  is checkable without a model, not on prose.
 - **Auditing/provenance** (`CLAUDE.md`'s stated concern: every generated artifact traces back to
   the exact COBOL source line it came from) is now source-label-precise (every fact
   `spec_extractor` emits names the exact program or copybook it came from) but not yet
