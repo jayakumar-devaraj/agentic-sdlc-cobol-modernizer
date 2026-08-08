@@ -39,10 +39,12 @@ validation -- without a live Anthropic API credential this development environme
 from __future__ import annotations
 
 import json
+import logging
 import re
 from collections.abc import Callable
 from pathlib import Path
 
+from cobol_modernizer.core.complexity import ComplexityTier
 from cobol_modernizer.core.contracts import (
     BatchJobDesign,
     BatchStepDesign,
@@ -54,14 +56,25 @@ from cobol_modernizer.core.contracts import (
 )
 from cobol_modernizer.core.guardrails import wrap_untrusted_cobol
 from cobol_modernizer.core.model_client import call_model
-from cobol_modernizer.core.model_routing import resolve_model
+from cobol_modernizer.core.model_routing import RoutingDecision, resolve_routing
 from cobol_modernizer.core.structured_output import strip_code_fence
 from cobol_modernizer.nodes.spec_extractor import group_field_mappings_by_source
 from cobol_modernizer.prompts_registry_client.loader import prompt_path
 from cobol_modernizer.tools.pic_mapper import PicMapping
 from cobol_modernizer.tools.tenant_repo import resolve_program
 
+logger = logging.getLogger(__name__)
+
 _NODE_NAME = "solution_architect"
+
+#: Rank for picking the highest tier across a run's programs. `ComplexityTier` is a `str` Enum, so
+#: it sorts alphabetically by default -- which would put "complex" below "moderate" and silently
+#: choose the wrong end. Explicit ordering rather than relying on the enum's incidental sort.
+_TIER_ORDER = {
+    ComplexityTier.SIMPLE: 0,
+    ComplexityTier.MODERATE: 1,
+    ComplexityTier.COMPLEX: 2,
+}
 
 _RECORD_NAME_RE = re.compile(r"^\s*01\s+([A-Za-z0-9\-]+)\.", re.MULTILINE)
 _RECORD_SUFFIX = "-RECORD"
@@ -326,13 +339,20 @@ def _parse_unified_design_response(
 
 #: `(model, system_prompt, user_content) -> raw response text`. Injected so `design_solution`'s
 #: tests exercise every deterministic step above without a live model credential.
-ArchitectFn = Callable[[str, str, str], str]
+ArchitectFn = Callable[[RoutingDecision, str, str], str]
 
 
-def _default_architect(model: str, system_prompt: str, user_content: str) -> str:
+def _default_architect(routing: RoutingDecision, system_prompt: str, user_content: str) -> str:
     """Call a real model through `core/model_client.py` (ADR-0013), which owns backend choice,
     timeout, retry/backoff, and usage capture -- this node does not reimplement any of that."""
-    return call_model(_NODE_NAME, model, system_prompt, user_content).text
+    return call_model(
+        _NODE_NAME,
+        routing.model,
+        system_prompt,
+        user_content,
+        effort=routing.effort,
+        max_output_tokens=routing.max_output_tokens,
+    ).text
 
 
 def _load_system_prompt() -> str:
@@ -371,12 +391,22 @@ def design_solution(
     domain_entities = build_domain_entities(worktree_root, programs)
     user_content = build_architect_prompt(domain_entities, programs)
     system_prompt = _load_system_prompt()
-    model = (
-        resolve_model(_NODE_NAME)
-        if model_routing_config is None
-        else resolve_model(_NODE_NAME, config_path=model_routing_config)
+
+    # One call reasoning across every program at once (ADR-0010), so it takes the *highest* tier
+    # present -- not an average. A run containing one hard program is a hard run: averaging would
+    # let three simple programs pull the architect down to a tier the fourth needs.
+    tier = max(
+        (entry.spec_extraction.complexity.tier for entry in programs),
+        key=_TIER_ORDER.__getitem__,
+        default=ComplexityTier.COMPLEX,
     )
-    raw_response = architect(model, system_prompt, user_content)
+    routing_kwargs = {} if model_routing_config is None else {"config_path": model_routing_config}
+    routing = resolve_routing(_NODE_NAME, tier, **routing_kwargs)
+    logger.info(
+        "solution_architect routing: programs=%d tier=%s model=%s effort=%s",
+        len(programs), routing.tier.value, routing.model, routing.effort,
+    )
+    raw_response = architect(routing, system_prompt, user_content)
     batch_jobs, rest_endpoints = _parse_unified_design_response(raw_response, domain_entities, programs)
 
     return UnifiedDesign(

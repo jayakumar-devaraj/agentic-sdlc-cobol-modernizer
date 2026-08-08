@@ -68,11 +68,12 @@ class _FakeMessages:
         self._prompts = prompts
         self._calls = calls
 
-    def create(self, *, model, max_tokens, system, messages):
+    def create(self, *, model, max_tokens, system, messages, output_config=None):
         node = next((name for name, text in self._prompts.items() if text == system), None)
         assert node is not None, "a node called the API with a system prompt from no known registry entry"
         user_content = messages[0]["content"]
-        self._calls.append((node, model))
+        effort = (output_config or {}).get("effort")
+        self._calls.append((node, model, effort, max_tokens))
 
         if node == "spec_extractor":
             # The faithful-narration technique: restate the real Known Facts block verbatim, so
@@ -102,7 +103,9 @@ class _FakeMessages:
 
 class _FakeAnthropic:
     prompts: ClassVar[dict[str, str]] = {}
-    calls: ClassVar[list[tuple[str, str]]] = []
+    #: (node, model, effort, max_output_tokens) per call -- effort and the ceiling are recorded
+    #: because ADR-0014 makes them part of the routing decision, not incidental request detail.
+    calls: ClassVar[list[tuple[str, str, str | None, int]]] = []
 
     def __init__(self, *args, **kwargs) -> None:
         self.messages = _FakeMessages(self.prompts, self.calls)
@@ -110,7 +113,7 @@ class _FakeAnthropic:
 
 @pytest.fixture
 def fake_anthropic(monkeypatch):
-    """Replace only the SDK client. Returns the list of (node, model) calls actually made."""
+    """Replace only the SDK client. Returns the (node, model, effort, ceiling) calls actually made."""
     import anthropic
 
     _FakeAnthropic.prompts = {
@@ -160,22 +163,52 @@ def test_design_writes_real_artifacts_and_reports_ok(tmp_path, fake_anthropic, c
         assert spec_md.read_text(encoding="utf-8").startswith(f"# Known Facts for {program}")
 
 
-def test_every_node_is_called_through_its_own_registry_prompt_and_routed_model(tmp_path, fake_anthropic):
+def test_every_node_is_called_through_its_own_registry_prompt(tmp_path, fake_anthropic):
     assert cli.main(design_argv(tmp_path)) == 0
 
-    by_node = {}
-    for node, model in fake_anthropic:
-        by_node.setdefault(node, set()).add(model)
-
+    nodes = [node for node, _model, _effort, _max in fake_anthropic]
     # One extraction and one critique per program, one architect call for the whole run.
-    assert [node for node, _ in fake_anthropic].count("spec_extractor") == len(PROGRAMS)
-    assert [node for node, _ in fake_anthropic].count("spec_critic") == len(PROGRAMS)
-    assert [node for node, _ in fake_anthropic].count("solution_architect") == 1
+    assert nodes.count("spec_extractor") == len(PROGRAMS)
+    assert nodes.count("spec_critic") == len(PROGRAMS)
+    assert nodes.count("solution_architect") == 1
 
-    # The real config/model_routing.yaml values, resolved through the real lookup (ADR-0004).
-    assert by_node["spec_extractor"] == {"claude-opus-5"}
-    assert by_node["solution_architect"] == {"claude-opus-5"}
-    assert by_node["spec_critic"] == {"claude-haiku-4-5-20251001"}
+
+def test_complexity_routes_the_two_programs_to_different_models(tmp_path, fake_anthropic):
+    """ADR-0014 end to end: the cheap program really does get the cheap model.
+
+    `PROGRAMS` spans both bands on purpose -- `CBCUS01C` measures 11,346 prompt characters and 5
+    paragraphs (simple), `CBACT01C` measures 78,647 and 16 (complex). If tiering silently stopped
+    working, both would resolve to the same entry and this is the test that notices.
+    """
+    assert cli.main(design_argv(tmp_path)) == 0
+
+    extractor_calls = [
+        (model, effort, max_tokens)
+        for node, model, effort, max_tokens in fake_anthropic
+        if node == "spec_extractor"
+    ]
+    models = {model for model, _e, _m in extractor_calls}
+    efforts = {effort for _m, effort, _t in extractor_calls}
+
+    assert len(models) == 2, f"both programs routed to the same model: {models}"
+    assert "claude-haiku-4-5" in models  # CBCUS01C, the simple one
+    assert "claude-opus-5" in models  # CBACT01C, the complex one
+    assert efforts == {"low", "high"}
+
+    # The ceiling really reaches the request -- the previous hardcoded 4096 would have truncated
+    # every real narration measured so far.
+    assert all(max_tokens >= 12_000 for _m, _e, max_tokens in extractor_calls)
+
+
+def test_the_architect_takes_the_highest_tier_present(tmp_path, fake_anthropic):
+    # One call across all programs (ADR-0010), so a run containing one complex program is a
+    # complex run -- averaging would let the simple program pull the architect down.
+    assert cli.main(design_argv(tmp_path)) == 0
+    architect = [c for c in fake_anthropic if c[0] == "solution_architect"]
+    assert len(architect) == 1
+    _node, model, effort, _max_tokens = architect[0]
+    assert model == "claude-opus-5"
+    assert effort == "high"
 
 
 def test_design_json_is_indented_and_newline_terminated_for_review_diffs(tmp_path, fake_anthropic):

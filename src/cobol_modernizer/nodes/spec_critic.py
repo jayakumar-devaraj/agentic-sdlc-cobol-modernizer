@@ -33,15 +33,17 @@ without a live Anthropic API credential this development environment does not ha
 from __future__ import annotations
 
 import json
+import logging
 import re
 from collections.abc import Callable
 from pathlib import Path
 
 from pydantic import BaseModel
 
+from cobol_modernizer.core.complexity import critic_tier
 from cobol_modernizer.core.guardrails import prepare_untrusted_cobol_for_prompt
 from cobol_modernizer.core.model_client import call_model
-from cobol_modernizer.core.model_routing import resolve_model
+from cobol_modernizer.core.model_routing import RoutingDecision, resolve_routing
 from cobol_modernizer.core.source_units import iter_source_units
 from cobol_modernizer.core.structured_output import strip_code_fence
 from cobol_modernizer.nodes.spec_extractor import (
@@ -52,6 +54,8 @@ from cobol_modernizer.nodes.spec_extractor import (
 )
 from cobol_modernizer.prompts_registry_client.loader import prompt_path
 from cobol_modernizer.tools.tenant_repo import resolve_program
+
+logger = logging.getLogger(__name__)
 
 _NODE_NAME = "spec_critic"
 
@@ -290,13 +294,20 @@ def _parse_rule_confidence(raw_response: str) -> list[RuleConfidence]:
 
 #: `(model, system_prompt, user_content) -> raw response text`. Injected so `critique_spec`'s
 #: tests exercise every deterministic step above without a live model credential.
-CritiqueFn = Callable[[str, str, str], str]
+CritiqueFn = Callable[[RoutingDecision, str, str], str]
 
 
-def _default_critique(model: str, system_prompt: str, user_content: str) -> str:
+def _default_critique(routing: RoutingDecision, system_prompt: str, user_content: str) -> str:
     """Call a real model through `core/model_client.py` (ADR-0013), which owns backend choice,
     timeout, retry/backoff, and usage capture -- this node does not reimplement any of that."""
-    return call_model(_NODE_NAME, model, system_prompt, user_content).text
+    return call_model(
+        _NODE_NAME,
+        routing.model,
+        system_prompt,
+        user_content,
+        effort=routing.effort,
+        max_output_tokens=routing.max_output_tokens,
+    ).text
 
 
 def _load_system_prompt() -> str:
@@ -333,12 +344,22 @@ def critique_spec(
     fidelity_issues = compute_fidelity_issues(extraction)
     user_content = build_critique_prompt(worktree_root, extraction)
     system_prompt = _load_system_prompt()
-    model = (
-        resolve_model(_NODE_NAME)
-        if model_routing_config is None
-        else resolve_model(_NODE_NAME, config_path=model_routing_config)
+
+    # The cheap path here is a consequence of ADR-0007, not a heuristic: when a deterministic
+    # fidelity issue has already been proven, `overall_confidence` is forced to 0.0 below
+    # regardless of what this call returns, so no model at any price can change the number the
+    # gate keys on. See core.complexity.critic_tier.
+    tier = critic_tier(
+        extraction.complexity.tier, has_deterministic_fidelity_issues=bool(fidelity_issues)
     )
-    raw_response = critique(model, system_prompt, user_content)
+    routing_kwargs = {} if model_routing_config is None else {"config_path": model_routing_config}
+    routing = resolve_routing(_NODE_NAME, tier, **routing_kwargs)
+    logger.info(
+        "spec_critic routing: program=%s tier=%s model=%s effort=%s fidelity_issues=%d",
+        extraction.program_name, routing.tier.value, routing.model, routing.effort,
+        len(fidelity_issues),
+    )
+    raw_response = critique(routing, system_prompt, user_content)
     rule_confidence = _parse_rule_confidence(raw_response)
 
     if fidelity_issues:

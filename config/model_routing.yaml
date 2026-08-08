@@ -1,16 +1,106 @@
-# Static per-node model routing (ADR-0004: docs/adr/0004-a-static-per-node-model-tier-not-a-routing-engine.md).
+# Per-node, per-complexity-tier routing (ADR-0004 as amended by ADR-0014).
 #
-# Read once per invocation by src/cobol_modernizer/core/model_routing.py -- not a dynamic
-# scoring engine, just a fixed map for this repo's five known node types. Tentative default
-# tiers, not benchmarked final numbers (see the ADR): the three nodes that produce artifacts
-# everything downstream trusts (spec_extractor, solution_architect, modernization_engineer)
-# default to the strongest available tier; spec_critic and build_validator, whose tasks are
-# narrower, default to a cheaper/faster tier. spec_critic is a deliberate exception the ADR
-# calls out to revisit empirically once Milestone C2's golden fixtures exist -- do not treat
-# its tier here as finalized.
+# Read once per invocation by src/cobol_modernizer/core/model_routing.py. Still a lookup table,
+# not a scoring engine -- the only change from ADR-0004's original shape is that the key is
+# (node, tier) instead of (node), where tier comes from deterministic pre-call measurement
+# (src/cobol_modernizer/core/complexity.py). Nothing here is decided at runtime by a model.
+#
+# WHY THESE VALUES, measured not assumed (real Track C prompt sizes, see ADR-0014):
+#   CBCUS01C   11,346 chars,  5 paragraphs  -> simple
+#   CBACT04C   74,230 chars, 22 paragraphs  -> complex
+#   CBACT01C   78,647 chars, 16 paragraphs  -> complex
+#   CBTRN02C   81,902 chars, 26 paragraphs  -> complex
+#
+# The initial calibration deliberately changes exactly ONE program's routing: CBCUS01C drops off
+# Opus. The other three keep the model their output was actually verified on -- Opus found a real
+# dead-code defect in CBACT04C that a hand-verified golden fixture had missed, and downgrading
+# them on cost grounds before benchmarking would trade away a demonstrated capability for money.
+# The `moderate` band is empty for Track C today and exists for a real estate's mid-size programs.
+#
+# max_output_tokens are SAFETY CEILINGS, not cost levers -- set above real observed output
+# (extractor 5.5k-14.4k, critic 16.7k-23.4k, architect 5.0k) so nothing truncates. Truncating a
+# critic response is a hard SpecCritiqueParseError, so these are deliberately generous. The cost
+# levers are `model` and `effort`. Reducing the critic's genuinely excessive output (1,200 tokens
+# per scored rule) is a prompt change, tracked separately.
 
-spec_extractor: claude-opus-5
-spec_critic: claude-haiku-4-5-20251001
-solution_architect: claude-opus-5
-modernization_engineer: claude-opus-5
-build_validator: claude-haiku-4-5-20251001
+spec_extractor:
+  simple:
+    model: claude-haiku-4-5
+    effort: low
+    max_output_tokens: 12000
+  moderate:
+    model: claude-sonnet-5
+    effort: medium
+    max_output_tokens: 24000
+  complex:
+    model: claude-opus-5
+    effort: high
+    max_output_tokens: 32000
+
+# spec_critic's tier is not always the program's tier: per ADR-0007 a deterministic fidelity issue
+# forces overall_confidence to 0.0 whatever the critic scores, so that case routes to `simple`
+# (see core.complexity.critic_tier). ADR-0004 flagged this node's tier as the one to validate
+# empirically; the live run gave it 1.00/1.00/0.75/0.70 with zero fidelity issues, which is
+# encouraging but is not yet a benchmark against a known-bad narration.
+spec_critic:
+  simple:
+    model: claude-haiku-4-5
+    effort: low
+    max_output_tokens: 16000
+  moderate:
+    model: claude-haiku-4-5
+    effort: medium
+    max_output_tokens: 24000
+  complex:
+    model: claude-haiku-4-5
+    effort: high
+    max_output_tokens: 28000
+
+# One call per design run, reasoning across every program at once (ADR-0010). There is no cheap
+# version of that job, and it is 18% of a run's cost for 1 of 9 calls -- so all tiers stay on the
+# strongest model and only effort moves.
+solution_architect:
+  simple:
+    model: claude-opus-5
+    effort: medium
+    max_output_tokens: 16000
+  moderate:
+    model: claude-opus-5
+    effort: high
+    max_output_tokens: 24000
+  complex:
+    model: claude-opus-5
+    effort: high
+    max_output_tokens: 32000
+
+# Milestone C4, not yet built. Tiers are placeholders on the same shape so the config stays
+# uniform and the nodes can be written against a contract that already exists.
+modernization_engineer:
+  simple:
+    model: claude-sonnet-5
+    effort: medium
+    max_output_tokens: 24000
+  moderate:
+    model: claude-opus-5
+    effort: high
+    max_output_tokens: 32000
+  complex:
+    model: claude-opus-5
+    effort: high
+    max_output_tokens: 64000
+
+# Diagnosing a compiler error is bounded and mechanical -- the cheap tier is genuinely appropriate
+# here, unlike the artifact-producing nodes above.
+build_validator:
+  simple:
+    model: claude-haiku-4-5
+    effort: low
+    max_output_tokens: 8000
+  moderate:
+    model: claude-haiku-4-5
+    effort: medium
+    max_output_tokens: 12000
+  complex:
+    model: claude-sonnet-5
+    effort: medium
+    max_output_tokens: 16000
