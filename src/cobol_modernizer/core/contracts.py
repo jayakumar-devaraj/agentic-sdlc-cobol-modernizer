@@ -1,4 +1,4 @@
-"""`design.json`'s schema and the `design`/`generate` CLI I/O contracts (ADR-0008).
+"""`design.json`'s schema and the `design`/`generate` CLI I/O contracts (ADR-0008, ADR-0010).
 
 Per ADR-0001, this repo has no human-in-the-loop gate of its own -- control-plane's existing,
 durable gate reviews `design.json` between the `design` and `generate` invocations (ADR-0003).
@@ -10,11 +10,12 @@ NOT do, both named explicitly in ADR-0008 so a future change doesn't quietly cro
    weigh, never used to block processing outright"), `build_gate_items` only surfaces facts.
    Deciding whether `gate_item_count > 0` should pause anything is control-plane's gate policy,
    not this module's.
-2. `DesignDocument.unified_design` is an untyped placeholder. `nodes/solution_architect.py`
-   (plan step 34) does not exist yet -- guessing its output shape now would be exactly the kind
-   of speculative design this repo's own conventions warn against. The field exists so this
-   envelope doesn't need a breaking schema change once that node lands, not because its shape is
-   already known.
+2. `DesignDocument.unified_design`'s models (`UnifiedDesign` and friends) are pure data shapes,
+   defined here per ADR-0010 rather than in `nodes/solution_architect.py` itself, so that module
+   can depend on `core/contracts.py` the same direction every other node already depends on
+   `core/` -- not the other way around. The actual behavior that produces a `UnifiedDesign`
+   (deterministic domain-entity merging, the LLM-authored batch/REST design call) lives in
+   `nodes/solution_architect.py`; this module only says what the result looks like.
 
 `LOW_CONFIDENCE_THRESHOLD` (0.7) is a tentative default, not a benchmarked number, in the same
 spirit as ADR-0004's tentative model tiers -- no real critique run against a live model has
@@ -31,6 +32,90 @@ from pydantic import BaseModel
 
 from cobol_modernizer.nodes.spec_critic import SpecCritiqueResult
 from cobol_modernizer.nodes.spec_extractor import SpecExtractionResult
+
+BatchStepRole = Literal["reader", "processor", "writer", "tasklet"]
+RestMethod = Literal["GET", "POST", "PUT", "DELETE"]
+
+
+class DomainField(BaseModel):
+    """One field of a `DomainEntity`, reusing `pic_mapper`'s deterministic output verbatim.
+
+    `java_field_name` and the entity's own `name` are direct, mechanical transforms of the COBOL
+    name (kebab-case to camelCase/PascalCase, `-RECORD` suffix stripped from the entity name) --
+    not a business-semantic rename. See ADR-0010 decision 2 for why: a human-readable name is a
+    judgment call for the LLM-authored parts of `UnifiedDesign` to make, not this deterministic
+    field.
+    """
+
+    java_field_name: str
+    cobol_field_name: str
+    java_type: str
+    precision: int | None
+    scale: int | None
+    signed: bool
+
+
+class DomainEntity(BaseModel):
+    """One unified domain entity -- every program that `COPY`s the same copybook shares one.
+
+    `source_copybook` is the exact copybook name that produced this entity; two different
+    copybook names are never merged into one entity, even when structurally similar (ADR-0010
+    decision 1) -- `source_copybook` is what makes that traceable and checkable.
+    """
+
+    name: str
+    source_copybook: str
+    used_by_programs: list[str]
+    fields: list[DomainField]
+
+
+class BatchStepDesign(BaseModel):
+    """One step of a `BatchJobDesign`, LLM-authored (ADR-0010 decision 3).
+
+    `source_paragraphs` names the real COBOL paragraph(s) (from `SpecExtractionResult.paragraph_names`)
+    this step's logic comes from -- provenance one hop further than `spec_extractor`'s own
+    source-label tracing (ADR-0006), now into the batch design itself.
+    """
+
+    step_name: str
+    source_paragraphs: list[str]
+    role: BatchStepRole
+    description: str
+
+
+class BatchJobDesign(BaseModel):
+    """One program's Spring Batch job design -- one per Track C program, LLM-authored."""
+
+    program_name: str
+    job_name: str
+    domain_entities: list[str]
+    steps: list[BatchStepDesign]
+
+
+class RestEndpointDesign(BaseModel):
+    """One thin-REST-layer endpoint, LLM-authored -- control/observability or a point query.
+
+    Per ADR-0009, this layer triggers/monitors Spring Batch jobs and serves genuine point queries
+    against `domain_entities` -- never the bulk batch logic itself.
+    """
+
+    method: RestMethod
+    path: str
+    domain_entity: str
+    description: str
+
+
+class UnifiedDesign(BaseModel):
+    """`design.json`'s `unified_design` -- ADR-0010's real shape for what ADR-0008 left untyped.
+
+    `domain_entities` is deterministic (see `nodes/solution_architect.build_domain_entities`);
+    `batch_jobs` and `rest_endpoints` are LLM-authored, informed by but never re-deriving the
+    entity data.
+    """
+
+    domain_entities: list[DomainEntity]
+    batch_jobs: list[BatchJobDesign]
+    rest_endpoints: list[RestEndpointDesign]
 
 #: design.json's own envelope version -- bump this on any breaking change to DesignDocument's
 #: shape, e.g. once solution_architect gives `unified_design` a real type.
@@ -71,16 +156,16 @@ class DesignDocument(BaseModel):
     """The `design.json` contract: everything control-plane's gate needs to review one `design`
     invocation across every program it covered.
 
-    See the module docstring for why `unified_design` is untyped. Build this via
-    `build_design_document`, not by hand, so `gate_items` can never go stale relative to
-    `programs`.
+    Build this via `build_design_document`, not by hand, so `gate_items` can never go stale
+    relative to `programs`. `unified_design` is `None` until `nodes/solution_architect.py` has
+    actually run -- it's a real, typed `UnifiedDesign` (ADR-0010), not a placeholder dict.
     """
 
     schema_version: str = SCHEMA_VERSION
     generated_at: datetime
     programs: list[ProgramDesignEntry]
     gate_items: list[GateItem]
-    unified_design: dict | None = None
+    unified_design: UnifiedDesign | None = None
 
 
 class DesignCliResult(BaseModel):
@@ -174,12 +259,14 @@ def build_gate_items(programs: list[ProgramDesignEntry]) -> list[GateItem]:
     return items
 
 
-def build_design_document(programs: list[ProgramDesignEntry]) -> DesignDocument:
+def build_design_document(
+    programs: list[ProgramDesignEntry], unified_design: UnifiedDesign | None = None
+) -> DesignDocument:
     """Build a `DesignDocument`, deriving `gate_items` from `programs` so the two can't drift apart."""
     return DesignDocument(
         schema_version=SCHEMA_VERSION,
         generated_at=datetime.now(UTC),
         programs=programs,
         gate_items=build_gate_items(programs),
-        unified_design=None,
+        unified_design=unified_design,
     )

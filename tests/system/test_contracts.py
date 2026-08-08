@@ -16,11 +16,17 @@ import pytest
 from cobol_modernizer.core.contracts import (
     LOW_CONFIDENCE_THRESHOLD,
     SCHEMA_VERSION,
+    BatchJobDesign,
+    BatchStepDesign,
     DesignCliResult,
     DesignDocument,
+    DomainEntity,
+    DomainField,
     GateItem,
     GenerateCliResult,
     ProgramDesignEntry,
+    RestEndpointDesign,
+    UnifiedDesign,
     build_design_document,
     build_gate_items,
 )
@@ -190,6 +196,60 @@ def test_design_document_round_trips_through_json(golden_extraction):
     raw = document.model_dump_json()
     restored = DesignDocument.model_validate_json(raw)
     assert restored == document
+
+
+def test_design_document_carries_a_real_typed_unified_design(golden_extraction):
+    # ADR-0010: unified_design is a real UnifiedDesign, not the placeholder dict ADR-0008 left it
+    # as -- confirms build_design_document accepts one and DesignDocument round-trips it intact.
+    entry = _entry_with_rule_scores(golden_extraction, [0.95])
+    unified = UnifiedDesign(
+        domain_entities=[
+            DomainEntity(
+                name="Account",
+                source_copybook="CVACT01Y",
+                used_by_programs=["CBACT04C"],
+                fields=[
+                    DomainField(
+                        java_field_name="acctCurrBal",
+                        cobol_field_name="ACCT-CURR-BAL",
+                        java_type="BigDecimal",
+                        precision=12,
+                        scale=2,
+                        signed=True,
+                    )
+                ],
+            )
+        ],
+        batch_jobs=[
+            BatchJobDesign(
+                program_name="CBACT04C",
+                job_name="interestCalculationJob",
+                domain_entities=["Account"],
+                steps=[
+                    BatchStepDesign(
+                        step_name="readTransactionCategoryBalances",
+                        source_paragraphs=["1000-TCATBALF-GET-NEXT"],
+                        role="reader",
+                        description="Reads each transaction category balance record.",
+                    )
+                ],
+            )
+        ],
+        rest_endpoints=[
+            RestEndpointDesign(
+                method="GET",
+                path="/accounts/{id}",
+                domain_entity="Account",
+                description="Look up an account's current balance.",
+            )
+        ],
+    )
+
+    document = build_design_document([entry], unified_design=unified)
+    assert document.unified_design == unified
+
+    restored = DesignDocument.model_validate_json(document.model_dump_json())
+    assert restored.unified_design == unified
 
 
 # --- CLI result contracts -----------------------------------------------------------------------
