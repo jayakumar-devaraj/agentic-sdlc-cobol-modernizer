@@ -62,9 +62,12 @@ flowchart TB
 
 Every solid arrow into or out of this repo is a single bounded subprocess call. This repo never
 talks to Kafka, or either repo's git remote, directly — control-plane owns both clones and hands
-this repo worktree paths (`docs/adr/0001`). `card-service` (ADR-0009) is the `generate` phase's
-write target, created fresh once Milestone C4 has real Java to put in it — not this repo's own
-output, and not `carddemo-tenant-service`'s, which stays read-only source of truth throughout. This
+this repo worktree paths (`docs/adr/0001`).
+[`card-service`](https://github.com/jayakumar-devaraj/card-service) (ADR-0009) is the `generate`
+phase's write target — not this repo's own output, and not `carddemo-tenant-service`'s, which
+stays read-only source of truth throughout. The repo itself exists (an empty scaffold — no
+generated Java yet, Milestone C4 hasn't started); `generate` writing real content into it is still
+real work ahead. This
 repo does talk to Postgres directly, but only for the knowledge store's own schema
 (`tools/knowledge_store.py`), via a credentials file path, never an embedded credential
 (`docs/adr/0005`) — durable orchestration state stays entirely control-plane's concern.
