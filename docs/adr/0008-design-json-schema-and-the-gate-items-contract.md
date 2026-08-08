@@ -1,5 +1,15 @@
 # 0008 - `design.json`'s schema, and `gate_items` as the concrete HITL-review contract
 
+> **`LOW_CONFIDENCE_THRESHOLD = 0.7` is now calibrated (2026-08-08).** This ADR shipped it as an
+> admitted guess pending "a real critique run against a live model". Those runs now exist, and the
+> number holds with margin: against four *genuine* narrations the minimum per-rule score was
+> 0.70–1.00, and against a narration with three deliberately planted factual errors the same model
+> scored those rules **0.00 / 0.20 / 0.40**. Real defects land far below 0.7; the threshold
+> separates the two cleanly. See `tests/system/test_critic_discrimination.py` and the verification
+> report. (An intermediate reading — that a 0.70 minimum failing to flag showed the threshold was
+> too permissive — was wrong: that was a borderline claim about a timestamp format, not a missed
+> defect.)
+
 ## Context
 
 Per ADR-0001, this repo has no HITL gate of its own — control-plane's existing, durable,
