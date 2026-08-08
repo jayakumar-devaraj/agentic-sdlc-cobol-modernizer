@@ -86,9 +86,10 @@ work, not built in miniature here a third time.
 deferred rather than guessed at.
 
 A real, checkable consequence of decision 1: running `build_domain_entities` against all four real
-Track C programs' data produces exactly 6 domain entities (`Account`, `Tran`, `CardXref`,
-`TranCatBal`, `DisGroup`, `Customer`), correctly shows `Account` shared by three programs, and
-correctly excludes `Codatecn` entirely — verified in `tests/system/test_solution_architect.py`
+Track C programs' data produces exactly 7 domain entities (`Account`, `Tran`, `CardXref`,
+`TranCatBal`, `DisGroup`, `Customer`, `Dalytran`), correctly shows `Account` shared by three
+programs, and correctly excludes `Codatecn` entirely — verified in
+`tests/system/test_solution_architect.py`
 against real data, not asserted from the design alone.
 
 The mechanical naming in decision 2 means generated class/field names will look like
