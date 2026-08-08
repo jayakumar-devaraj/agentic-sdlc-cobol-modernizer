@@ -29,7 +29,13 @@ _REAL_CONFIG_PATH = Path(__file__).resolve().parents[2] / "config" / "model_rout
 def _valid_config() -> dict:
     return {
         node: {
-            tier: {"model": "claude-haiku-4-5", "effort": "low", "max_output_tokens": 8000}
+            tier: {
+                "min_capability_rank": 1,
+                "effort": "low",
+                "max_output_tokens": 8000,
+                "typical_input_tokens": 1000,
+                "typical_output_tokens": 1000,
+            }
             for tier in REQUIRED_TIERS
         }
         for node in KNOWN_NODES
@@ -62,17 +68,40 @@ def test_every_node_tier_pair_resolves_against_the_real_config(node, tier):
     assert decision.tier is tier
 
 
-def test_the_cheap_tier_is_actually_cheaper_than_the_expensive_one():
-    # The whole point of ADR-0014. If a future config edit made every tier identical, tiering
-    # would still "work" and quietly save nothing -- so assert the spread exists for the node
-    # where it matters most.
-    simple = resolve_routing("spec_extractor", ComplexityTier.SIMPLE, config_path=_REAL_CONFIG_PATH)
-    complex_ = resolve_routing(
-        "spec_extractor", ComplexityTier.COMPLEX, config_path=_REAL_CONFIG_PATH
+def test_the_critic_is_routed_to_the_cheap_model_and_says_what_it_beat():
+    """ADR-0015: selection is computed, and it explains itself with a number.
+
+    `spec_critic` is the node where the evidence supports the cheap model (PR #20's benchmark:
+    Haiku caught 3/3 planted defects, matching Opus). The rationale naming the beaten alternative
+    and its cost is what makes the decision auditable at a review gate rather than a bare name.
+    """
+    decision = resolve_routing("spec_critic", ComplexityTier.COMPLEX, config_path=_REAL_CONFIG_PATH)
+    assert decision.model == "claude-haiku-4-5-20251001"
+    assert decision.selection == "selected"
+    assert "claude-opus-5" in decision.rationale
+    assert decision.estimated_cost_usd > 0
+
+
+def test_the_extractor_is_not_routed_to_a_sonnet_on_cost():
+    """The finding this whole mechanism was built to make durable.
+
+    Both Sonnets narrated CBACT04C's unreachable `ELSE PERFORM 1050-UPDATE-ACCOUNT` as live, so
+    neither is `verified_for` extraction -- and Sonnet 5 is ~2.5x cheaper than Opus, which is
+    exactly the pressure that would otherwise win. Every tier must resolve to Opus.
+    """
+    for tier in ComplexityTier:
+        decision = resolve_routing("spec_extractor", tier, config_path=_REAL_CONFIG_PATH)
+        assert decision.model == "claude-opus-5", tier
+
+
+def test_an_unbenchmarked_node_is_pinned_and_says_so():
+    # `solution_architect` has no benchmark. A pin is visible in the decision rather than looking
+    # like a cost-ranked choice somebody made on evidence.
+    decision = resolve_routing(
+        "solution_architect", ComplexityTier.COMPLEX, config_path=_REAL_CONFIG_PATH
     )
-    assert simple.model != complex_.model
-    assert simple.effort == "low"
-    assert complex_.effort == "high"
+    assert decision.selection == "pinned"
+    assert "No benchmark" in decision.rationale
 
 
 def test_real_config_ceilings_clear_every_observed_output_length():
@@ -161,12 +190,46 @@ def test_node_mapped_to_non_mapping_raises(tmp_path):
         load_model_routing(_write(tmp_path, config))
 
 
-@pytest.mark.parametrize("bad_model", ["", "   ", 42, None])
-def test_missing_or_empty_model_raises(tmp_path, bad_model):
+@pytest.mark.parametrize("bad_rank", ["high", -1, None, 2.5])
+def test_missing_or_invalid_min_capability_rank_raises(tmp_path, bad_rank):
     config = _valid_config()
-    config["spec_extractor"]["simple"]["model"] = bad_model
-    with pytest.raises(ModelRoutingConfigError, match="missing or empty 'model'"):
+    config["spec_extractor"]["simple"]["min_capability_rank"] = bad_rank
+    with pytest.raises(ModelRoutingConfigError, match="min_capability_rank"):
         load_model_routing(_write(tmp_path, config))
+
+
+@pytest.mark.parametrize("field", ["typical_input_tokens", "typical_output_tokens"])
+@pytest.mark.parametrize("bad_value", [0, -5, "many", None])
+def test_missing_or_invalid_token_profile_raises(tmp_path, field, bad_value):
+    # Without a real profile the cost comparison is meaningless, so an absent one must fail rather
+    # than default to something that would silently rank models by the wrong number.
+    config = _valid_config()
+    config["spec_extractor"]["simple"][field] = bad_value
+    with pytest.raises(ModelRoutingConfigError, match=field):
+        load_model_routing(_write(tmp_path, config))
+
+
+def test_a_pin_without_a_reason_raises(tmp_path):
+    """The gate on the escape hatch.
+
+    Pinning is legitimate for an unbenchmarked node, but an unexplained pin is indistinguishable
+    from hardcoding a model to bypass `verified_for` -- which is the one thing ADR-0015 exists to
+    prevent.
+    """
+    config = _valid_config()
+    config["spec_extractor"]["simple"]["pinned_model"] = "claude-opus-5"
+    with pytest.raises(ModelRoutingConfigError, match="no 'pin_reason'"):
+        load_model_routing(_write(tmp_path, config))
+
+
+def test_a_pin_to_an_uncatalogued_model_raises(tmp_path):
+    config = _valid_config()
+    config["spec_extractor"]["simple"]["pinned_model"] = "gpt-9-ultra"
+    config["spec_extractor"]["simple"]["pin_reason"] = "typo in a hurry"
+    with pytest.raises(ModelRoutingConfigError, match="not in the model catalog"):
+        resolve_routing(
+            "spec_extractor", ComplexityTier.SIMPLE, config_path=_write(tmp_path, config)
+        )
 
 
 @pytest.mark.parametrize("bad_effort", ["ludicrous", "", None, 3])

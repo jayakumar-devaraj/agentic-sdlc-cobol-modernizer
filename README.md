@@ -35,13 +35,22 @@ choice, timeout, bounded retry with jittered backoff, and per-call token/cost ca
 reimplements any of that, and a rate limit is handled once rather than three times. Program
 branches are capped rather than fanning out without limit.
 
-**Which model runs is decided per program, not per node** (ADR-0014). `core/complexity.py`
-measures the work before any call — paragraph count, field counts, and the exact prompt about to
-be sent — and `config/model_routing.yaml` maps `(node, tier)` to a model, an effort level, and an
-output ceiling. Track C's programs span a 7× prompt-size range, so a small program runs on a cheap
-model at low effort while a large one keeps the strongest tier. The classification costs nothing
-and makes no model call of its own; the tier and the signals behind it ride into `design.json`, so
-a reviewer can see which model produced a spec and on what evidence.
+**Which model runs is computed, not hardcoded** (ADR-0014, ADR-0015). `core/complexity.py` measures
+the work before any call — paragraph count, field counts, and the exact prompt about to be sent —
+and classifies it into a tier. `config/model_routing.yaml` then states what that tier *needs*
+(minimum capability, effort, output ceiling, and a measured token profile) and names no model at
+all; `config/model_catalog.yaml` holds each model's price, capability rank, and `verified_for` —
+the nodes it has real benchmark evidence for. Selection is the cheapest catalogued model that
+clears the bar and is verified for that node.
+
+`verified_for` is a hard gate: adding a model to the catalog does not make it eligible, running the
+benchmark does. That gate has teeth — both Sonnet models narrated an unreachable branch in
+`CBACT04C` as live (the last account's interest is never posted), so neither is eligible for
+`spec_extractor` despite being ~2.5× cheaper than Opus. Conversely `spec_critic` runs on Haiku,
+selected on price, because a benchmark showed it catches planted defects as well as Opus does.
+
+The decision, its estimated cost, and what it beat all ride into `design.json`, so a reviewer at
+the gate can see which model produced a spec and why.
 
 Two honest limits. **No full `design` run against real models has happened yet** — a live
 round-trip through the `claude` CLI is verified, but no `spec.md` has been narrated, critiqued, or

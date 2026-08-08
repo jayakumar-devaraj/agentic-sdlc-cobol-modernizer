@@ -23,6 +23,12 @@ import yaml
 from pydantic import BaseModel
 
 from cobol_modernizer.core.complexity import ComplexityTier
+from cobol_modernizer.core.model_catalog import (
+    TokenProfile,
+    estimated_cost_usd,
+    load_catalog,
+    select_model,
+)
 
 _DEFAULT_CONFIG_PATH = Path(__file__).resolve().parents[3] / "config" / "model_routing.yaml"
 
@@ -70,6 +76,14 @@ class RoutingDecision(BaseModel):
     model: str
     effort: str
     max_output_tokens: int
+    #: What one call is expected to cost at this model's catalogued price for this tier's measured
+    #: token profile. Logged and carried so "why this model?" has a number behind it, not a claim.
+    estimated_cost_usd: float
+    #: How the model was arrived at -- `"selected"` (cheapest qualifying, verified) or `"pinned"`.
+    #: A pinned decision is visible in `design.json`, because "nobody benchmarked this" is
+    #: something a reviewer at the gate deserves to know.
+    selection: str
+    rationale: str
 
 
 def _validate_entry(node_name: str, tier_name: str, entry: object, config_path: Path) -> None:
@@ -77,9 +91,32 @@ def _validate_entry(node_name: str, tier_name: str, entry: object, config_path: 
     if not isinstance(entry, dict):
         raise ModelRoutingConfigError(f"{where} must be a mapping; got {type(entry).__name__}")
 
-    model = entry.get("model")
-    if not isinstance(model, str) or not model.strip():
-        raise ModelRoutingConfigError(f"{where} has a missing or empty 'model': {model!r}")
+    rank = entry.get("min_capability_rank")
+    if not isinstance(rank, int) or isinstance(rank, bool) or rank < 0:
+        raise ModelRoutingConfigError(
+            f"{where} has a missing or non-integer 'min_capability_rank': {rank!r}"
+        )
+
+    for field in ("typical_input_tokens", "typical_output_tokens"):
+        value = entry.get(field)
+        if not isinstance(value, int) or isinstance(value, bool) or value <= 0:
+            raise ModelRoutingConfigError(
+                f"{where} has a missing or non-positive {field}: {value!r}"
+            )
+
+    # A pin is allowed but must say why: an unexplained pin is indistinguishable from someone
+    # hardcoding a model to dodge the verified_for gate, which is the thing this design exists
+    # to prevent.
+    if "pinned_model" in entry:
+        pinned = entry["pinned_model"]
+        if not isinstance(pinned, str) or not pinned.strip():
+            raise ModelRoutingConfigError(f"{where} has an empty 'pinned_model': {pinned!r}")
+        reason = entry.get("pin_reason")
+        if not isinstance(reason, str) or not reason.strip():
+            raise ModelRoutingConfigError(
+                f"{where} pins {pinned!r} with no 'pin_reason'; a pin without a stated reason is "
+                f"indistinguishable from bypassing the verified_for gate"
+            )
 
     effort = entry.get("effort")
     if effort not in _VALID_EFFORTS:
@@ -173,6 +210,7 @@ def resolve_routing(
     tier: ComplexityTier = ComplexityTier.COMPLEX,
     *,
     config_path: Path = _DEFAULT_CONFIG_PATH,
+    catalog_path: Path | None = None,
 ) -> RoutingDecision:
     """Resolve the model, effort, and output ceiling for `node_name` at `tier`.
 
@@ -195,10 +233,47 @@ def resolve_routing(
         )
     routing = load_model_routing(config_path)
     entry = routing[node_name][tier.value]
+    catalog = load_catalog() if catalog_path is None else load_catalog(catalog_path)
+
+    profile = TokenProfile(
+        typical_input_tokens=entry["typical_input_tokens"],
+        typical_output_tokens=entry["typical_output_tokens"],
+    )
+
+    if "pinned_model" in entry:
+        pinned = entry["pinned_model"]
+        if pinned not in catalog:
+            raise ModelRoutingConfigError(
+                f"{node_name}.{tier.value} pins {pinned!r}, which is not in the model catalog"
+            )
+        chosen = catalog[pinned]
+        selection = "pinned"
+        rationale = f"pinned: {entry['pin_reason']}"
+    else:
+        chosen = select_model(catalog, node_name, entry["min_capability_rank"], profile)
+        selection = "selected"
+        alternatives = sorted(
+            (
+                (estimated_cost_usd(other, profile), other.model_id)
+                for other in catalog.values()
+                if node_name in other.verified_for
+                and other.capability_rank >= entry["min_capability_rank"]
+                and other.model_id != chosen.model_id
+            ),
+        )
+        beat = ", ".join(f"{name} ${cost:.4f}" for cost, name in alternatives) or "no alternative"
+        rationale = (
+            f"cheapest verified model at rank >= {entry['min_capability_rank']} "
+            f"(beat: {beat})"
+        )
+
     return RoutingDecision(
         node_name=node_name,
         tier=tier,
-        model=entry["model"],
+        model=chosen.model_id,
         effort=entry["effort"],
         max_output_tokens=entry["max_output_tokens"],
+        estimated_cost_usd=round(estimated_cost_usd(chosen, profile), 6),
+        selection=selection,
+        rationale=rationale,
     )

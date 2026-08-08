@@ -1,0 +1,72 @@
+# What models exist, what they cost, and which nodes have EVIDENCE they are good enough (ADR-0015).
+#
+# `core/model_routing.py` computes the model from this file plus the per-(node, tier) policy in
+# model_routing.yaml -- no model name is hardcoded against a tier any more. Change a price or add a
+# benchmark result here and every qualifying node re-selects on the next invocation.
+#
+# `verified_for` is a HARD GATE, not documentation. A node may only be routed to a model listed
+# here for it, and a model earns that listing by a benchmark recorded in
+# docs/qa/verification-report.md -- never by being plausible. Adding a model to this catalog does
+# not make it eligible for anything.
+#
+# capability_rank is a coarse ordering used by a tier to say "at least Sonnet-class". It is not a
+# quality score and adjacent ranks do not claim a measurable difference; the evidence is
+# verified_for.
+
+claude-haiku-4-5-20251001:
+  input_usd_per_mtok: 1.00
+  output_usd_per_mtok: 5.00
+  capability_rank: 1
+  price_note: "Anthropic first-party list price, checked 2026-08-08."
+  # Benchmarked 2026-08-08 (tests/system/test_critic_discrimination.py): caught all three planted
+  # factual errors in a corrupted CBCUS01C narration (0.00/0.20/0.40), matching Opus 5's detection
+  # at 2.3x lower cost and scoring the APPL-EOF error more decisively. NOT verified for
+  # spec_extractor -- see the Sonnet entries for why that bar is high.
+  verified_for:
+    - spec_critic
+
+claude-sonnet-4-6:
+  input_usd_per_mtok: 3.00
+  output_usd_per_mtok: 15.00
+  capability_rank: 2
+  price_note: "Anthropic first-party list price, checked 2026-08-08. No introductory discount."
+  # FAILED the spec_extractor benchmark on CBACT04C, 2026-08-08. It narrated the unreachable
+  # `ELSE PERFORM 1050-UPDATE-ACCOUNT` branch as live -- "the loop's outer ELSE branch fires on the
+  # next iteration and calls 1050-UPDATE-ACCOUNT once more to flush the last account" -- which is
+  # backwards: the loop exits rather than re-entering, so the final account's interest is never
+  # posted. A confident, plausible-looking wrong answer about financial posting.
+  #
+  # Also strictly dominated on price by claude-sonnet-5 while that model's introductory rate holds
+  # (see its price_note). Listed here so that domination is checkable data rather than an assertion
+  # in a pull request.
+  verified_for: []
+
+claude-sonnet-5:
+  input_usd_per_mtok: 2.00
+  output_usd_per_mtok: 10.00
+  capability_rank: 3
+  price_note: >-
+    Introductory pricing through 2026-08-31; list price reverts to $3.00/$15.00 after that.
+    Checked 2026-08-08. Sonnet 5 also uses the newer tokenizer: measured on the identical CBACT04C
+    prompt it consumed 40,099 input tokens where Sonnet 4.6 consumed 30,246 -- +32.6%, confirming
+    the documented ~30% for COBOL specifically. So once the intro rate lapses its effective cost
+    per unit of work rises ABOVE Sonnet 4.6's rather than matching it. Re-check after 2026-08-31.
+  # FAILED the same spec_extractor benchmark, in the same way: "the main loop still performs one
+  # final 1050-UPDATE-ACCOUNT call after EOF to flush the last account's accumulated interest".
+  # Same wrong claim the hand-verified golden fixture made before Opus 5 corrected it.
+  verified_for: []
+
+claude-opus-5:
+  input_usd_per_mtok: 5.00
+  output_usd_per_mtok: 25.00
+  capability_rank: 4
+  price_note: "Anthropic first-party list price, checked 2026-08-08."
+  # spec_extractor: the only model benchmarked on CBACT04C that identified the unreachable
+  # ELSE branch (6/6 source-verified hard facts, vs 5/6 for both Sonnets, where the missing sixth
+  # was actively narrated wrong). Its finding also corrected a real error in this repo's own
+  # hand-verified golden fixture.
+  # spec_critic: matched Haiku's detection (3/3) but at 2.3x the cost, so it is eligible and simply
+  # never selected for that node -- which is the selection function working, not a wasted entry.
+  verified_for:
+    - spec_extractor
+    - spec_critic
