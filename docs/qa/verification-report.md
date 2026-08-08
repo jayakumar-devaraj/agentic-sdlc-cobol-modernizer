@@ -13,7 +13,8 @@ was never treated as proof on its own.
 pytest --cov=cobol_modernizer --cov-report=term-missing --cov-fail-under=90
 ```
 
-As of this report: **258 tests passed, 99.50% overall coverage.**
+As of this report: **284 tests passed (1 skipped — the opt-in live-CLI test), 99.47% overall
+coverage.**
 
 | Module | Coverage |
 |---|---|
@@ -21,14 +22,15 @@ As of this report: **258 tests passed, 99.50% overall coverage.**
 | `core/contracts.py` | 100% |
 | `core/design_outputs.py` | 100% |
 | `core/guardrails.py` | 100% |
+| `core/model_client.py` | 99% |
 | `core/model_routing.py` | 100% |
 | `core/schema_export.py` | 100% |
 | `core/source_units.py` | 100% |
 | `core/structured_output.py` | 100% |
 | `graph/design_graph.py` | 100% |
-| `nodes/solution_architect.py` | 98% |
-| `nodes/spec_critic.py` | 97% |
-| `nodes/spec_extractor.py` | 97% |
+| `nodes/solution_architect.py` | 100% |
+| `nodes/spec_critic.py` | 100% |
+| `nodes/spec_extractor.py` | 100% |
 | `parsing/cobol_parser.py` | 98% |
 | `prompts_registry_client/loader.py` | 100% |
 | `tools/knowledge_store.py` | 100% |
@@ -40,10 +42,10 @@ As of this report: **258 tests passed, 99.50% overall coverage.**
 only runs when the module is executed directly rather than through the installed console script —
 that script's real behavior is verified as a real process instead (see the `design` end-to-end
 entry below).
-`nodes/spec_extractor.py`, `nodes/spec_critic.py`, and `nodes/solution_architect.py`'s uncovered
-lines are `_default_narrate`/`_default_critique`/`_default_architect`'s bodies respectively (the
-real Anthropic API calls) — see "Not yet covered" below for why, and what covers the rest of each
-module instead.
+The three node modules reached 100% with ADR-0013: their `_default_*` bodies used to be untested
+live-API calls and are now one-liners delegating to `core/model_client.call_model`, which the
+SDK-backend tests exercise. `core/model_client.py`'s single uncovered line is an
+`AssertionError("unreachable")` guarding the end of the retry loop.
 
 ## Functional verification
 
@@ -508,7 +510,59 @@ contract with control-plane and `capsys` is an in-process approximation of it.
   programs is indistinguishable at a review gate from a complete one.
 
 **Command**: `pytest tests/system/test_design_graph.py tests/system/test_cli_design.py tests/system/test_cli_contract.py -v`
-**Result**: 29/29 passed.
+**Result**: 30/30 passed.
+
+### `core/model_client.py` — the real `claude` CLI, and the retry policy (ADR-0013)
+
+**Verified**: every claim ADR-0013 makes about the CLI backend was measured against the real
+`claude` CLI (2.1.212) *before* the module was written, not asserted from documentation.
+
+- **A subscription really is enough — no API credential.** `claude -p --output-format json`
+  returned a result with `ANTHROPIC_API_KEY` unset. This is what closes the long-standing "no
+  credential in this environment" blocker.
+- **A 40 KB payload over stdin works.** Confirms the argv path would have been wrong: a real
+  `CBACT04C` prompt is tens of kilobytes, past the ~32 KB Windows command-line limit.
+- **`--system-prompt-file` is genuinely applied.** Passing
+  `prompts/registry/spec_critic/v1_0_0.md` made the model answer *as* `spec_critic`, asking for
+  the narration and Known Facts it expects — the prompt was in force, not ignored.
+- **Per-call harness overhead, measured**: 19,549 cache-creation tokens with the default system
+  prompt, 9,819 with it replaced ($0.0399 → $0.0207 notional). Recorded because it is a real cost
+  of this backend and a genuine reason to prefer the SDK at production volume.
+- **A live round-trip through `call_model` passes** — `test_live_claude_cli_round_trip`, run
+  explicitly with `COBOL_MODERNIZER_RUN_LIVE_CLI_TESTS=1`. Every other test in that module is a
+  fake wearing the CLI's shape; only this one proves the shape is right.
+
+**Retry policy verified by call count, not by hope**: retryable statuses (429/500/503), timeouts,
+and SDK connection failures each retry and then succeed; a 4xx is attempted exactly once; the loop
+stops at `MAX_ATTEMPTS` rather than running forever. Backoff is confirmed bounded by the cap and
+actually jittered (30 samples, all distinct values, each equal to what was really slept).
+
+**A real accident, recorded rather than quietly fixed.** Changing the default backend to
+`claude_cli` did **not** fail `tests/system/test_cli_design.py`. Those tests fake
+`anthropic.Anthropic`, which is no longer the default path, so they silently began spawning real
+`claude` subprocesses against a live subscription and the suite hung. A test that quietly costs
+money and calls a live model is worse than one that fails. `tests/conftest.py` now pins the backend
+for the whole suite, and any test wanting the real CLI must declare a `live_claude_cli` marker
+*and* opt in by environment. The general lesson: **when a default changes, every fake positioned at
+the old default becomes a silent pass-through**, and a green suite will not say so.
+
+**Side effect worth noting**: `spec_extractor`, `spec_critic`, and `solution_architect` all reach
+100% module coverage for the first time. Their `_default_*` bodies used to be the untested live-API
+calls; they are now one-liners delegating to `call_model`, which the SDK-backend tests exercise.
+
+**Command**: `pytest tests/system/test_model_client.py -v`
+**Result**: 25 passed, 1 skipped (the live test, unless opted in); with the opt-in, 26 passed.
+
+### Bounded fan-out — the concurrency cap (plan pillar 25)
+
+**Verified**: `MAX_CONCURRENT_PROGRAMS` (default 4) is actually enforced, not merely configured.
+The test runs 8 branches against a cap of 2 and asserts **peak observed concurrency**, because a
+cap that is defined but never passed to `invoke()` would still satisfy a constant check — that
+being the exact bug worth catching. Confirmed falsifiable: removing the `config={"max_concurrency":
+...}` argument makes all 8 branches run at once and the test fails naming that count.
+
+**Command**: `pytest tests/system/test_design_graph.py -v`
+**Result**: 12/12 passed.
 
 ### CI itself — verified on GitHub, not just locally
 
@@ -521,10 +575,17 @@ mermaid-diagram-parse check reused from `agentic-sdlc-control-plane`.
 
 ## Not yet covered (honest gaps, not silently skipped)
 
-- **None of `spec_extractor`, `spec_critic`, or `solution_architect`'s real model calls are tested
-  against a live Anthropic API.** This development environment has no `ANTHROPIC_API_KEY` (or
-  equivalent) available to `_default_narrate`/`_default_critique`/`_default_architect`, so none of
-  the three has ever actually been invoked — only every deterministic step upstream of each (field
+- **No full `design` run has been executed against real models yet.** This gap changed shape with
+  ADR-0013 rather than closing. What is now proven: a real `claude` CLI round-trip through
+  `call_model` works on a subscription, with no API credential
+  (`test_live_claude_cli_round_trip`). What is still unproven: the three nodes' *actual* prompts
+  against real models — no `spec.md` has been narrated, critiqued, or architected by a live model,
+  so nobody has read real output and judged it. Until that run happens, the prose quality of
+  `spec.md`, the usefulness of `spec_critic`'s per-rule scores, and the soundness of
+  `solution_architect`'s batch/REST design are all unevaluated. That run is now possible and
+  cheap; it is the obvious next verification step.
+- *(historical, superseded above)* The original form of this gap was that
+  `_default_narrate`/`_default_critique`/`_default_architect` had never been invoked at all — only every deterministic step upstream of each (field
   mapping, paragraph extraction, domain-entity merging, prompt construction, guardrail wrapping,
   fidelity checks, JSON parsing) is verified against real data; every test injects a fake
   `narrate`/`critique`/`architect` in its place. This is a real gap, not a mock standing in for a

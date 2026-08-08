@@ -45,6 +45,7 @@ from __future__ import annotations
 
 import logging
 import operator
+import os
 from pathlib import Path
 from typing import Annotated, TypedDict
 
@@ -62,6 +63,15 @@ from cobol_modernizer.nodes.spec_critic import CritiqueFn, critique_spec
 from cobol_modernizer.nodes.spec_extractor import NarrateFn, SpecExtractionResult, extract_spec
 
 logger = logging.getLogger(__name__)
+
+#: Upper bound on program branches running at once. Fan-out was previously unbounded: one thread
+#: and two model calls per `--programs` entry, with nothing stopping a 200-program invocation from
+#: opening 400 concurrent calls and being rate-limited into a retry storm. The cap is the real
+#: backpressure mechanism (plan pillar 25); `core/model_client.py`'s jittered backoff handles what
+#: still gets throttled. Four is a deliberate starting point, not a benchmarked number -- it
+#: matches Track C's own program count, so today's full run is unthrottled while a larger one is
+#: bounded. Raise it once a real run shows headroom.
+MAX_CONCURRENT_PROGRAMS = int(os.getenv("COBOL_MODERNIZER_MAX_CONCURRENCY", "4"))
 
 
 def _optional(name: str, value: object | None) -> dict:
@@ -261,7 +271,8 @@ def run_design(
             "worktree_root": str(worktree_root),
             "program_names": list(program_names),
             "program_entries": [],
-        }
+        },
+        config={"max_concurrency": MAX_CONCURRENT_PROGRAMS},
     )
 
     entries_by_name = {entry.program_name: entry for entry in final_state["program_entries"]}

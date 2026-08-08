@@ -44,10 +44,10 @@ from __future__ import annotations
 from collections.abc import Callable
 from pathlib import Path
 
-import anthropic
 from pydantic import BaseModel
 
 from cobol_modernizer.core.guardrails import InjectionFlag, prepare_untrusted_cobol_for_prompt
+from cobol_modernizer.core.model_client import call_model
 from cobol_modernizer.core.model_routing import resolve_model
 from cobol_modernizer.core.source_units import iter_source_units
 from cobol_modernizer.parsing.cobol_parser import (
@@ -241,15 +241,9 @@ NarrateFn = Callable[[str, str, str], str]
 
 
 def _default_narrate(model: str, system_prompt: str, user_content: str) -> str:
-    """Call the real Anthropic API. Not exercised by this repo's own tests -- see module docstring."""
-    client = anthropic.Anthropic()
-    response = client.messages.create(
-        model=model,
-        max_tokens=4096,
-        system=system_prompt,
-        messages=[{"role": "user", "content": user_content}],
-    )
-    return "".join(block.text for block in response.content if block.type == "text")
+    """Call a real model through `core/model_client.py` (ADR-0013), which owns backend choice,
+    timeout, retry/backoff, and usage capture -- this node does not reimplement any of that."""
+    return call_model(_NODE_NAME, model, system_prompt, user_content).text
 
 
 def _load_system_prompt() -> str:

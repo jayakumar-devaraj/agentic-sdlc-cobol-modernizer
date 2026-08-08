@@ -30,11 +30,17 @@ stdout. Every tool underneath (`parsing/`, `pic_mapper`, `tenant_repo`, `guardra
 `knowledge_store`, `model_routing`, `source_units`, `structured_output`) is independently tested
 against real CardDemo source (`docs/qa/verification-report.md`).
 
-Two honest limits on that. The three **live Anthropic calls have never run** — this development
-environment has no API credential, so every test injects a fake at the SDK boundary and everything
-above it is real; and the **`generate` half does not exist yet** (Milestone C4), so
-`modernization_engineer`, `build_validator`, and the self-healing compile loop in the diagram are
-target design, not built code.
+Every model call goes through one client (`core/model_client.py`, ADR-0013) that owns backend
+choice, timeout, bounded retry with jittered backoff, and per-call token/cost capture — so no node
+reimplements any of that, and a rate limit is handled once rather than three times. Program
+branches are capped rather than fanning out without limit.
+
+Two honest limits. **No full `design` run against real models has happened yet** — a live
+round-trip through the `claude` CLI is verified, but no `spec.md` has been narrated, critiqued, or
+architected by a real model and read by a human, so output *quality* is unevaluated. And the
+**`generate` half does not exist yet** (Milestone C4), so `modernization_engineer`,
+`build_validator`, and the self-healing compile loop in the diagram are target design, not built
+code.
 
 ### How this repo fits in the platform
 
@@ -184,8 +190,11 @@ py -3.12 -m venv .venv
 ./.venv/Scripts/cobol-modernizer generate --design <path>/design.json --tenant-repo <path> --output <path> --json
 ```
 
-`design` is real and runs the full pipeline. It needs an Anthropic API credential in the
-environment (`ANTHROPIC_API_KEY`), since all three of its nodes call a model; it writes
+`design` is real and runs the full pipeline. By default it reaches a model through the **`claude`
+CLI** (ADR-0013), which authenticates from an existing Claude subscription — **no API key
+required**. Set `COBOL_MODERNIZER_MODEL_BACKEND=anthropic_sdk` to use the Anthropic API directly
+instead (needs `ANTHROPIC_API_KEY`); that is the right choice for a deployment that needs
+per-tenant quotas and real cost attribution. It writes
 `<output>/design.json` and `<output>/<PROGRAM>/spec.md` per program, and exits non-zero with a
 `status: "error"` object on stdout if anything fails. Pass `--run-id` to reuse control-plane's own
 audit-log run id, so its records and this CLI's stderr logs share one identifier; omit it and one

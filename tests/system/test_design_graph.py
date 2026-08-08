@@ -22,6 +22,7 @@ from pathlib import Path
 import pytest
 
 from cobol_modernizer.core.contracts import DesignDocument
+from cobol_modernizer.graph import design_graph
 from cobol_modernizer.graph.design_graph import build_design_graph, run_design
 from cobol_modernizer.tools.tenant_repo import TenantRepoFileNotFoundError
 
@@ -155,6 +156,42 @@ def test_program_branches_actually_run_concurrently():
         f"no overlap between branches -- they ran sequentially. spans={spans}"
     )
     assert len(threads) > 1, f"all branches ran on one thread: {threads}"
+
+
+def test_concurrent_branches_are_capped(monkeypatch):
+    """Fan-out is bounded, so a large `--programs` list cannot open unlimited concurrent calls.
+
+    Asserted by peak observed concurrency rather than by reading the constant back: a cap that is
+    configured but not actually passed to `invoke` would still pass a constant check, and that is
+    exactly the bug worth catching. Uses 8 branches against a cap of 2, so the two numbers cannot
+    be confused for each other.
+    """
+    monkeypatch.setattr(design_graph, "MAX_CONCURRENT_PROGRAMS", 2)
+
+    lock = threading.Lock()
+    state = {"active": 0, "peak": 0}
+
+    def counting_narrate(model: str, system_prompt: str, user_content: str) -> str:
+        with lock:
+            state["active"] += 1
+            state["peak"] = max(state["peak"], state["active"])
+        time.sleep(0.15)
+        with lock:
+            state["active"] -= 1
+        return faithful_narrate(model, system_prompt, user_content)
+
+    # Repeat the real programs to get more branches than the cap without inventing fixtures.
+    programs = ALL_PROGRAMS * 2
+    run_design(
+        FIXTURE_ROOT,
+        programs,
+        narrate=counting_narrate,
+        critique=confident_critique,
+        architect=make_architect(programs),
+    )
+
+    assert state["peak"] <= 2, f"cap not enforced: {state['peak']} branches ran at once"
+    assert state["peak"] > 1, "nothing ran concurrently; the test would pass even if serialized"
 
 
 def test_output_order_follows_the_requested_order_under_staggered_branch_timing():
