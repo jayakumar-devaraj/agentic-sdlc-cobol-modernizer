@@ -43,6 +43,7 @@ from pydantic import BaseModel
 from cobol_modernizer.core.guardrails import prepare_untrusted_cobol_for_prompt
 from cobol_modernizer.core.model_routing import resolve_model
 from cobol_modernizer.core.source_units import iter_source_units
+from cobol_modernizer.core.structured_output import strip_code_fence
 from cobol_modernizer.nodes.spec_extractor import (
     PicMapping,
     SpecExtractionResult,
@@ -248,20 +249,6 @@ def build_critique_prompt(worktree_root: Path, extraction: SpecExtractionResult)
     )
 
 
-def _strip_code_fence(text: str) -> str:
-    """Strip a leading/trailing ``` (optionally ```json) fence, if the model added one anyway.
-
-    The prompt explicitly forbids this, but stripping a syntactic wrapper the model added despite
-    that instruction is not "guessing at data" -- the JSON payload itself is still parsed and
-    validated as-is afterward; this only removes formatting around it.
-    """
-    stripped = text.strip()
-    if stripped.startswith("```"):
-        stripped = re.sub(r"^```[a-zA-Z]*\n?", "", stripped)
-        stripped = re.sub(r"\n?```$", "", stripped)
-    return stripped.strip()
-
-
 def _parse_rule_confidence(raw_response: str) -> list[RuleConfidence]:
     """Parse the critic model's JSON response into structured `RuleConfidence` entries.
 
@@ -270,7 +257,7 @@ def _parse_rule_confidence(raw_response: str) -> list[RuleConfidence]:
             missing a required field or has a `confidence` outside `[0.0, 1.0]`. No repair-retry
             -- see the module docstring.
     """
-    candidate = _strip_code_fence(raw_response)
+    candidate = strip_code_fence(raw_response)
     try:
         parsed = json.loads(candidate)
     except json.JSONDecodeError as exc:

@@ -98,10 +98,16 @@ class SpecExtractionResult(BaseModel):
     spec_markdown: str
 
 
-def extract_field_mappings(
+def group_field_mappings_by_source(
     resolved: ResolvedProgram,
-) -> tuple[list[PicMapping], list[UnsupportedField]]:
-    """Map every field in the program's own source and every copybook it `COPY`s.
+) -> dict[str, tuple[list[PicMapping], list[UnsupportedField]]]:
+    """Map every field, grouped by which source unit (program or named copybook) it came from.
+
+    The same per-field mapping `extract_field_mappings` performs, kept grouped instead of
+    flattened -- pulled out once `nodes/solution_architect.py` needed the per-copybook view (to
+    unify the same copybook's fields into one domain entity across every program that `COPY`s it)
+    rather than `spec_extractor`'s own flat, whole-program view. `extract_field_mappings` is now a
+    thin wrapper over this; its behavior and return order are unchanged.
 
     A field declaration with no `PIC`/`PICTURE` token of its own (a group/record header, e.g.
     `01 ACCOUNT-RECORD.` or a bare `01 FILLER REDEFINES DB2-FORMAT-TS.`) is structural, not a leaf
@@ -111,13 +117,15 @@ def extract_field_mappings(
     source of truth for whether a clause is actually resolvable.
 
     Returns:
-        `(field_mappings, unsupported_fields)` -- every leaf field with a `PIC` clause ends up in
-        exactly one of the two lists, never silently dropped.
+        `{source_label: (field_mappings, unsupported_fields)}`, in `iter_source_units` order --
+        every leaf field with a `PIC` clause ends up in exactly one of the two lists for its
+        source, never silently dropped.
     """
-    mappings: list[PicMapping] = []
-    unsupported: list[UnsupportedField] = []
+    grouped: dict[str, tuple[list[PicMapping], list[UnsupportedField]]] = {}
 
     for source_label, source_text in iter_source_units(resolved):
+        mappings: list[PicMapping] = []
+        unsupported: list[UnsupportedField] = []
         for field in extract_working_storage_fields(source_text):
             if "PIC" not in field.raw_text.upper():
                 continue
@@ -134,7 +142,26 @@ def extract_field_mappings(
                 )
                 continue
             mappings.append(mapping)
+        grouped[source_label] = (mappings, unsupported)
 
+    return grouped
+
+
+def extract_field_mappings(
+    resolved: ResolvedProgram,
+) -> tuple[list[PicMapping], list[UnsupportedField]]:
+    """Map every field in the program's own source and every copybook it `COPY`s, flattened.
+
+    See `group_field_mappings_by_source` for the per-copybook view and the full docstring this
+    function shares.
+
+    Returns:
+        `(field_mappings, unsupported_fields)` -- every leaf field with a `PIC` clause ends up in
+        exactly one of the two lists, never silently dropped.
+    """
+    grouped = group_field_mappings_by_source(resolved)
+    mappings = [mapping for source_mappings, _ in grouped.values() for mapping in source_mappings]
+    unsupported = [field for _, source_unsupported in grouped.values() for field in source_unsupported]
     return mappings, unsupported
 
 
