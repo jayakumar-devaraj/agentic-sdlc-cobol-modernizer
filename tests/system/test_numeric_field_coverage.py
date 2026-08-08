@@ -18,11 +18,12 @@ a transcription of the output: `ACCT-CURR-BAL PIC S9(10)V99` is written here as
 The assertions are exact-set equality per program, not per-field spot checks, so a numeric field
 that stops being mapped fails here even though every field that *is* mapped is still correct.
 
-**This file also records a real defect the cross-check found**, in
-`test_file_and_linkage_section_records_are_not_extracted_yet` -- see that test's own docstring and
-`docs/qa/verification-report.md`. The gate is met for the scope the pipeline actually parses today
-(`WORKING-STORAGE` plus every `COPY`d copybook) and **not** met for `FILE SECTION`/`LINKAGE SECTION`
-record layouts, which the parser never looks at.
+**This file found a real defect**, which is why its last three tests read the way they do. The
+first version of this cross-check covered only `WORKING-STORAGE` plus copybooks, because that was
+all `cobol_parser` looked at -- `FILE SECTION` record layouts and `LINKAGE SECTION` parameters were
+neither mapped nor flagged, just absent, hiding Track C's only two `COMP-3` fields among others.
+That was recorded here as failing-by-inversion tests, then fixed by ADR-0011 and the tests
+inverted. The gate is now met for all four programs across every section they declare fields in.
 """
 
 from __future__ import annotations
@@ -136,6 +137,48 @@ SHARED_IO_BOILERPLATE: NumericExpectation = {
     "TIMING": ("S9(9)", 9, 0, True, UsageClause.BINARY),
 }
 
+#: Each program's `FILE SECTION` (`FD`) record layouts and `LINKAGE SECTION` parameters -- the
+#: fields ADR-0011's parser fix made reachable. Hand-derived from the same real source as
+#: everything above.
+#:
+#: `CBACT01C`'s `ARR-*` fields are deliberately absent: they sit in the `ARR-ACCT-BAL OCCURS 5
+#: TIMES` group, so ADR-0011 isolates them rather than mapping an array element as a scalar. They
+#: are asserted separately, as unsupported, in
+#: `test_the_fixed_occurs_group_is_isolated_rather_than_mapped_as_scalars`.
+PROGRAM_FILE_AND_LINKAGE_NUMERIC: dict[str, NumericExpectation] = {
+    "CBCUS01C": {
+        "FD-CUST-ID": ("9(09)", 9, 0, False, D),
+    },
+    "CBACT01C": {
+        "FD-ACCT-ID": ("9(11)", 11, 0, False, D),
+        "OUT-ACCT-ID": ("9(11)", 11, 0, False, D),
+        "OUT-ACCT-CURR-BAL": ("S9(10)V99", 12, 2, True, D),
+        "OUT-ACCT-CREDIT-LIMIT": ("S9(10)V99", 12, 2, True, D),
+        "OUT-ACCT-CASH-CREDIT-LIMIT": ("S9(10)V99", 12, 2, True, D),
+        "OUT-ACCT-CURR-CYC-CREDIT": ("S9(10)V99", 12, 2, True, D),
+        # The one COMP-3 field in Track C that is both reachable and unambiguous. Its USAGE
+        # clause is on a continuation line ("PIC S9(10)V99" / "USAGE IS COMP-3."), so this also
+        # confirms the parser joins a wrapped declaration into one sentence before mapping it.
+        "OUT-ACCT-CURR-CYC-DEBIT": ("S9(10)V99", 12, 2, True, UsageClause.COMP_3),
+    },
+    "CBTRN02C": {
+        "FD-ACCT-ID": ("9(11)", 11, 0, False, D),
+        "FD-TRANCAT-ACCT-ID": ("9(11)", 11, 0, False, D),
+        "FD-TRANCAT-CD": ("9(04)", 4, 0, False, D),
+    },
+    "CBACT04C": {
+        "FD-TRANCAT-ACCT-ID": ("9(11)", 11, 0, False, D),
+        "FD-TRANCAT-CD": ("9(04)", 4, 0, False, D),
+        "FD-XREF-CUST-NUM": ("9(09)", 9, 0, False, D),
+        "FD-XREF-ACCT-ID": ("9(11)", 11, 0, False, D),
+        "FD-DIS-TRAN-CAT-CD": ("9(04)", 4, 0, False, D),
+        "FD-ACCT-ID": ("9(11)", 11, 0, False, D),
+        # LINKAGE SECTION: part of EXTERNAL-PARMS, the record CBACT04C's own
+        # "PROCEDURE DIVISION USING EXTERNAL-PARMS" names -- the program's real input parameter.
+        "PARM-LENGTH": ("S9(04)", 4, 0, True, UsageClause.COMP),
+    },
+}
+
 PROGRAM_WORKING_STORAGE_NUMERIC: dict[str, NumericExpectation] = {
     # The smallest Track C program: the shared boilerplate and nothing else numeric.
     "CBCUS01C": {**SHARED_IO_BOILERPLATE},
@@ -175,8 +218,9 @@ PROGRAM_COPYBOOKS: dict[str, list[str]] = {
 
 
 def expected_numeric_fields(program_name: str) -> NumericExpectation:
-    """The full hand-derived numeric-field expectation for one program: its own plus its copybooks'."""
+    """The full hand-derived numeric-field expectation for one program: every section, plus copybooks."""
     expected = dict(PROGRAM_WORKING_STORAGE_NUMERIC[program_name])
+    expected.update(PROGRAM_FILE_AND_LINKAGE_NUMERIC[program_name])
     for copybook in PROGRAM_COPYBOOKS[program_name]:
         expected.update(COPYBOOK_NUMERIC[copybook])
     return expected
@@ -265,81 +309,63 @@ def test_the_only_money_fields_track_c_actually_has_are_scale_two():
     assert seen == money_fields
 
 
-# --- The defect this cross-check found ----------------------------------------------------------
-
-
-#: Real numeric declarations in each program's `FILE SECTION` / `LINKAGE SECTION`, hand-read from
-#: the fixture source. None of these reach `pic_mapper` today -- see the test below.
-UNREACHED_SECTION_FIELDS: dict[str, list[str]] = {
-    "CBCUS01C": ["FD-CUST-ID"],
-    "CBACT01C": [
-        "FD-ACCT-ID",
-        "OUT-ACCT-ID",
-        "OUT-ACCT-CURR-BAL",
-        "OUT-ACCT-CREDIT-LIMIT",
-        "OUT-ACCT-CASH-CREDIT-LIMIT",
-        "OUT-ACCT-CURR-CYC-CREDIT",
-        "OUT-ACCT-CURR-CYC-DEBIT",  # PIC S9(10)V99 USAGE IS COMP-3
-        "ARR-ACCT-ID",
-        "ARR-ACCT-CURR-BAL",
-        "ARR-ACCT-CURR-CYC-DEBIT",  # PIC S9(10)V99 USAGE IS COMP-3
-    ],
-    "CBTRN02C": ["FD-ACCT-ID", "FD-TRANCAT-ACCT-ID", "FD-TRANCAT-CD"],
-    "CBACT04C": [
-        "FD-TRANCAT-ACCT-ID",
-        "FD-TRANCAT-CD",
-        "FD-XREF-CUST-NUM",
-        "FD-XREF-ACCT-ID",
-        "FD-DIS-TRAN-CAT-CD",
-        "FD-ACCT-ID",
-        "PARM-LENGTH",  # LINKAGE SECTION: the run-date parameter's own length field
-    ],
-}
+# --- The defect this cross-check found, now fixed (ADR-0011) ------------------------------------
+#
+# These tests were originally written to assert the *gap* -- that FILE SECTION and LINKAGE SECTION
+# fields never reached pic_mapper at all -- so it could not quietly persist as prose in a document.
+# ADR-0011's parser change closed it, and they are inverted here, which is what they were written
+# to be. They stay because the gap took an exhaustive cross-check to notice in the first place: a
+# regression would be just as silent the second time.
 
 
 @pytest.mark.parametrize("program_name", TRACK_C_PROGRAMS)
-def test_file_and_linkage_section_records_are_not_extracted_yet(program_name):
-    """A real gap this cross-check found: `FILE SECTION`/`LINKAGE SECTION` fields never reach `pic_mapper`.
+def test_file_and_linkage_section_records_are_extracted(program_name):
+    # Every FILE SECTION / LINKAGE SECTION field in the hand-derived tables really is reached now.
+    # The equality check above already covers this; asserting it by name as well is what makes a
+    # regression report "FD-ACCT-ID went missing" rather than a dict diff.
+    actual = actual_numeric_fields(program_name)
+    for field_name in PROGRAM_FILE_AND_LINKAGE_NUMERIC[program_name]:
+        assert field_name in actual, f"{field_name} is no longer reached -- ADR-0011 regressed"
 
-    `parsing/cobol_parser.extract_working_storage_fields` slices out the `WORKING-STORAGE SECTION`
-    body and stops at the next section/division header, so a program's `FD` record layouts and its
-    `LINKAGE SECTION` parameters are never parsed at all. They are not mapped *and* not flagged as
-    unsupported -- they are simply absent, which is the one outcome this repo's error handling is
-    built to avoid (`UnsupportedPicConstructError`'s whole point is failing loudly rather than
-    going quiet).
 
-    Three concrete consequences, all real, none hypothetical:
+def test_comp_3_is_reached_and_correctly_typed():
+    # Track C's COMP-3 story end to end. CBACT01C's FILE SECTION holds both real declarations:
+    # OUT-ACCT-CURR-CYC-DEBIT maps cleanly, and ARR-ACCT-CURR-CYC-DEBIT is isolated instead --
+    # not because it is COMP-3, but because it is inside the fixed OCCURS group (see below).
+    # pic_mapper always handled COMP-3 correctly; before ADR-0011 nothing could reach it.
+    actual = actual_numeric_fields("CBACT01C")
+    raw_pic, precision, scale, signed, usage = actual["OUT-ACCT-CURR-CYC-DEBIT"]
+    assert (raw_pic, precision, scale, signed) == ("S9(10)V99", 12, 2, True)
+    assert usage is UsageClause.COMP_3
 
-    - `CBACT01C`'s `OUT-ACCT-CURR-CYC-DEBIT` and `ARR-ACCT-CURR-CYC-DEBIT` are declared
-      `PIC S9(10)V99 USAGE IS COMP-3` -- the **only** `COMP-3` fields anywhere in Track C, and the
-      construct Milestone C2's gate names explicitly. Neither is seen.
-    - `CBACT04C`'s `PARM-LENGTH` is part of `EXTERNAL-PARMS`, the record its own
-      `PROCEDURE DIVISION USING` clause names -- the program's actual input parameter.
-    - Every program's `FD` record layouts describe the files the batch job reads and writes, which
-      `solution_architect` would need to design a Spring Batch reader/writer against.
+    # And it is the only one -- no other program has a mapped COMP-3 field.
+    for program_name in ["CBCUS01C", "CBTRN02C", "CBACT04C"]:
+        for name, (_, _, _, _, other_usage) in actual_numeric_fields(program_name).items():
+            assert other_usage is not UsageClause.COMP_3, f"unexpected COMP-3: {name}"
 
-    This test asserts the gap as it stands today so it is recorded and falsifiable rather than
-    described in prose somewhere. It is expected to be **inverted** by the follow-up change that
-    extends the parser to these sections -- at which point Milestone C2's gate is met in full, not
-    only for the `WORKING-STORAGE`-plus-copybooks scope the tests above cover.
-    """
-    resolved = resolve_program(FIXTURE_ROOT, program_name)
+
+def test_the_fixed_occurs_group_is_isolated_rather_than_mapped_as_scalars():
+    # CBACT01C's "05 ARR-ACCT-BAL OCCURS 5 TIMES." is the only fixed OCCURS in Track C. Per
+    # ADR-0011 its fields are isolated: mapping ARR-ACCT-CURR-BAL as one BigDecimal would be a
+    # correct precision on a wrong cardinality, which compiles and is wrong.
+    #
+    # All four fields in the group are flagged, not just the two genuinely inside the array --
+    # the parser hands pic_mapper a whole 01-level group with no nesting information, the same
+    # over-flagging ADR-0006 documents for REDEFINES. Asserted explicitly rather than left
+    # implicit, since over-flagging is a real cost being accepted, not an accident.
+    resolved = resolve_program(FIXTURE_ROOT, "CBACT01C")
     grouped = group_field_mappings_by_source(resolved)
-    seen = {m.field_name for mappings, _ in grouped.values() for m in mappings}
-    seen |= {u.field_name for _, unsupported in grouped.values() for u in unsupported}
+    mappings, unsupported = grouped["CBACT01C"]
 
-    for field_name in UNREACHED_SECTION_FIELDS[program_name]:
-        assert field_name not in seen, (
-            f"{field_name} is now reachable -- the parser gap this test records has been fixed; "
-            f"invert this test and fold these fields into the hand-derived tables above."
-        )
+    arr_unsupported = {u.field_name for u in unsupported if (u.field_name or "").startswith("ARR-")}
+    assert arr_unsupported == {
+        "ARR-ACCT-ID",
+        "ARR-ACCT-CURR-BAL",
+        "ARR-ACCT-CURR-CYC-DEBIT",
+        "ARR-FILLER",
+    }
+    for field in unsupported:
+        if (field.field_name or "").startswith("ARR-"):
+            assert "OCCURS (fixed)" in field.reason
 
-
-def test_no_comp_3_field_is_currently_mapped_anywhere_in_track_c():
-    # The corollary of the gap above, stated directly: Track C's only two real COMP-3 declarations
-    # are both in CBACT01C's FILE SECTION, so no mapped field anywhere carries COMP-3 usage today.
-    # docs/cobol-construct-support-matrix.md's "no COMP-3 in any Track C copybook" claim is still
-    # accurate as written -- these two are in a program's FILE SECTION, not in a copybook.
-    for program_name in TRACK_C_PROGRAMS:
-        for name, (_, _, _, _, usage) in actual_numeric_fields(program_name).items():
-            assert usage is not UsageClause.COMP_3, f"{name} in {program_name} is COMP-3"
+    assert not [m for m in mappings if (m.field_name or "").startswith("ARR-")]

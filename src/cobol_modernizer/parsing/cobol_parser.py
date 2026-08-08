@@ -1,10 +1,15 @@
 """Hand-rolled structural parser for Track C's deliberately bounded COBOL grammar.
 
 Per ADR-0002 (docs/adr/0002-a-hand-rolled-parser-for-a-deliberately-bounded-grammar.md), this
-module walks `WORKING-STORAGE` for field declarations, `PROCEDURE DIVISION` for paragraph
+module walks the `DATA DIVISION` for field declarations, `PROCEDURE DIVISION` for paragraph
 boundaries, and resolves straight `COPY` by name -- it does not attempt `REDEFINES`,
 `OCCURS ... DEPENDING ON`, or `COPY ... REPLACING`. Those constructs, when found, are reported as
 unsupported so a caller can route them to a human-in-the-loop gate, never guessed at.
+
+"The whole `DATA DIVISION`" is deliberate and was not always true: this module used to read only
+the `WORKING-STORAGE SECTION`, which meant `FILE SECTION` record layouts and `LINKAGE SECTION`
+parameters were neither parsed nor reported -- they were absent, the one outcome the paragraph
+above is written to prevent. See ADR-0011.
 
 Everything this module returns is *structure*, not interpretation: it hands `tools/pic_mapper.py`
 enough text (a field's own declaration plus its 01-level group siblings) to make its own
@@ -35,6 +40,7 @@ _LEVEL_LINE_RE = re.compile(r"^\s*(\d{1,2})\s+(\S+)")
 _COPY_RE = re.compile(r"\bCOPY\s+([A-Za-z0-9\-]+)\b(.*?)\.", re.IGNORECASE | re.DOTALL)
 _REPLACING_RE = re.compile(r"\bREPLACING\b", re.IGNORECASE)
 _WORKING_STORAGE_RE = re.compile(r"^\s*WORKING-STORAGE\s+SECTION\b", re.IGNORECASE | re.MULTILINE)
+_DATA_DIVISION_RE = re.compile(r"^\s*DATA\s+DIVISION\s*\.", re.IGNORECASE | re.MULTILINE)
 _SECTION_OR_DIVISION_RE = re.compile(
     r"^\s*[A-Z0-9\-]+\s+(?:SECTION|DIVISION)\b", re.IGNORECASE | re.MULTILINE
 )
@@ -142,13 +148,40 @@ def extract_copy_statements(source_text: str) -> list[CopyStatement]:
     return statements
 
 
-def _working_storage_region(source_text: str) -> str:
-    """Slice out the `WORKING-STORAGE SECTION` body, or the whole text if there's no header.
+def _data_description_region(source_text: str) -> str:
+    """Slice out every field-declaring region: the whole `DATA DIVISION`, or the text as given.
 
-    Copybooks like `CVACT01Y.cpy` have no `WORKING-STORAGE SECTION` header of their own -- they
-    are `COPY`-included directly into a program's own `WORKING-STORAGE SECTION` -- so their own
-    top-level `01`-level record structure is used as-is.
+    Originally this read only the `WORKING-STORAGE SECTION` and stopped at the next section
+    header. That silently dropped two whole categories of real declaration -- `FILE SECTION`
+    (`FD`) record layouts and `LINKAGE SECTION` parameters -- which were then neither mapped nor
+    flagged as unsupported, but simply absent. See ADR-0011 for how that was found and why
+    absence was the worst of the available failure modes.
+
+    Three cases, in order:
+
+    1. A full program with a `DATA DIVISION` header: everything from that header to the
+       `PROCEDURE DIVISION` (or end of text). This deliberately spans `FILE SECTION`,
+       `WORKING-STORAGE SECTION`, and `LINKAGE SECTION` in one region rather than slicing each
+       out by name -- a section this parser has never seen (`LOCAL-STORAGE SECTION`, say) is then
+       included by default rather than silently skipped, which is the failure direction ADR-0011
+       argues for.
+    2. A fragment with a `WORKING-STORAGE SECTION` header but no `DATA DIVISION` (what the tests
+       for this module's earlier behavior use): unchanged, that section's body only.
+    3. Neither header -- a copybook like `CVACT01Y.cpy`, which is `COPY`-included directly into a
+       program's own section and carries only its `01`-level record: used as-is.
+
+    Non-field lines inside the region (`FILE SECTION.`, `FD ACCTFILE-FILE.`, a multi-line `FD`
+    with `RECORD IS VARYING ... DEPENDING ON`, `COPY CVACT01Y.`) are not level-numbered, so
+    `extract_record_fields` skips them without needing to recognize each one -- see its own
+    handling.
     """
+    data_division_match = _DATA_DIVISION_RE.search(source_text)
+    if data_division_match is not None:
+        region_start = data_division_match.end()
+        procedure_match = _PROCEDURE_DIVISION_RE.search(source_text, pos=region_start)
+        region_end = procedure_match.start() if procedure_match else len(source_text)
+        return source_text[region_start:region_end]
+
     header_match = _WORKING_STORAGE_RE.search(source_text)
     if header_match is None:
         return source_text
@@ -178,18 +211,25 @@ def _iter_field_sentences(region_text: str) -> list[tuple[str, str]]:
     return sentences
 
 
-def extract_working_storage_fields(source_text: str) -> list[FieldDeclaration]:
-    """Parse a `WORKING-STORAGE SECTION` (or a bare copybook record) into field declarations.
+def extract_record_fields(source_text: str) -> list[FieldDeclaration]:
+    """Parse every record declaration in the source into field declarations.
 
-    Fields are grouped by their enclosing top-level (`01`-level) record; every field's
-    `sibling_text` is the raw text of every other field in the same group, so a caller can feed
-    it straight into `pic_mapper.map_pic_clause(..., adjacent_text=...)`.
+    Renamed from `extract_working_storage_fields`, which was accurate about what it did and
+    wrong about what it should do: it read only the `WORKING-STORAGE SECTION`, so `FILE SECTION`
+    record layouts and `LINKAGE SECTION` parameters were never parsed at all (ADR-0011). The name
+    is what made that easy to miss on review -- reading a program's fields through a function
+    called `extract_working_storage_fields` looks correct until you ask what else there is.
+
+    Covers the whole `DATA DIVISION` for a program, and the bare record for a copybook -- see
+    `_data_description_region`. Fields are grouped by their enclosing top-level (`01`-level)
+    record; every field's `sibling_text` is the raw text of every other field in the same group,
+    so a caller can feed it straight into `pic_mapper.map_pic_clause(..., adjacent_text=...)`.
 
     `FILLER` fields are still returned (structurally -- a real copybook like `CVACT01Y.cpy` ends
     with one), but with `name=None` and `is_filler=True` since a `FILLER` has no meaningful name
     to extract.
     """
-    region_text = _working_storage_region(source_text)
+    region_text = _data_description_region(source_text)
 
     groups: list[list[tuple[str, str, str]]] = []  # each: list of (level, name_token, raw_text)
     current_group: list[tuple[str, str, str]] | None = None

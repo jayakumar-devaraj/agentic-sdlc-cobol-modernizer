@@ -67,9 +67,15 @@ def test_critique_spec_confidence_is_not_forced_to_zero_for_a_faithful_narration
 # --- CBACT01C: a real stress case for the unsupported-construct carry-forward check -----------
 
 
-def test_cbact01c_carries_forward_all_28_real_unsupported_fields():
+def test_cbact01c_carries_forward_all_32_real_unsupported_fields():
+    # 28 -> 32 under ADR-0011. The 28 REDEFINES-isolated CODATECN fields are unchanged; the four
+    # new ones are the ARR-ARRAY-REC group in the FILE SECTION, isolated by its fixed
+    # "OCCURS 5 TIMES". Worth keeping split out: the carry-forward check has to handle both
+    # reasons, and the OCCURS ones do not have REDEFINES anywhere in their text.
     extraction = _faithful_extraction("CBACT01C")
-    assert len(extraction.unsupported_fields) == 28
+    assert len(extraction.unsupported_fields) == 32
+    assert len([u for u in extraction.unsupported_fields if "REDEFINES" in u.reason]) == 28
+    assert len([u for u in extraction.unsupported_fields if "OCCURS (fixed)" in u.reason]) == 4
     assert compute_fidelity_issues(extraction) == []
 
 

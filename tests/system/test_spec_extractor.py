@@ -108,8 +108,11 @@ def test_redefines_fields_are_isolated_not_silently_mapped(resolved_cbact04c):
     assert "DB2-FORMAT-TS" in mapped_names
 
     # Real numbers, computed by running this module against the real fixture (see module
-    # docstring) -- every field is accounted for in exactly one of the two lists.
-    assert len(mappings) == 75
+    # docstring) -- every field is accounted for in exactly one of the two lists. 75 -> 93 under
+    # ADR-0011, which added CBACT04C's FILE SECTION record layouts and its LINKAGE SECTION
+    # EXTERNAL-PARMS; the unsupported count is unchanged because the program has no fixed OCCURS
+    # and its two REDEFINES groups were already in WORKING-STORAGE.
+    assert len(mappings) == 93
     assert len(unsupported) == 9
 
 
@@ -203,7 +206,7 @@ def test_extract_spec_calls_narrate_with_resolved_model_and_real_system_prompt()
     assert result.program_name == "CBACT04C"
     assert result.spec_markdown == "# Fake spec.md\n\nNarration stands in for a real model call."
     assert len(result.paragraph_names) == 22
-    assert len(result.field_mappings) == 75
+    assert len(result.field_mappings) == 93  # 75 before ADR-0011 added FILE/LINKAGE sections
     assert len(result.unsupported_fields) == 9
     assert result.injection_flags == []
 

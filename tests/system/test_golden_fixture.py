@@ -58,7 +58,7 @@ def test_golden_extraction_matches_the_plan_s_verified_real_targets(golden_extra
     # The plan's own verified-real numbers for CBACT04C (re-derived from the live fixture, not
     # hardcoded in this test in isolation -- see the module docstring).
     assert len(golden_extraction.paragraph_names) == 22
-    assert len(golden_extraction.field_mappings) == 75
+    assert len(golden_extraction.field_mappings) == 93  # 75 before ADR-0011's FILE/LINKAGE fix
     assert len(golden_extraction.unsupported_fields) == 9
 
 

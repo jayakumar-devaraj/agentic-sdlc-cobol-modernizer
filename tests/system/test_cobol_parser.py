@@ -1,4 +1,4 @@
-"""Tests for cobol_parser against real CardDemo source, cross-checked with pic_mapper.
+﻿"""Tests for cobol_parser against real CardDemo source, cross-checked with pic_mapper.
 
 The fixtures below are transcribed byte-for-byte (including the real "ACCT-EXPIRAION-DATE"
 typo and fixed-format trailing-space padding) from `carddemo-tenant-service`, fetched directly:
@@ -20,7 +20,7 @@ from cobol_modernizer.parsing.cobol_parser import (
     UnsupportedCopyConstructError,
     extract_copy_statements,
     extract_paragraphs,
-    extract_working_storage_fields,
+    extract_record_fields,
 )
 from cobol_modernizer.tools.pic_mapper import (
     PicFieldType,
@@ -118,7 +118,7 @@ def test_extract_paragraphs_last_paragraph_body_runs_to_end_of_procedure_divisio
     assert "FILE STATUS IS: NNNN" in last.body
 
 
-# --- extract_working_storage_fields (CVACT01Y.cpy) --------------------------------------------
+# --- extract_record_fields (CVACT01Y.cpy) --------------------------------------------
 
 
 EXPECTED_NAMED_FIELDS = [
@@ -140,7 +140,7 @@ EXPECTED_NAMED_FIELDS = [
 def test_extract_fields_from_copybook_without_its_own_working_storage_header():
     # CVACT01Y.cpy has no WORKING-STORAGE SECTION header of its own -- it's COPY-included into
     # one. The parser must still recover its 01-level record structure.
-    fields = extract_working_storage_fields(CVACT01Y_SOURCE)
+    fields = extract_record_fields(CVACT01Y_SOURCE)
     names = [f.name for f in fields]
     assert "ACCOUNT-RECORD" in names
     for expected_name, *_ in EXPECTED_NAMED_FIELDS:
@@ -149,14 +149,14 @@ def test_extract_fields_from_copybook_without_its_own_working_storage_header():
 
 def test_extract_fields_preserves_the_real_expiraion_typo():
     # Real source, real typo -- transcribed exactly, not silently corrected.
-    fields = extract_working_storage_fields(CVACT01Y_SOURCE)
+    fields = extract_record_fields(CVACT01Y_SOURCE)
     names = [f.name for f in fields]
     assert "ACCT-EXPIRAION-DATE" in names
     assert "ACCT-EXPIRATION-DATE" not in names
 
 
 def test_filler_field_has_no_name_but_does_not_break_parsing():
-    fields = extract_working_storage_fields(CVACT01Y_SOURCE)
+    fields = extract_record_fields(CVACT01Y_SOURCE)
     filler_fields = [f for f in fields if f.is_filler]
     assert len(filler_fields) == 1
     assert filler_fields[0].name is None
@@ -168,7 +168,7 @@ def test_filler_field_has_no_name_but_does_not_break_parsing():
 
 
 def test_group_header_field_name_has_no_trailing_period():
-    fields = extract_working_storage_fields(CVACT01Y_SOURCE)
+    fields = extract_record_fields(CVACT01Y_SOURCE)
     header = next(f for f in fields if f.level == "01")
     assert header.name == "ACCOUNT-RECORD"
 
@@ -183,7 +183,7 @@ def test_every_cvact01y_field_round_trips_through_pic_mapper(
     # Integration check between cobol_parser and pic_mapper: every field this parser extracts
     # from the real copybook must be feedable straight into map_pic_clause and produce the
     # correct deterministic mapping.
-    fields = extract_working_storage_fields(CVACT01Y_SOURCE)
+    fields = extract_record_fields(CVACT01Y_SOURCE)
     field = next(f for f in fields if f.name == field_name)
     mapping = map_pic_clause(field.raw_text, adjacent_text=field.sibling_text)
     assert mapping.field_type == expected_type
@@ -195,7 +195,7 @@ def test_every_cvact01y_field_round_trips_through_pic_mapper(
 def test_acct_curr_bal_round_trip_precision_and_scale():
     # The specific round-trip called out explicitly: ACCT-CURR-BAL is PIC S9(10)V99, which must
     # map to BigDecimal precision=12 (10 integer + 2 decimal digits), scale=2.
-    fields = extract_working_storage_fields(CVACT01Y_SOURCE)
+    fields = extract_record_fields(CVACT01Y_SOURCE)
     acct_curr_bal = next(f for f in fields if f.name == "ACCT-CURR-BAL")
     mapping = map_pic_clause(acct_curr_bal.raw_text, adjacent_text=acct_curr_bal.sibling_text)
     assert mapping.java_type == "BigDecimal"
@@ -204,17 +204,56 @@ def test_acct_curr_bal_round_trip_precision_and_scale():
     assert mapping.signed is True
 
 
-def test_extract_fields_from_source_with_its_own_working_storage_header():
-    # CBACT04C.cbl (unlike CVACT01Y.cpy) has its own WORKING-STORAGE SECTION header, followed
-    # by a LINKAGE SECTION -- the region must be sliced correctly between the two, not run past
-    # WORKING-STORAGE into LINKAGE.
-    fields = extract_working_storage_fields(CBACT04C_SOURCE)
+def test_every_data_division_section_is_extracted_not_just_working_storage():
+    # This test previously asserted the opposite for LINKAGE: that PARM-LENGTH must *not* appear,
+    # on the reading that this function returned WORKING-STORAGE fields and anything else would be
+    # a leak. ADR-0011 reversed that reading. CBACT04C declares fields in three sections and all
+    # three are real: FILE SECTION record layouts are the files the batch job reads and writes,
+    # and EXTERNAL-PARMS is the record its own "PROCEDURE DIVISION USING EXTERNAL-PARMS" names.
+    # Returning only one of the three was the defect, not the contract.
+    fields = extract_record_fields(CBACT04C_SOURCE)
     names = [f.name for f in fields]
-    assert "APPL-RESULT" in names
-    assert "WS-MONTHLY-INT" in names
-    # LINKAGE SECTION fields must not leak into the WORKING-STORAGE field list.
-    assert "PARM-LENGTH" not in names
-    assert "EXTERNAL-PARMS" not in names
+
+    assert "FD-TRANCAT-ACCT-ID" in names  # FILE SECTION
+    assert "APPL-RESULT" in names  # WORKING-STORAGE SECTION
+    assert "WS-MONTHLY-INT" in names  # WORKING-STORAGE SECTION
+    assert "PARM-LENGTH" in names  # LINKAGE SECTION
+    assert "EXTERNAL-PARMS" in names  # LINKAGE SECTION, the 01-level group header itself
+
+
+def test_procedure_division_statements_are_not_mistaken_for_field_declarations():
+    # The region now runs from DATA DIVISION to PROCEDURE DIVISION rather than stopping at the
+    # next section header, so the boundary that actually matters is the PROCEDURE DIVISION one.
+    # CBACT04C's paragraph names are numeric-prefixed ("1300-COMPUTE-INTEREST"), which is exactly
+    # the shape a level-number regex could misread if the region ran past the division header.
+    fields = extract_record_fields(CBACT04C_SOURCE)
+    names = [f.name for f in fields]
+    for paragraph_name in ["1000-TCATBALF-GET-NEXT", "1300-COMPUTE-INTEREST", "1400-COMPUTE-FEES"]:
+        assert paragraph_name not in names
+
+
+def test_a_fragment_with_working_storage_but_no_data_division_still_stops_at_the_next_section():
+    # The middle of _data_description_region's three cases, and the only one no real Track C
+    # fixture reaches: real programs have a DATA DIVISION header (case 1) and real copybooks have
+    # neither header (case 3). A source fragment carrying only a WORKING-STORAGE SECTION header
+    # keeps the pre-ADR-0011 behavior -- that section's body, stopping at the next section -- so
+    # the fallback is exercised rather than documented and left to rot.
+    source = (
+        "       WORKING-STORAGE SECTION.\n"
+        "       01  WS-COUNTER              PIC 9(04).\n"
+        "       LINKAGE SECTION.\n"
+        "       01  LK-PARM                 PIC X(10).\n"
+    )
+    names = [f.name for f in extract_record_fields(source)]
+    assert names == ["WS-COUNTER"]
+
+
+def test_a_copybook_with_no_division_headers_is_still_read_whole():
+    # CVACT01Y.cpy has neither a DATA DIVISION nor a WORKING-STORAGE SECTION header -- it is
+    # COPYd into a program's own section. The fallback that handles this predates ADR-0011 and
+    # must survive it, since every copybook in Track C depends on it.
+    fields = extract_record_fields(CVACT01Y_SOURCE)
+    assert [f.name for f in fields][:3] == ["ACCOUNT-RECORD", "ACCT-ID", "ACCT-ACTIVE-STATUS"]
 
 
 def test_two_bytes_alpha_redefines_on_group_header_is_visible_via_sibling_text():
@@ -222,7 +261,7 @@ def test_two_bytes_alpha_redefines_on_group_header_is_visible_via_sibling_text()
     # REDEFINES clause sits on the 01-level group header, not on either child field's own line.
     # sibling_text must still surface it so pic_mapper's adjacent_text scan catches it -- the
     # ADR-0002 boundary applies to the whole record structure, not just the field's own line.
-    fields = extract_working_storage_fields(CBACT04C_SOURCE)
+    fields = extract_record_fields(CBACT04C_SOURCE)
     two_bytes_right = next(f for f in fields if f.name == "TWO-BYTES-RIGHT")
     assert "REDEFINES" in two_bytes_right.sibling_text
     with pytest.raises(UnsupportedPicConstructError):
@@ -238,9 +277,9 @@ def test_extract_paragraphs_with_no_procedure_division_returns_empty_list():
     assert extract_paragraphs(source) == []
 
 
-def test_extract_working_storage_fields_handles_a_field_declaration_missing_its_final_period():
+def test_extract_record_fields_handles_a_field_declaration_missing_its_final_period():
     # A malformed/truncated source (last physical line has no terminating period) must still be
     # returned as a best-effort sentence rather than silently dropped.
     source = "01  WS-GROUP.\n    05  WS-FIELD  PIC X(5)"
-    fields = extract_working_storage_fields(source)
+    fields = extract_record_fields(source)
     assert any(f.name == "WS-FIELD" for f in fields)

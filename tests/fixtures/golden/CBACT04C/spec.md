@@ -204,6 +204,22 @@ every file operation's error branch, immediately before `9999-ABEND-PROGRAM`.
 
 | Field | PIC | Java type | Precision | Scale | Signed |
 |---|---|---|---|---|---|
+| FD-TRANCAT-ACCT-ID | 9(11) | BigDecimal | 11 | 0 | False |
+| FD-TRANCAT-TYPE-CD | X(02) | String | - | - | False |
+| FD-TRANCAT-CD | 9(04) | BigDecimal | 4 | 0 | False |
+| FD-FD-TRAN-CAT-DATA | X(33) | String | - | - | False |
+| FD-XREF-CARD-NUM | X(16) | String | - | - | False |
+| FD-XREF-CUST-NUM | 9(09) | BigDecimal | 9 | 0 | False |
+| FD-XREF-ACCT-ID | 9(11) | BigDecimal | 11 | 0 | False |
+| FD-XREF-FILLER | X(14) | String | - | - | False |
+| FD-DIS-ACCT-GROUP-ID | X(10) | String | - | - | False |
+| FD-DIS-TRAN-TYPE-CD | X(02) | String | - | - | False |
+| FD-DIS-TRAN-CAT-CD | 9(04) | BigDecimal | 4 | 0 | False |
+| FD-DISCGRP-DATA | X(34) | String | - | - | False |
+| FD-ACCT-ID | 9(11) | BigDecimal | 11 | 0 | False |
+| FD-ACCT-DATA | X(289) | String | - | - | False |
+| FD-TRANS-ID | X(16) | String | - | - | False |
+| FD-ACCT-DATA | X(334) | String | - | - | False |
 | TCATBALF-STAT1 | X | String | - | - | False |
 | TCATBALF-STAT2 | X | String | - | - | False |
 | XREFFILE-STAT1 | X | String | - | - | False |
@@ -238,6 +254,8 @@ every file operation's error branch, immediately before `9999-ABEND-PROGRAM`.
 | WS-FIRST-TIME | X(01) | String | - | - | False |
 | WS-RECORD-COUNT | 9(09) | BigDecimal | 9 | 0 | False |
 | WS-TRANID-SUFFIX | 9(06) | BigDecimal | 6 | 0 | False |
+| PARM-LENGTH | S9(04) | BigDecimal | 4 | 0 | True |
+| PARM-DATE | X(10) | String | - | - | False |
 | TRANCAT-ACCT-ID | 9(11) | BigDecimal | 11 | 0 | False |
 | TRANCAT-TYPE-CD | X(02) | String | - | - | False |
 | TRANCAT-CD | 9(04) | BigDecimal | 4 | 0 | False |

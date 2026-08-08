@@ -188,13 +188,13 @@ def test_fixed_occurs_on_the_parent_group_line_still_rejects_its_children():
     # The real shape from CBACT01C's FILE SECTION, verbatim: OCCURS sits on the parent group
     # line and the PIC-carrying children below it have no OCCURS text of their own. Checking
     # only a field's own declaration would map both children as scalars and never notice.
-    parent_and_siblings = "\n".join([
-        "       01 ARR-ARRAY-REC.",
-        "          05  ARR-ACCT-ID                PIC 9(11).",
-        "          05  ARR-ACCT-BAL OCCURS 5  TIMES.",
-        "            10  ARR-ACCT-CURR-CYC-DEBIT  PIC S9(10)V99",
-        "                                         USAGE IS COMP-3.",
-    ])
+    parent_and_siblings = (
+        "       01 ARR-ARRAY-REC.\n"
+        "          05  ARR-ACCT-ID                PIC 9(11).\n"
+        "          05  ARR-ACCT-BAL OCCURS 5  TIMES.\n"
+        "            10  ARR-ACCT-CURR-CYC-DEBIT  PIC S9(10)V99\n"
+        "                                         USAGE IS COMP-3."
+    )
     child = "            10  ARR-ACCT-CURR-BAL        PIC S9(10)V99."
     with pytest.raises(UnsupportedPicConstructError) as exc_info:
         map_pic_clause(child, adjacent_text=parent_and_siblings)
