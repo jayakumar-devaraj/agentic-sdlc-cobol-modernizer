@@ -13,7 +13,7 @@ was never treated as proof on its own.
 pytest --cov=cobol_modernizer --cov-report=term-missing --cov-fail-under=90
 ```
 
-As of this report: **179 tests passed, 98.20% overall coverage.**
+As of this report: **191 tests passed, 98.20% overall coverage.**
 
 | Module | Coverage |
 |---|---|
@@ -307,6 +307,29 @@ checks (`CUST-ID`, `DALYTRAN-AMT`, etc.) matching their real `PIC` clauses.
 **Command**: `pytest tests/system/test_tenant_repo.py tests/system/test_spec_extractor_track_c_programs.py -v`
 **Result**: 28/28 passed.
 
+### `spec_critic` against the other three real Track C programs
+
+**Verified**: `critique_spec`'s deterministic fidelity-check machinery against `CBCUS01C`,
+`CBACT01C`, and `CBTRN02C`, using the same faithful-narrate technique (a narration reproducing the
+real Known Facts block verbatim) already used to verify `spec_extractor` generalizes to these
+programs. This is **not** a substitute for hand-verified narrative prose (`CBACT04C`'s golden
+fixture remains the only one of the four with that level of verification — a real, still-open
+question, see "Not yet covered" below) — it confirms the deterministic checking machinery itself
+behaves correctly against real, structurally different data.
+
+`CBACT01C` is the real stress case: its `CODATECN` copybook contributes 28 real unsupported
+fields — the largest set of any Track C program (`CBACT04C`'s is 9) — confirmed correctly carried
+forward as a whole (a faithful narration produces zero fidelity issues against all 28), with
+individual-field detection confirmed via a fabricated entry (the same real cross-referencing
+limitation ADR-0006 documents for `CBACT04C` applies here too: `CODATECN`'s `REDEFINES` groups
+embed sibling field names inside each other's `reason` text, so no single real field name is ever
+fully absent from a faithful narration to test against directly). A corrupted field precision
+(`CUST-ID` in `CBCUS01C`, `ACCT-CURR-BAL` in `CBACT01C`, `DALYTRAN-AMT` in `CBTRN02C`) is correctly
+detected for each program.
+
+**Command**: `pytest tests/system/test_spec_critic_track_c_programs.py -v`
+**Result**: 12/12 passed.
+
 ### CI itself — verified on GitHub, not just locally
 
 Every module above was also verified green on a **real GitHub Actions run**, not assumed from a
@@ -331,6 +354,13 @@ mermaid-diagram-parse check reused from `agentic-sdlc-control-plane`.
   `.claude/agents/qa.md` requires for anything a unit test can't meaningfully reach. This also
   means ADR-0004's own deferred question — whether `spec_critic`'s cheaper model tier holds up
   empirically once real critiques exist — is still unanswered.
+- **Only `CBACT04C` has a hand-verified golden fixture.** `CBCUS01C`, `CBACT01C`, and `CBTRN02C`
+  now have real, byte-verified source and confirmed-working `spec_extractor`/`spec_critic`
+  extraction (via the faithful-Known-Facts-narration technique, not hand-written prose) — but none
+  has a `CBACT04C`-level golden `spec.md` a human read and verified line-by-line. Whether that
+  level of verification is required for all four programs before Milestone C2's gate counts as met
+  is a real, not-yet-decided question — see the master plan's Status note, not silently resolved
+  by the deterministic-level verification above.
 - **Auditing/provenance** (`CLAUDE.md`'s stated concern: every generated artifact traces back to
   the exact COBOL source line it came from) is now source-label-precise (every fact
   `spec_extractor` emits names the exact program or copybook it came from) but not yet
