@@ -1,5 +1,5 @@
 {
-  "description": "The `cobol-modernizer design --json` stdout contract -- a summary, not the full `design.json`.\n\nPer ADR-0008 decision 3: `status` reports only whether this invocation itself succeeded: it is\ndeliberately not `\"gate_required\"` or similar -- whether `gate_item_count > 0` should pause\nanything is control-plane's gate policy to decide, not a judgment this repo's CLI bakes in.",
+  "description": "The `cobol-modernizer design --json` stdout contract -- a summary, not the full `design.json`.\n\nPer ADR-0008 decision 3: `status` reports only whether this invocation itself succeeded: it is\ndeliberately not `\"gate_required\"` or similar -- whether `gate_item_count > 0` should pause\nanything is control-plane's gate policy to decide, not a judgment this repo's CLI bakes in.\n\n`run_id` echoes the correlation id this invocation logged under (ADR-0012). Control-plane may\nsupply its own via `--run-id`, in which case this is that value verbatim and its audit-log\nentry and this CLI's stderr lines share one identifier; otherwise the CLI generates one and\nthis field is how the caller learns it. Echoing it back matters most in the `status=\"error\"`\ncase, which is exactly when someone needs to find the right stderr lines.",
   "properties": {
     "detail": {
       "title": "Detail",
@@ -26,6 +26,10 @@
       "title": "Programs",
       "type": "array"
     },
+    "run_id": {
+      "title": "Run Id",
+      "type": "string"
+    },
     "status": {
       "enum": [
         "ok",
@@ -37,6 +41,7 @@
   },
   "required": [
     "status",
+    "run_id",
     "programs",
     "output_path",
     "gate_item_count",

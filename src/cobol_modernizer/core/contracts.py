@@ -174,10 +174,17 @@ class DesignCliResult(BaseModel):
     Per ADR-0008 decision 3: `status` reports only whether this invocation itself succeeded: it is
     deliberately not `"gate_required"` or similar -- whether `gate_item_count > 0` should pause
     anything is control-plane's gate policy to decide, not a judgment this repo's CLI bakes in.
+
+    `run_id` echoes the correlation id this invocation logged under (ADR-0012). Control-plane may
+    supply its own via `--run-id`, in which case this is that value verbatim and its audit-log
+    entry and this CLI's stderr lines share one identifier; otherwise the CLI generates one and
+    this field is how the caller learns it. Echoing it back matters most in the `status="error"`
+    case, which is exactly when someone needs to find the right stderr lines.
     """
 
     status: Literal["ok", "error"]
     phase: Literal["design"] = "design"
+    run_id: str
     programs: list[str]
     output_path: str
     gate_item_count: int

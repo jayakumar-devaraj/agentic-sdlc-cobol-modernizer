@@ -12,6 +12,7 @@ import json
 from pathlib import Path
 
 import pytest
+from pydantic import ValidationError
 
 from cobol_modernizer.core.contracts import (
     LOW_CONFIDENCE_THRESHOLD,
@@ -258,6 +259,7 @@ def test_design_document_carries_a_real_typed_unified_design(golden_extraction):
 def test_design_cli_result_reports_facts_not_gate_policy():
     result = DesignCliResult(
         status="ok",
+        run_id="cp-run-42",
         programs=["CBACT04C"],
         output_path="/tmp/design.json",
         gate_item_count=9,
@@ -266,6 +268,20 @@ def test_design_cli_result_reports_facts_not_gate_policy():
     assert result.phase == "design"
     # No "gate_required"/"blocked" status exists on this model at all -- see ADR-0008 decision 3.
     assert result.status in ("ok", "error")
+
+
+def test_design_cli_result_requires_a_run_id():
+    # run_id is required, not optional-with-a-default (ADR-0012): a result that could silently
+    # omit its correlation id would be useless in exactly the status="error" case where someone
+    # needs to find the matching stderr lines.
+    with pytest.raises(ValidationError):
+        DesignCliResult(
+            status="ok",
+            programs=["CBACT04C"],
+            output_path="/tmp/design.json",
+            gate_item_count=9,
+            detail="wrote design.json",
+        )
 
 
 def test_generate_cli_result_minimal_shape():
