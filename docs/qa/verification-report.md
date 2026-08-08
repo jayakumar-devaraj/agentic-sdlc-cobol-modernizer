@@ -13,17 +13,19 @@ was never treated as proof on its own.
 pytest --cov=cobol_modernizer --cov-report=term-missing --cov-fail-under=90
 ```
 
-As of this report: **235 tests passed, 98.24% overall coverage.**
+As of this report: **258 tests passed, 99.50% overall coverage.**
 
 | Module | Coverage |
 |---|---|
-| `cli.py` | 92% |
+| `cli.py` | 98% |
 | `core/contracts.py` | 100% |
+| `core/design_outputs.py` | 100% |
 | `core/guardrails.py` | 100% |
 | `core/model_routing.py` | 100% |
 | `core/schema_export.py` | 100% |
 | `core/source_units.py` | 100% |
 | `core/structured_output.py` | 100% |
+| `graph/design_graph.py` | 100% |
 | `nodes/solution_architect.py` | 98% |
 | `nodes/spec_critic.py` | 97% |
 | `nodes/spec_extractor.py` | 97% |
@@ -34,8 +36,10 @@ As of this report: **235 tests passed, 98.24% overall coverage.**
 | `tools/tenant_repo.py` | 100% |
 | `telemetry/logging_config.py` | 100% |
 
-`cli.py`'s uncovered lines are the `not_implemented` skeleton branches for `design`/`generate`
-that Milestones C2–C4 replace with real logic — not a gap in what currently exists.
+`cli.py`'s one uncovered line is the `sys.exit(main())` under `if __name__ == "__main__"`, which
+only runs when the module is executed directly rather than through the installed console script —
+that script's real behavior is verified as a real process instead (see the `design` end-to-end
+entry below).
 `nodes/spec_extractor.py`, `nodes/spec_critic.py`, and `nodes/solution_architect.py`'s uncovered
 lines are `_default_narrate`/`_default_critique`/`_default_architect`'s bodies respectively (the
 real Anthropic API calls) — see "Not yet covered" below for why, and what covers the rest of each
@@ -457,6 +461,55 @@ this repo to look across every program together, not one at a time:
 **Command**: `pytest tests/system/test_solution_architect.py -v`
 **Result**: 22/22 passed.
 
+### The `design` subcommand end-to-end — a real LangGraph run, as a real process (ADR-0012)
+
+**Verified**: `cobol-modernizer design` wired through the real graph over real fixture source, and
+run as an actual OS process rather than only in-process, because the stdout/stderr split is the
+contract with control-plane and `capsys` is an in-process approximation of it.
+
+- **A real four-program run produces real artifacts.** `CBACT04C CBCUS01C CBACT01C CBTRN02C` →
+  exit 0, a **413,532-byte `design.json`** plus one `spec.md` per program, 52
+  `unsupported_construct` gate items (9 + 2 + 32 + 9, matching each program's own verified count),
+  7 unified domain entities, programs in requested order. The written file re-validates through
+  `DesignDocument.model_validate_json`.
+- **The `--json` stdout contract holds under a successful run**, which is the harder case — 49 log
+  lines went to stderr while stdout carried **exactly one line**, parsed as one JSON object. Also
+  verified on the failure path through the installed console script
+  (`.venv/Scripts/cobol-modernizer.exe design --tenant-repo /nonexistent`): exit 1, stdout still
+  exactly one parseable object with `status="error"` and `TenantRepoFileNotFoundError` in `detail`,
+  full traceback on stderr only.
+- **Branches genuinely overlap.** Asserted by observed overlap (latest branch start < earliest
+  branch end) plus more than one thread, rather than a wall-clock threshold that a loaded CI
+  machine could make flaky. Independently confirmed against LangGraph directly: three 1.0s
+  branches complete in 1.01s wall on a real `ThreadPoolExecutor`.
+- **A measured assumption turned out to be wrong, and is recorded rather than quietly fixed.**
+  `run_design` re-orders program entries because fan-in was assumed to follow completion order. It
+  does not: LangGraph applies a reducer's writes in `Send` order, so the raw state is already
+  deterministic — confirmed by deleting the re-ordering and watching the ordering test still pass,
+  then measured directly with randomized per-branch delays over repeated runs. The normalization
+  was kept (ADR-0012 decision 4) but the test now states that it passes either way, and a second
+  test pins LangGraph's behavior so a future change is loud instead of silently becoming the only
+  thing keeping `design.json` deterministic.
+- **Reproducibility asserted directly**: two runs into different directories produce
+  byte-equal `design.json` apart from `generated_at`.
+- **Every node is confirmed to use its own registry prompt and its own routed model.** The test
+  fake dispatches on *system-prompt identity* against the real registry files rather than sniffing
+  substrings, so a prompt mix-up raises instead of silently producing a plausible design. Confirmed
+  the real `config/model_routing.yaml` values resolve through the real lookup: `spec_extractor` and
+  `solution_architect` → `claude-opus-5`, `spec_critic` → `claude-haiku-4-5-20251001`, with exactly
+  one extraction and one critique per program and one architect call per run.
+- **A real LangGraph constraint was found by running the graph**, not by reading docs: a sub-graph
+  state key that collides with its parent's makes every concurrent branch write the same
+  non-reducer channel in one superstep, and LangGraph rejects it
+  (`InvalidUpdateError: At key 'worktree_root': Can receive only one value per step`) even though
+  all branches write an identical value. Hence `branch_worktree_root`.
+- **Failure policy**: one bad program name fails the whole invocation and **writes no partial
+  `design.json`** — asserted directly, since a document silently covering three of four requested
+  programs is indistinguishable at a review gate from a complete one.
+
+**Command**: `pytest tests/system/test_design_graph.py tests/system/test_cli_design.py tests/system/test_cli_contract.py -v`
+**Result**: 29/29 passed.
+
 ### CI itself — verified on GitHub, not just locally
 
 Every module above was also verified green on a **real GitHub Actions run**, not assumed from a
@@ -512,9 +565,13 @@ mermaid-diagram-parse check reused from `agentic-sdlc-control-plane`.
   `spec_extractor` emits names the exact program or copybook it came from) but not yet
   line-precise — see ADR-0006 for why, and what closing this gap would require
   (`parsing/cobol_parser.py` carrying line numbers through field/paragraph extraction).
-- **Structured logging** exists (`telemetry/logging_config.py`, wired into `cli.py`'s invocation
-  lifecycle) but `spec_extractor` isn't wired into the CLI's `design` subcommand yet (that's
-  Milestone C3's `cli.py` wiring, plan step 36) — so it has no real `run_id`/correlation concept
-  to log against yet, and doesn't log internally itself, consistent with every other tool module
-  in this repo (`pic_mapper`, `cobol_parser`, `tenant_repo`, `guardrails`, `knowledge_store`) being
-  pure functions with no logging of their own.
+- **No `low_confidence_rule` gate item has ever been produced by a real model.**
+  `LOW_CONFIDENCE_THRESHOLD = 0.7` (ADR-0008) and `spec_critic`'s cheaper model tier (ADR-0004)
+  are both still uncalibrated for the same reason as the gap above: every critique in every test
+  is a fake returning a chosen score. The threshold is exercised at its boundary by construction,
+  but whether `0.7` separates anything meaningful in practice is unknown.
+- **Control-plane's real gate has not been exercised against a real `design.json`.** The artifact
+  now exists and is schema-valid, which was the missing half; wiring control-plane's side is
+  Track P1 / Milestone C5. Until then, "control-plane's durable gate reviews this" is a design
+  claim backed by control-plane's own verified gate machinery, not by an observed end-to-end run
+  through it.
