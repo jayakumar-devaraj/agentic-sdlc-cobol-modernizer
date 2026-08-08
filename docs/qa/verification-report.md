@@ -13,7 +13,7 @@ was never treated as proof on its own.
 pytest --cov=cobol_modernizer --cov-report=term-missing --cov-fail-under=90
 ```
 
-As of this report: **164 tests passed, 98.20% overall coverage.**
+As of this report: **179 tests passed, 98.20% overall coverage.**
 
 | Module | Coverage |
 |---|---|
@@ -274,6 +274,38 @@ then the real file was regenerated via `scripts/generate_schemas.py` and the tes
 
 **Command**: `pytest tests/system/test_schemas.py -v`
 **Result**: 3/3 passed.
+
+### Real tenant-repo fixtures for the other three Track C programs, and a real corruption caught
+
+**Verified**: `CBCUS01C`, `CBACT01C`, `CBTRN02C` and their real copybooks (`CVCUS01Y`,
+`CODATECN`, `CVTRA06Y`) were fetched from `carddemo-tenant-service` and every file's git blob SHA
+confirmed byte-for-byte against the GitHub Contents API's own `sha` — completing real fixtures for
+all four Track C programs (`CBACT04C` already had one).
+
+**A real corruption was caught during that verification, not after**: `CODATECN.cpy` genuinely has
+`CRLF` line endings in the upstream repo (confirmed via hex dump — every other fetched file is
+`LF`-only). `git add` on this development machine (`core.autocrlf=true`) was silently converting
+its `CRLF` to `LF` while staging the file — the raw downloaded bytes matched the remote SHA
+exactly, but the *staged* blob did not, which would have committed a silently line-ending-corrupted
+copy of real source despite the download itself being verified correct. Fixed with a repo-root
+`.gitattributes` (`tests/fixtures/tenant_repo_sample/** -text`), which disables line-ending
+conversion for this directory on any machine's `autocrlf` setting; re-verified afterward that every
+fixture file's staged blob SHA — old and newly added — still matches the real repo exactly. Two
+regression tests (`test_codatecn_retains_its_real_crlf_line_endings`,
+`test_other_fixture_files_are_lf_only`) act as a cheap, network-free canary if this class of
+corruption ever recurs.
+
+**`spec_extractor`'s deterministic pipeline was confirmed to generalize** to real, structurally
+different programs it had never run against: `CBACT01C`'s `CODATECN` copybook has four real
+`REDEFINES` groups (date-format conversion aliases — a construct shape `CBACT04C` never exercises)
+plus a standalone elementary `REDEFINES` on its own declaration line
+(`WS-REISSUE-DATE REDEFINES WS-ACCT-REISSUE-DATE`), all correctly isolated (28 unsupported fields,
+none silently mapped). `CBTRN02C` (26 paragraphs, 5 copybooks — the largest Track C program) and
+`CBCUS01C` (5 paragraphs — the smallest) both parse and map cleanly, with real field-level spot
+checks (`CUST-ID`, `DALYTRAN-AMT`, etc.) matching their real `PIC` clauses.
+
+**Command**: `pytest tests/system/test_tenant_repo.py tests/system/test_spec_extractor_track_c_programs.py -v`
+**Result**: 28/28 passed.
 
 ### CI itself — verified on GitHub, not just locally
 
