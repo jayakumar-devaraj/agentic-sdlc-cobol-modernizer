@@ -1,4 +1,4 @@
-"""`solution_architect` -- the third `design`-phase node: one unified Java target design.
+﻿"""`solution_architect` -- the third `design`-phase node: one unified Java target design.
 
 `spec_extractor` and `spec_critic` each work one program at a time. This node is the first to look
 across all four Track C programs together, producing `design.json`'s `unified_design`
@@ -43,8 +43,6 @@ import re
 from collections.abc import Callable
 from pathlib import Path
 
-import anthropic
-
 from cobol_modernizer.core.contracts import (
     BatchJobDesign,
     BatchStepDesign,
@@ -55,6 +53,7 @@ from cobol_modernizer.core.contracts import (
     UnifiedDesign,
 )
 from cobol_modernizer.core.guardrails import wrap_untrusted_cobol
+from cobol_modernizer.core.model_client import call_model
 from cobol_modernizer.core.model_routing import resolve_model
 from cobol_modernizer.core.structured_output import strip_code_fence
 from cobol_modernizer.nodes.spec_extractor import group_field_mappings_by_source
@@ -331,15 +330,9 @@ ArchitectFn = Callable[[str, str, str], str]
 
 
 def _default_architect(model: str, system_prompt: str, user_content: str) -> str:
-    """Call the real Anthropic API. Not exercised by this repo's own tests -- see module docstring."""
-    client = anthropic.Anthropic()
-    response = client.messages.create(
-        model=model,
-        max_tokens=4096,
-        system=system_prompt,
-        messages=[{"role": "user", "content": user_content}],
-    )
-    return "".join(block.text for block in response.content if block.type == "text")
+    """Call a real model through `core/model_client.py` (ADR-0013), which owns backend choice,
+    timeout, retry/backoff, and usage capture -- this node does not reimplement any of that."""
+    return call_model(_NODE_NAME, model, system_prompt, user_content).text
 
 
 def _load_system_prompt() -> str:

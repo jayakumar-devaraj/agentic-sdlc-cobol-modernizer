@@ -2,10 +2,16 @@
 
 The one thing replaced here is the Anthropic SDK client itself -- `anthropic.Anthropic` is patched
 so the nodes' own `_default_narrate`/`_default_critique`/`_default_architect` really run, really
-resolve their model from `config/model_routing.yaml`, and really load their registry system
-prompts, but the HTTP call at the bottom returns canned content. Everything above that boundary is
-production code: argument parsing, run-id handling, the LangGraph run, guardrail wrapping, fidelity
-checks, gate-item aggregation, file writing, and the `--json` stdout contract.
+resolve their model from `config/model_routing.yaml`, really pass through
+`core/model_client.call_model`'s retry and usage-capture path, and really load their registry
+system prompts, but the HTTP call at the bottom returns canned content. Everything above that
+boundary is production code: argument parsing, run-id handling, the LangGraph run, guardrail
+wrapping, fidelity checks, gate-item aggregation, file writing, and the `--json` stdout contract.
+
+These tests run against the `anthropic_sdk` backend, pinned by `tests/conftest.py` -- not because
+it is the default (it is not; `claude_cli` is, per ADR-0013) but because it is the backend this
+file's fake actually intercepts. See that conftest for the real accident that made pinning
+mandatory rather than incidental.
 
 That boundary is deliberately as low as it can go. Patching the nodes' injected callables instead
 would have been easier, but `extract_spec(..., narrate=_default_narrate)` binds its default at
@@ -42,9 +48,19 @@ class _FakeTextBlock:
         self.text = text
 
 
+class _FakeUsage:
+    # core/model_client.py records token usage on every call (ADR-0013), so a stand-in response
+    # has to carry it. Values are arbitrary; the assertions here are about wiring, not counts.
+    input_tokens = 1234
+    output_tokens = 56
+    cache_creation_input_tokens = 0
+    cache_read_input_tokens = 0
+
+
 class _FakeResponse:
     def __init__(self, text: str) -> None:
         self.content = [_FakeTextBlock(text)]
+        self.usage = _FakeUsage()
 
 
 class _FakeMessages:
