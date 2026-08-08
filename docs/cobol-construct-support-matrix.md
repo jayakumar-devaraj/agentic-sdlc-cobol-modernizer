@@ -9,12 +9,20 @@ Verified against the real source of the four Track C programs and every copybook
 `CVTRA06Y`, `CVACT01Y`, `CVACT03Y`, `CVCUS01Y`, `CODATECN`) fetched directly from
 `carddemo-tenant-service`, not assumed from the wider CardDemo application.
 
+Two columns that are easy to conflate, kept distinct below: whether a construct is **in scope** for
+Track C, and whether the parser **currently reaches** it. A construct can be both in scope and
+unreached — three rows below are exactly that, all found by one cross-check on 2026-08-07. An
+earlier revision of this table collapsed the two, which is how `COMP-3` came to be recorded as "not
+present in Track C" when `CBACT01C` really does declare it.
+
 | Construct | Track C | Track B | Notes |
 |---|---|---|---|
 | `WORKING-STORAGE` PIC clauses, numeric (`9`, `S9`) | In scope | In scope | Core of `pic_mapper`. |
 | `WORKING-STORAGE` PIC clauses, alphanumeric (`X`) | In scope | In scope | Mapped to `String`. |
 | Signed decimal (`PIC S9(n)V9(m)`) | In scope | In scope | Verified present: `ACCT-CURR-BAL` etc. (`CVACT01Y`, `S9(10)V99`), `TRAN-CAT-BAL`/`TRAN-AMT`/`DALYTRAN-AMT` (`S9(09)V99`), `DIS-INT-RATE` (`S9(04)V99`). All map to `BigDecimal`. |
-| `COMP-3` packed decimal | **Not present in Track C's scope** | In scope if encountered | Verified by reading every copybook the four Track C programs `COPY`: none declares `COMP-3` or any explicit `USAGE` clause — every numeric field is default `DISPLAY` (zoned decimal). The construct-matrix draft assumed COMP-3 might appear here; it does not. `pic_mapper` must still detect and correctly handle it for Track B / any future program, but no Track C fixture exercises that path. |
+| `COMP-3` packed decimal | In scope; **present in Track C, not yet reached by the parser** | In scope | Corrected 2026-08-07 by an exhaustive numeric-field cross-check (`tests/system/test_numeric_field_coverage.py`). The earlier verdict here — "not present in Track C's scope" — was derived by reading every copybook the four programs `COPY`, where it is still true that none declares `COMP-3`. It does not hold for the programs' own source: `CBACT01C` declares `OUT-ACCT-CURR-CYC-DEBIT` and `ARR-ACCT-CURR-CYC-DEBIT` as `PIC S9(10)V99 USAGE IS COMP-3` in its `FILE SECTION`. `pic_mapper` detects `COMP-3` correctly and always has; the reason neither field is mapped today is that `cobol_parser` never parses the `FILE SECTION` at all (see the row below). |
+| `FILE SECTION` (`FD`) record layouts and `LINKAGE SECTION` parameters | In scope; **not yet parsed** — known gap | In scope | `parsing/cobol_parser.extract_working_storage_fields` reads only the `WORKING-STORAGE SECTION`, so `FD` record layouts (the files each batch job reads and writes) and `LINKAGE SECTION` parameters (e.g. `CBACT04C`'s `EXTERNAL-PARMS`, named by its own `PROCEDURE DIVISION USING` clause) are neither mapped nor flagged unsupported — they are absent. Recorded as a falsifiable test and tracked in `docs/qa/verification-report.md`. |
+| `OCCURS` (fixed, no `DEPENDING ON`) | In scope; **not yet reached** | In scope | `CBACT01C`'s `ARR-ACCT-BAL OCCURS 5 TIMES` is the only occurrence in Track C, and it sits in the `FILE SECTION` the row above describes, so nothing exercises it today. Unlike `OCCURS DEPENDING ON`, a fixed `OCCURS` is unambiguous — but mapping its children as scalars would silently drop the array dimension, so this needs a real decision before that section is parsed. |
 | Sequential / VSAM read-only file I/O | In scope | In scope (full VSAM cluster ops in Track B) | Track C only reads existing files; no VSAM cluster definition/IDCAMS handling. |
 | Straight `COPY` | In scope | In scope | All four Track C programs use straight `COPY`, no `REPLACING`. |
 | `COPY ... REPLACING` | **Out of scope** | In scope | Not present in any Track C program; would require resolving pseudo-text substitution. |
