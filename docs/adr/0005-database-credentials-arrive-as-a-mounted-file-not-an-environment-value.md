@@ -1,5 +1,15 @@
 # 0005 - Database credentials arrive as a mounted file, not an environment value
 
+> **Amendment note (2026-08-08, ADR-0016).** The decision below stands unchanged — a mounted file
+> path, never an environment value. What was wrong is the tense: this ADR and four documents that
+> cite it read as though `--db-credentials-file` exists, and it does not. `cli.py` has no such
+> flag, and `knowledge_store.py` is called only by its own tests, which pass a `Path` directly.
+> The flag lands with the first production caller, which ADR-0016 gates on an embedding credential
+> that does not exist here. Adding it now would mean a CLI argument the parser accepts, validates,
+> and hands to nobody — a thing that looks finished and is not. Recorded as a correction rather
+> than edited away, since the gap between a decision and its implementation is exactly what a
+> reader of this ADR needs to see.
+
 ## Context
 
 `tools/knowledge_store.py` (Milestone C2) needs a Postgres connection to

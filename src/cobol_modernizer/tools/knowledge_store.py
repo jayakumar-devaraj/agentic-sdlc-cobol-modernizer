@@ -2,16 +2,25 @@
 
 Per the platform plan, this is "a pgvector index over prior specs/designs, retrieved as few-shot
 context by `spec_extractor`/`solution_architect`". This module owns storage and similarity
-retrieval only -- it deliberately does **not** compute embeddings. Choosing an embedding
-model/provider is an undecided, separate decision nothing in this repo has made yet; conflating
-that choice into this module would be scope creep this module's own docstring should not paper
-over. Every function here takes an already-computed `embedding: list[float]` and treats it as
-opaque data -- the caller (a future node) is responsible for however it obtains that vector.
+retrieval only -- it deliberately does **not** compute embeddings. Every function here takes an
+already-computed `embedding: list[float]` and treats it as opaque data; the caller is responsible
+for however it obtains that vector.
 
-**Credentials (ADR-0005).** Per
+**No production caller exists yet, and that is a decided position rather than an oversight
+(ADR-0016).** Anthropic offers no embedding model, so the `claude` CLI backend that made every
+other model call in this repo real (ADR-0013) cannot close this gap: embeddings need a second
+vendor. ADR-0016 picks Voyage AI's `voyage-code-3` and then declines to wire retrieval, on two
+gates -- no `VOYAGE_API_KEY` exists in this environment, and nobody has shown retrieval would
+*help* a four-program corpus. Read that ADR before adding a caller; the second gate is the one
+easy to skip.
+
+**Credentials (ADR-0005, amended by ADR-0016).** Per
 `docs/adr/0005-database-credentials-arrive-as-a-mounted-file-not-an-environment-value.md`, a
 database credential is delivered as a mounted file whose *path* is passed to this repo's CLI
-(`--db-credentials-file <path>`) -- never as an environment value or embedded in code. That ADR
+-- never as an environment value or embedded in code. **The `--db-credentials-file` flag that will
+carry that path does not exist in `cli.py` yet**: it lands with the first production caller of this
+module, not before, since a flag the parser accepts and hands to nobody looks finished and is not
+(ADR-0016). Callers today pass a `Path` directly, as this module's own tests do. That ADR
 deliberately leaves the file's internal format open; this module's choice is the simplest thing
 that could work: **a single line holding a libpq connection string** (a `postgresql://...` URI,
 or an equivalent `key=value` conninfo string -- anything `psycopg.connect()` accepts directly).
@@ -30,10 +39,12 @@ echo, or include the credentials file's contents in any output, including error 
 invocation, not as a one-time setup script. This is consistent with ADR-0001: this repo has no
 migration tooling and no durable checkpointer of its own, so there is no "already ran once"
 state to remember between invocations; re-asserting the schema exists is the only sound approach.
-`EMBEDDING_DIMENSIONS` (1536) is a **placeholder**, chosen because it's a common dimension for
-several current embedding models (e.g. OpenAI `text-embedding-3-small`) -- it is not itself an
-embedding-model decision. Whatever model is eventually chosen must confirm this dimension or this
-schema will need a migration; this module does not guess further than that.
+`EMBEDDING_DIMENSIONS` (1024) is **Voyage AI's default output dimension**, which ADR-0016 decides
+is the provider. It was previously 1536 -- a placeholder picked for OpenAI
+`text-embedding-3-small`, a provider that ADR is a decision against. Correcting it while the table
+is empty everywhere it exists costs one constant and an idempotent schema re-assert; correcting it
+after the first real vector is stored would cost a migration this repo has no tooling for
+(ADR-0001).
 
 No approximate-nearest-neighbor index (`ivfflat`/`hnsw`) is created yet. Table size at this
 milestone is small enough that an exact sequential scan with the `<=>` cosine-distance operator is
@@ -55,9 +66,9 @@ _SCHEMA_NAME = "cobol_modernizer"
 _TABLE_NAME = "knowledge_entries"
 _QUALIFIED_TABLE = f"{_SCHEMA_NAME}.{_TABLE_NAME}"
 
-#: Placeholder embedding dimension -- see module docstring. Any embedding passed to
-#: `store_entry`/`search_similar` must have exactly this many components.
-EMBEDDING_DIMENSIONS = 1536
+#: Voyage AI's default output dimension (ADR-0016) -- see module docstring. Any embedding passed
+#: to `store_entry`/`search_similar` must have exactly this many components.
+EMBEDDING_DIMENSIONS = 1024
 
 #: The only `artifact_type` values this store accepts, per the plan's "prior specs/designs".
 VALID_ARTIFACT_TYPES = frozenset({"spec", "design"})
@@ -78,6 +89,36 @@ class KnowledgeStoreCredentialsError(Exception):
         self.credentials_file = credentials_file
         super().__init__(
             f"Could not connect using the credentials at {credentials_file}: {reason}"
+        )
+
+
+class KnowledgeStoreSchemaError(Exception):
+    """The live table's `embedding` column has a different dimension than this module expects.
+
+    `ensure_schema` uses `CREATE TABLE IF NOT EXISTS`, which is the right primitive for a repo with
+    no migration tooling (ADR-0001) but has one sharp edge: against a database whose table already
+    exists, it is a **no-op that silently keeps the old column type**. So a database created before
+    ADR-0016 changed `EMBEDDING_DIMENSIONS` from 1536 to 1024 keeps `vector(1536)` forever.
+
+    Left undetected, that surfaces much later as `psycopg.errors.DataException: expected 1536
+    dimensions, not 1024` raised from `store_entry` -- an error that reads as "the caller passed a
+    wrong-sized embedding" when the truth is "this database's schema predates the current code".
+    Per this repo's established error-handling rule (fail loudly on an unambiguous case, never
+    guess -- the `UnsupportedPicConstructError` family), the mismatch is detected at
+    `ensure_schema`, names both dimensions, and says what to do about it.
+
+    Recovery is deliberately manual: automatically dropping or altering a table would discard
+    stored vectors, and this module cannot know whether they matter.
+    """
+
+    def __init__(self, actual_dimensions: int) -> None:
+        self.actual_dimensions = actual_dimensions
+        self.expected_dimensions = EMBEDDING_DIMENSIONS
+        super().__init__(
+            f"{_QUALIFIED_TABLE}.embedding is vector({actual_dimensions}), but this build expects "
+            f"vector({EMBEDDING_DIMENSIONS}). CREATE TABLE IF NOT EXISTS cannot change an existing "
+            f"column's type, so this database predates the current EMBEDDING_DIMENSIONS. Drop "
+            f"{_QUALIFIED_TABLE} (losing its stored vectors, which must be re-embedded) and re-run."
         )
 
 
@@ -153,6 +194,10 @@ def ensure_schema(conn: psycopg.Connection[Any]) -> None:
     registers this connection's pgvector type adapters (`pgvector.psycopg.register_vector`),
     which requires the `vector` extension to already exist -- callers must call this before
     `store_entry`/`search_similar` on a given connection.
+
+    Raises:
+        KnowledgeStoreSchemaError: the table already existed with a different embedding dimension,
+            which `CREATE TABLE IF NOT EXISTS` cannot correct. See that exception's docstring.
     """
     with conn.cursor() as cur:
         cur.execute("CREATE EXTENSION IF NOT EXISTS vector")
@@ -169,7 +214,25 @@ def ensure_schema(conn: psycopg.Connection[Any]) -> None:
             )
             """
         )
+        # For a pgvector column, pg_attribute.atttypmod holds the declared dimension directly
+        # (no +4 header, unlike varchar). Verified against a real container: a vector(1536)
+        # column reports atttypmod = 1536.
+        cur.execute(
+            """
+            SELECT atttypmod
+            FROM pg_attribute
+            WHERE attrelid = %s::regclass AND attname = 'embedding'
+            """,
+            (_QUALIFIED_TABLE,),
+        )
+        row = cur.fetchone()
     conn.commit()
+
+    # The table was just asserted to exist, so the column lookup always yields a row.
+    assert row is not None
+    if row[0] != EMBEDDING_DIMENSIONS:
+        raise KnowledgeStoreSchemaError(row[0])
+
     register_vector(conn)
 
 
