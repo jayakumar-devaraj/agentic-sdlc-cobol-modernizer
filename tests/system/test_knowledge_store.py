@@ -24,6 +24,7 @@ from cobol_modernizer.tools import knowledge_store
 from cobol_modernizer.tools.knowledge_store import (
     EMBEDDING_DIMENSIONS,
     KnowledgeStoreCredentialsError,
+    KnowledgeStoreSchemaError,
     ensure_schema,
     search_similar,
     store_entry,
@@ -89,6 +90,50 @@ def test_ensure_schema_is_idempotent(conn):
     # The fixture already called ensure_schema once; calling it again must not raise.
     ensure_schema(conn)
     ensure_schema(conn)
+
+
+def test_ensure_schema_rejects_a_table_whose_embedding_dimension_differs(conn):
+    """A database created before ADR-0016 keeps `vector(1536)`, and IF NOT EXISTS cannot fix it.
+
+    This is not a hypothetical: the local dev container genuinely held a `vector(1536)` table when
+    `EMBEDDING_DIMENSIONS` moved to 1024, and without this guard the mismatch surfaced only later,
+    from `store_entry`, as `psycopg.errors.DataException: expected 1536 dimensions, not 1024` -- an
+    error that reads as "the caller passed a wrong-sized embedding" when the real cause is a stale
+    schema. The test rebuilds that exact situation rather than trusting the guard on sight.
+    """
+    wrong_dimensions = EMBEDDING_DIMENSIONS + 512
+    with conn.cursor() as cur:
+        cur.execute("DROP TABLE cobol_modernizer.knowledge_entries")
+        cur.execute(
+            f"""
+            CREATE TABLE cobol_modernizer.knowledge_entries (
+                id BIGSERIAL PRIMARY KEY,
+                program_name TEXT NOT NULL,
+                artifact_type TEXT NOT NULL CHECK (artifact_type IN ('spec', 'design')),
+                content TEXT NOT NULL,
+                embedding VECTOR({wrong_dimensions}) NOT NULL,
+                created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+            )
+            """
+        )
+    conn.commit()
+
+    try:
+        with pytest.raises(KnowledgeStoreSchemaError) as excinfo:
+            ensure_schema(conn)
+
+        assert excinfo.value.actual_dimensions == wrong_dimensions
+        assert excinfo.value.expected_dimensions == EMBEDDING_DIMENSIONS
+        # Both dimensions must appear in the message. The failure this replaces named only the
+        # stale one, which is precisely why it pointed at the wrong culprit.
+        message = str(excinfo.value)
+        assert f"vector({wrong_dimensions})" in message
+        assert f"vector({EMBEDDING_DIMENSIONS})" in message
+    finally:
+        with conn.cursor() as cur:
+            cur.execute("DROP TABLE cobol_modernizer.knowledge_entries")
+        conn.commit()
+        ensure_schema(conn)
 
 
 # --- store_entry ---------------------------------------------------------------------------

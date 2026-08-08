@@ -13,7 +13,7 @@ was never treated as proof on its own.
 pytest --cov=cobol_modernizer --cov-report=term-missing --cov-fail-under=90
 ```
 
-As of this report: **369 tests passed (4 skipped — the opt-in live-CLI tests), 99.01% overall
+As of this report: **370 tests passed (4 skipped — the opt-in live-CLI tests), 99.02% overall
 coverage.**
 
 | Module | Coverage |
@@ -23,9 +23,9 @@ coverage.**
 | `core/contracts.py` | 100% |
 | `core/design_outputs.py` | 100% |
 | `core/guardrails.py` | 100% |
+| `core/model_catalog.py` | 93% |
 | `core/model_client.py` | 98% |
 | `core/model_routing.py` | 98% |
-| `core/model_routing.py` | 100% |
 | `core/schema_export.py` | 100% |
 | `core/source_units.py` | 100% |
 | `core/structured_output.py` | 100% |
@@ -39,6 +39,10 @@ coverage.**
 | `tools/pic_mapper.py` | 99% |
 | `tools/tenant_repo.py` | 100% |
 | `telemetry/logging_config.py` | 100% |
+
+This table previously listed `core/model_routing.py` twice (at 98% and 100%) and omitted
+`core/model_catalog.py` entirely — a transcription error, corrected against a real
+`--cov-report=term` run rather than by picking one of the two rows.
 
 `cli.py`'s one uncovered line is the `sys.exit(main())` under `if __name__ == "__main__"`, which
 only runs when the module is executed directly rather than through the installed console script —
@@ -121,6 +125,41 @@ not assumed):
 **Result**: `tests/system/test_knowledge_store.py ...........` (11 dots — 11 tests ran, zero
 skipped), `98 passed`, confirmed against the CI run for PR #4
 (https://github.com/jayakumar-devaraj/agentic-sdlc-cobol-modernizer/pull/4).
+
+### `tools/knowledge_store.py` — the ADR-0016 dimension change, and the stale-schema defect it found
+
+**Verified**: `EMBEDDING_DIMENSIONS` moving from 1536 (an OpenAI-shaped placeholder) to 1024
+(Voyage AI's default output dimension, ADR-0016), re-run against the same real Postgres+pgvector
+container. All eleven pre-existing tests pass unchanged at the new dimension — including the
+analytically-known nearest-neighbour test, which re-derives its three orthogonal basis vectors from
+the constant and still asserts the exact expected ordering and strictly increasing distances.
+
+**A real defect was found by making the change, not reasoned about afterwards.** The first run
+after editing the constant failed with `psycopg.errors.DataException: expected 1536 dimensions, not
+1024` — because `ensure_schema` uses `CREATE TABLE IF NOT EXISTS`, which against an existing table
+is a no-op that silently keeps the old column type. The local dev container had genuinely been
+holding `vector(1536)` since PR #4. Two things were wrong with that failure beyond the mismatch
+itself: it surfaced from `store_entry`, several calls downstream of the actual cause, and its
+message blames the caller's embedding when the real culprit is a schema older than the code.
+Confirmed against the live catalog that the dimension is readable up front —
+`SELECT atttypmod, format_type(atttypid, atttypmod) FROM pg_attribute ...` returned
+`1536 | vector(1536)`, establishing that pgvector stores the declared dimension in `atttypmod`
+directly (no `+4` header, unlike `varchar`) rather than assuming it.
+
+`ensure_schema` now reads that value and raises `KnowledgeStoreSchemaError` naming **both**
+dimensions and the manual recovery, per this repo's fail-loudly-on-an-unambiguous-case rule
+(the `UnsupportedPicConstructError` family). Recovery is deliberately not automatic: dropping or
+altering the table would discard stored vectors, and this module cannot know whether they matter.
+
+**Confirmed falsifiable rather than trusted on sight**, the same way the schema drift check and the
+numeric-field gate were: the guard was first observed firing against the genuinely stale container
+table, and is now pinned by `test_ensure_schema_rejects_a_table_whose_embedding_dimension_differs`,
+which rebuilds that exact situation (drops the table, recreates it at
+`EMBEDDING_DIMENSIONS + 512`, asserts the raise and both dimensions in the message, then restores
+the table in a `finally`). The stale table was then dropped and the suite re-run green.
+
+**Command**: `pytest tests/system/test_knowledge_store.py -v`
+**Result**: 12/12 passed (11 pre-existing + 1 new regression test).
 
 ### `core/model_routing.py` — real config/model_routing.yaml, ADR-0004's actual mechanism
 
