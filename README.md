@@ -19,21 +19,22 @@ for why.
 
 ## Architecture
 
-This is the design the implementation is built against, not a record of what already exists —
-the specialist nodes below land incrementally across Milestones C2–C4 (tracked in
-[`docs/adr/`](docs/adr/) and the repo's task list), but the shape doesn't change as they do.
-Today the CLI skeleton and every tool the three real `design`-phase nodes depend on (`parsing/`,
-`pic_mapper`, `tenant_repo`, `guardrails`, `knowledge_store`, `model_routing`, `source_units`,
-`structured_output`) are real and independently tested, and `spec_extractor`, `spec_critic`, and
-`solution_architect` are all implemented and verified standalone against real CardDemo source for
-all four Track C programs (`docs/qa/verification-report.md`) — `solution_architect` is the first
-to unify them, merging every program's shared copybooks (`Account`/`CVACT01Y` alone spans three of
-the four) into one real domain model. The `design.json` contract itself — including `gate_items`,
-the concrete payload control-plane's gate reviews (see "How human review actually happens" below),
-and `unified_design`'s real, typed shape (ADR-0010) — is also real and schema-checked
-(`core/contracts.py`, `schemas/*.schema.json`). None of this is wired into the CLI's `design`
-subcommand yet (Milestone C3, plan step 36), so there is no end-to-end run today — the diagrams
-below describe the target composition, verified piece by piece as each lands.
+**The `design` half of the diagram below is real and runs end to end today.**
+`cobol-modernizer design` executes a compiled LangGraph (ADR-0012): one concurrent branch per
+requested program running `spec_extractor` then `spec_critic`, joining into a single
+`solution_architect` pass that unifies every program's shared copybooks (`Account`/`CVACT01Y` alone
+spans three of the four Track C programs) into one domain model (ADR-0010). It writes a real
+`design.json` — including `gate_items`, the concrete payload control-plane's gate reviews (see "How
+human review actually happens" below) — plus one `spec.md` per program, and reports a summary on
+stdout. Every tool underneath (`parsing/`, `pic_mapper`, `tenant_repo`, `guardrails`,
+`knowledge_store`, `model_routing`, `source_units`, `structured_output`) is independently tested
+against real CardDemo source (`docs/qa/verification-report.md`).
+
+Two honest limits on that. The three **live Anthropic calls have never run** — this development
+environment has no API credential, so every test injects a fake at the SDK boundary and everything
+above it is real; and the **`generate` half does not exist yet** (Milestone C4), so
+`modernization_engineer`, `build_validator`, and the self-healing compile loop in the diagram are
+target design, not built code.
 
 ### How this repo fits in the platform
 
@@ -84,21 +85,21 @@ invocations, never inside one (ADR-0003).
 ```mermaid
 flowchart TB
     subgraph phase1["Invocation 1: cobol-modernizer design (exits at design.json)"]
-        SUP1["orchestration_supervisor"]
+        SUP1["supervisor<br/>fans out one branch per --programs entry"]
         SPEC_CUS["spec_extractor: CBCUS01C"]
         SPEC_ACT["spec_extractor: CBACT01C"]
+        SPEC_TRN["spec_extractor: CBTRN02C"]
+        SPEC_INT["spec_extractor: CBACT04C"]
         CRIT_CUS["spec_critic"]
         CRIT_ACT["spec_critic"]
-        JOIN["join<br/>both branches complete"]
-        SPEC_TRN["spec_extractor: CBTRN02C"]
         CRIT_TRN["spec_critic"]
-        SPEC_INT["spec_extractor: CBACT04C"]
         CRIT_INT["spec_critic"]
-        ARCH["solution_architect<br/>emits one design.json for all four programs"]
+        ARCH["solution_architect<br/>joins every branch<br/>emits one design.json for all programs"]
 
-        SUP1 --> SPEC_CUS --> CRIT_CUS --> JOIN
-        SUP1 --> SPEC_ACT --> CRIT_ACT --> JOIN
-        JOIN --> SPEC_TRN --> CRIT_TRN --> SPEC_INT --> CRIT_INT --> ARCH
+        SUP1 --> SPEC_CUS --> CRIT_CUS --> ARCH
+        SUP1 --> SPEC_ACT --> CRIT_ACT --> ARCH
+        SUP1 --> SPEC_TRN --> CRIT_TRN --> ARCH
+        SUP1 --> SPEC_INT --> CRIT_INT --> ARCH
     end
 
     GATE["control-plane's own durable gate<br/>human reviews design.json<br/>persists across a restart if needed"]
@@ -119,11 +120,18 @@ flowchart TB
     GATE -->|"approved: control-plane<br/>starts a new process"| CODE
 ```
 
-`CBCUS01C` (customer) and `CBACT01C` (account) share no copybook dependency (verified in
-`docs/cobol-construct-support-matrix.md`) and run as parallel branches; `CBTRN02C` and `CBACT04C`
-both depend on account data and run after the join. The self-healing loop is a bounded retry, not
-an open-ended one — a third failed compile returns a result to control-plane rather than looping
-forever. `design.json` must be fully self-contained (ADR-0003): invocation 2 has no access to
+**Every** program runs as its own concurrent branch, not just the `CBCUS01C`/`CBACT01C` pair. An
+earlier revision of this diagram ran those two in parallel and chained `CBTRN02C` and `CBACT04C`
+after the join, on the reasoning that the latter two "both depend on account data". Building it
+showed that reasoning does not apply here: the dependency is on the `CVACT01Y` *copybook*, which
+each branch reads independently from the tenant worktree — no branch consumes another branch's
+output, so there is nothing to serialize. The only real join is `solution_architect`, which by
+definition needs all of them (ADR-0010). Fan-out is dynamic over whatever `--programs` is passed,
+so the topology is not tied to these four names. Branches are genuinely concurrent, on a real
+thread pool — measured, not assumed (ADR-0012).
+
+The self-healing loop is a bounded retry, not an open-ended one — a third failed compile returns a
+result to control-plane rather than looping forever. `design.json` must be fully self-contained (ADR-0003): invocation 2 has no access to
 anything invocation 1 reasoned about that isn't written into that file. `CODE`'s output lands in
 `card-service`, not this repo or `carddemo-tenant-service` (ADR-0009) — `generate --output <path>`
 resolves to control-plane's clone of that target repo's worktree.
@@ -172,12 +180,19 @@ trust a hand-written copy of the contract.
 ```bash
 py -3.12 -m venv .venv
 ./.venv/Scripts/pip install -e ".[dev]"
-./.venv/Scripts/cobol-modernizer design --programs CBACT04C --tenant-repo <path> --output <path> --json
+./.venv/Scripts/cobol-modernizer design --programs CBCUS01C CBACT01C CBTRN02C CBACT04C --tenant-repo <path> --output <path> --json
 ./.venv/Scripts/cobol-modernizer generate --design <path>/design.json --tenant-repo <path> --output <path> --json
 ```
 
-Both currently return a `not_implemented` status — this is expected until Milestones C2/C3 (`design`)
-and C4 (`generate`) land. Two subcommands, not one — see `docs/adr/0003` for why.
+`design` is real and runs the full pipeline. It needs an Anthropic API credential in the
+environment (`ANTHROPIC_API_KEY`), since all three of its nodes call a model; it writes
+`<output>/design.json` and `<output>/<PROGRAM>/spec.md` per program, and exits non-zero with a
+`status: "error"` object on stdout if anything fails. Pass `--run-id` to reuse control-plane's own
+audit-log run id, so its records and this CLI's stderr logs share one identifier; omit it and one
+is generated and reported back. `generate` still returns an error status — it lands in Milestone C4.
+
+With `--json`, stdout carries exactly one JSON object and nothing else; all logging goes to stderr.
+Two subcommands, not one — see `docs/adr/0003` for why.
 
 ## Local development
 
