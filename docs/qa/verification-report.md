@@ -764,28 +764,33 @@ mermaid-diagram-parse check reused from `agentic-sdlc-control-plane`.
 
 ## Not yet covered (honest gaps, not silently skipped)
 
-- **No full `design` run has been executed against real models yet.** This gap changed shape with
-  ADR-0013 rather than closing. What is now proven: a real `claude` CLI round-trip through
-  `call_model` works on a subscription, with no API credential
-  (`test_live_claude_cli_round_trip`). What is still unproven: the three nodes' *actual* prompts
-  against real models — no `spec.md` has been narrated, critiqued, or architected by a live model,
-  so nobody has read real output and judged it. Until that run happens, the prose quality of
-  `spec.md`, the usefulness of `spec_critic`'s per-rule scores, and the soundness of
-  `solution_architect`'s batch/REST design are all unevaluated. That run is now possible and
-  cheap; it is the obvious next verification step.
-- *(historical, superseded above)* The original form of this gap was that
-  `_default_narrate`/`_default_critique`/`_default_architect` had never been invoked at all — only every deterministic step upstream of each (field
-  mapping, paragraph extraction, domain-entity merging, prompt construction, guardrail wrapping,
-  fidelity checks, JSON parsing) is verified against real data; every test injects a fake
-  `narrate`/`critique`/`architect` in its place. This is a real gap, not a mock standing in for a
-  "done" claim — revisit once a real credential is available (Milestone C5 integration, or
-  whenever this repo is actually invoked with one), by running `extract_spec`, `critique_spec`,
-  then `design_solution` against all four real Track C programs with the default callables and
-  manually reviewing the resulting `spec.md` prose, the critic's per-rule scores, and the
-  architect's batch job/REST endpoint design against the source, the way `.claude/agents/qa.md`
-  requires for anything a unit test can't meaningfully reach. This also means ADR-0004's own
-  deferred question — whether `spec_critic`'s cheaper model tier holds up empirically once real
-  critiques exist — is still unanswered.
+- *(corrected 2026-08-08 — this entry was stale, not merely incomplete)* This previously read
+  **"No full `design` run has been executed against real models yet."** That is false: real
+  four-program `design` runs happened (~$2.31 at API rates), `tests/fixtures/narrations/CBCUS01C/
+  spec.md` is verbatim output from one of them, and two benchmarks scored real narrations by hand
+  (PRs #20, #21 — see the `spec_critic` and `spec_extractor` entries above). What remains
+  genuinely uncovered is narrower and worth stating on its own terms: **output quality is
+  spot-measured, not continuously evaluated.** `CBACT04C` was scored on six hand-verified facts and
+  `CBCUS01C`'s critique on three planted errors; no standing harness re-scores narrations as the
+  prompts or models change, and `solution_architect`'s batch/REST design has never been scored at
+  all (Open Issue 6 — the hard part is that no golden unified design exists to score against).
+  The LLM-as-judge harness that would close this is Milestone C4.
+- **RAG is a storage layer, not a capability.** `tools/knowledge_store.py` is real and verified
+  against real Postgres+pgvector, and has zero production callers. ADR-0016 decides the provider
+  (Voyage AI, `voyage-code-3`) and then declines to wire retrieval on two gates: no
+  `VOYAGE_API_KEY` exists here, and nobody has shown retrieval improves extraction over a corpus of
+  four programs. Neither gate is closed, so no claim is made about retrieval quality — there is
+  nothing to measure yet. `--db-credentials-file` is unimplemented for the same reason: its only
+  consumer sits behind those gates (ADR-0005's amendment note).
+- *(historical, closed — kept because the original wording named the wrong cause)* The original
+  form of this gap was that `_default_narrate`/`_default_critique`/`_default_architect` had never
+  been invoked at all, with every test injecting a fake in their place, and it said to "revisit
+  once a real credential is available." **No credential was ever needed** — the `claude` CLI on a
+  Pro subscription was a usable backend the whole time (ADR-0013). All three defaults have now run
+  against real models over real Track C source, ADR-0004's deferred question about `spec_critic`'s
+  cheaper tier is answered by measurement (PR #20), and the deterministic steps upstream of each
+  remain verified as described above. Left here rather than deleted: the gap was real and the
+  stated cause was not, which is the specific mistake worth not repeating.
 - **A fixed `OCCURS` cannot be represented, only flagged.** `PicMapping` has no cardinality field
   and `DomainField` cannot express a collection, so `CBACT01C`'s `ARR-ACCT-BAL OCCURS 5 TIMES`
   group is routed to the human gate rather than mapped (ADR-0011). That is the correct behavior
@@ -803,13 +808,15 @@ mermaid-diagram-parse check reused from `agentic-sdlc-control-plane`.
   source, confirmed-working `spec_extractor`/`spec_critic` extraction (via the
   faithful-Known-Facts-narration technique), and — as of the entry above — exhaustive
   hand-cross-checked numeric-field verification. What they do not have is `CBACT04C`-level golden
-  narrative *prose*. Writing that today would mean hand-authoring expected prose that nothing in
-  the pipeline currently produces to compare against: `spec.md`'s narration comes from a live model
-  call this environment has no credential for (see the first gap above). The decision is to defer
-  those three golden fixtures until a real credential exists, at which point they become a genuine
-  regression baseline for real model output rather than a hand-written artifact checked only
-  against itself. Milestone C2's gate is being closed on its literal numeric-field wording, which
-  is checkable without a model, not on prose.
+  narrative *prose*. The original reason for deferring them — that no credential existed to produce
+  real narrations to compare against — **no longer holds**, since real narrations now exist
+  (`tests/fixtures/narrations/`). The deferral stands on a different and better reason: a golden
+  fixture is only as good as the hand cross-check that produced it, `CBACT04C`'s took a careful
+  paragraph-by-paragraph read of real source, and that read is what is missing for the other three
+  — not model output. `CBACT04C`'s own fixture was also **factually wrong** about EOF posting until
+  a model caught it, which is the strongest available argument against mass-producing three more on
+  a schedule. Milestone C2's gate is closed on its literal numeric-field wording, which is
+  checkable without a model, not on prose.
 - **Auditing/provenance** (`CLAUDE.md`'s stated concern: every generated artifact traces back to
   the exact COBOL source line it came from) is now source-label-precise (every fact
   `spec_extractor` emits names the exact program or copybook it came from) but not yet

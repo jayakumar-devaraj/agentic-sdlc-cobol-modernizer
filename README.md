@@ -52,12 +52,15 @@ selected on price, because a benchmark showed it catches planted defects as well
 The decision, its estimated cost, and what it beat all ride into `design.json`, so a reviewer at
 the gate can see which model produced a spec and why.
 
-Two honest limits. **No full `design` run against real models has happened yet** — a live
-round-trip through the `claude` CLI is verified, but no `spec.md` has been narrated, critiqued, or
-architected by a real model and read by a human, so output *quality* is unevaluated. And the
-**`generate` half does not exist yet** (Milestone C4), so `modernization_engineer`,
-`build_validator`, and the self-healing compile loop in the diagram are target design, not built
-code.
+Three honest limits. **The `generate` half does not exist yet** (Milestone C4), so
+`modernization_engineer`, `build_validator`, and the self-healing compile loop in the diagram are
+target design, not built code. **Retrieval is not wired**: `tools/knowledge_store.py` is a real,
+tested pgvector storage layer with no production caller, because embeddings need a second vendor
+this environment has no credential for — and because nobody has shown retrieval would help a
+four-program corpus (`docs/adr/0016` decides both halves of that). And **output quality is only
+spot-measured**: real `design` runs against real models have happened, and two benchmarks scored
+their output by hand, but that is four programs' worth of evidence, not a standing evaluation
+harness.
 
 ### How this repo fits in the platform
 
@@ -94,10 +97,12 @@ this repo worktree paths (`docs/adr/0001`).
 phase's write target — not this repo's own output, and not `carddemo-tenant-service`'s, which
 stays read-only source of truth throughout. The repo itself exists (an empty scaffold — no
 generated Java yet, Milestone C4 hasn't started); `generate` writing real content into it is still
-real work ahead. This
-repo does talk to Postgres directly, but only for the knowledge store's own schema
-(`tools/knowledge_store.py`), via a credentials file path, never an embedded credential
-(`docs/adr/0005`) — durable orchestration state stays entirely control-plane's concern.
+real work ahead. This repo has **no Postgres edge in the diagram on purpose**: `tools/
+knowledge_store.py` can talk to Postgres for the knowledge store's own schema, but nothing in the
+`design` or `generate` path calls it yet (`docs/adr/0016`), so today that connection is exercised
+only by its own tests. When it is wired, the credential arrives as a mounted file path and never
+as an embedded value or an environment variable (`docs/adr/0005`). Durable orchestration state
+stays entirely control-plane's concern either way.
 
 ### This repo's internal pipeline — two separate, independently bounded invocations
 
@@ -241,10 +246,13 @@ compile.
 ./.venv/Scripts/python -m pytest --cov=cobol_modernizer --cov-report=term-missing --cov-fail-under=90
 ```
 
-214 tests passing, 98% coverage as of this change — the number a real run produces, not a claim.
-Some tests (`tools/knowledge_store.py`'s) need the local Postgres+pgvector instance above; they
-skip with a clear reason rather than failing if it isn't running, and CI runs them for real against
-its own service container rather than letting them skip silently there too.
+370 tests passing (4 skipped — the opt-in live-CLI tests), 99.02% coverage as of this change — the
+numbers a real run produces, not a claim. Some tests (`tools/knowledge_store.py`'s) need the local
+Postgres+pgvector instance above; they skip with a clear reason rather than failing if it isn't
+running, and CI runs them for real against its own service container rather than letting them skip
+silently there too. If that local instance predates `docs/adr/0016`, its `knowledge_entries` table
+still declares `vector(1536)` and `ensure_schema` will refuse it by name — drop the table once and
+re-run. CI is unaffected; its Postgres service container is fresh every run.
 
 ## Deployment / CI
 
