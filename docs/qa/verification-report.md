@@ -13,7 +13,7 @@ was never treated as proof on its own.
 pytest --cov=cobol_modernizer --cov-report=term-missing --cov-fail-under=90
 ```
 
-As of this report: **229 tests passed, 98.22% overall coverage.**
+As of this report: **235 tests passed, 98.24% overall coverage.**
 
 | Module | Coverage |
 |---|---|
@@ -359,13 +359,14 @@ all four programs — balances, credit limits, transaction amounts, the interest
 `DIS-INT-RATE` — is confirmed scale 2 and signed, the platform's headline rounding/precision risk
 checked as a property rather than field by field.
 
-**A real defect was found by this cross-check, not after it**:
-`parsing/cobol_parser.extract_working_storage_fields` slices out only the `WORKING-STORAGE SECTION`
-body and stops at the next section/division header, so a program's `FILE SECTION` (`FD`) record
-layouts and its `LINKAGE SECTION` parameters never reach `pic_mapper` at all — they are neither
-mapped nor flagged as unsupported, they are simply absent. That is the one outcome this repo's error
-handling exists to prevent; `UnsupportedPicConstructError`'s whole purpose is failing loudly instead
-of going quiet. Three real consequences, verified against the fixture source, not hypothesized:
+**A real defect was found by this cross-check, not after it** — and has since been fixed, see the
+entry below. `parsing/cobol_parser.extract_working_storage_fields` sliced out only the
+`WORKING-STORAGE SECTION` body and stopped at the next section/division header, so a program's
+`FILE SECTION` (`FD`) record layouts and its `LINKAGE SECTION` parameters never reached `pic_mapper`
+at all — neither mapped nor flagged as unsupported, simply absent. That is the one outcome this
+repo's error handling exists to prevent; `UnsupportedPicConstructError`'s whole purpose is failing
+loudly instead of going quiet. Three real consequences, verified against the fixture source, not
+hypothesized:
 
 - `CBACT01C`'s `OUT-ACCT-CURR-CYC-DEBIT` and `ARR-ACCT-CURR-CYC-DEBIT` are declared
   `PIC S9(10)V99 USAGE IS COMP-3` — the **only** `COMP-3` fields anywhere in Track C, and the
@@ -380,14 +381,52 @@ of going quiet. Three real consequences, verified against the fixture source, no
 - All four programs' `FD` record layouts describe the files each batch job reads and writes: 1
   unreached numeric field in `CBCUS01C`, 10 in `CBACT01C`, 3 in `CBTRN02C`, 6 in `CBACT04C`.
 
-This gap is recorded as its own falsifiable test
-(`test_file_and_linkage_section_records_are_not_extracted_yet`) rather than as prose, so it cannot
-quietly persist — the test is written to fail the moment the parser is extended, with a message
-saying to invert it. Milestone C2's gate is therefore **met for the `WORKING-STORAGE`-plus-copybooks
-scope and not met overall** until that follow-up lands; see "Not yet covered" below.
+The gap was recorded as its own falsifiable test rather than as prose, written to fail the moment
+the parser was extended — which is what happened; ADR-0011 closed it and the tests are inverted.
+**Milestone C2's numeric-field gate is now met for all four programs across every section they
+declare fields in.**
 
 **Command**: `pytest tests/system/test_numeric_field_coverage.py -v`
-**Result**: 15/15 passed.
+**Result**: 16/16 passed.
+
+### `parsing/cobol_parser.py` — every `DATA DIVISION` section, and the fixed-`OCCURS` decision (ADR-0011)
+
+**Verified**: the fix for the defect above, against real source for all four programs.
+
+- **Nothing is silently absent any more.** An independent re-scan of every real source file for
+  level-numbered numeric `PIC` declarations, diffed against what the pipeline produces, reports
+  **zero unaccounted fields for all four programs** — every declaration lands in either
+  `field_mappings` or `unsupported_fields`. Before the fix, 20 were in neither (1 `CBCUS01C`,
+  10 `CBACT01C`, 3 `CBTRN02C`, 6 `CBACT04C`).
+- **`COMP-3` is genuinely reached and correctly typed.** `CBACT01C`'s `OUT-ACCT-CURR-CYC-DEBIT`
+  maps as `BigDecimal`, precision 12, scale 2, signed, `usage=COMP_3` — with its `USAGE` clause on
+  a continuation line, which also confirms the parser joins a wrapped declaration into one sentence
+  before mapping it. Confirmed it is the only mapped `COMP-3` field in Track C.
+- **`CBACT04C`'s `LINKAGE SECTION` is reached**: `PARM-LENGTH` (`PIC S9(04) COMP`, precision 4,
+  signed) — the program's real `PROCEDURE DIVISION USING EXTERNAL-PARMS` input parameter.
+- **The fixed-`OCCURS` group is isolated, not flattened.** `CBACT01C`'s `ARR-ACCT-BAL OCCURS 5
+  TIMES` group produces four `unsupported_fields` entries carrying construct name
+  `"OCCURS (fixed)"`, and zero mappings. Asserted explicitly, including that all four fields are
+  flagged rather than only the two genuinely inside the array — the over-flagging is a real cost
+  ADR-0011 accepts, so it is pinned by a test rather than left implicit.
+- **Real counts moved and were re-verified, not assumed**: `CBACT04C` 75 → 93 mapped fields,
+  `CBTRN02C` 88 → 102, `CBACT01C` unsupported 28 → 32 (28 still `REDEFINES`, 4 new
+  `OCCURS (fixed)` — asserted separately so the two reasons can't be conflated).
+- **The golden fixture was regenerated, not hand-edited.** `render_known_facts` was re-run against
+  the real fixture to produce the Field reference table. Confirmed by diffing that this added
+  exactly 18 rows, removed nothing, and left the hand-verified Overview / Paragraph flow / Business
+  rules prose byte-identical — the property that section was generated for in the first place.
+- **Two prior decisions were reversed, both with tests that had asserted the old behavior**: a
+  fixed `OCCURS` mapping cleanly (`test_pic_mapper.py`), and `LINKAGE SECTION` fields being treated
+  as a leak if they appeared (`test_cobol_parser.py`). Both tests were rewritten to assert the new
+  behavior and state what changed, rather than deleted.
+- **The `WORKING-STORAGE`-only fallback is now tested.** No real Track C fixture reaches it
+  (programs have a `DATA DIVISION`, copybooks have no headers), so extending the region left a
+  documented branch uncovered — caught by reading the coverage report, and closed with a fragment
+  test rather than left to rot.
+
+**Command**: `pytest tests/system/test_cobol_parser.py tests/system/test_pic_mapper.py tests/system/test_numeric_field_coverage.py -v`
+**Result**: 68/68 passed.
 
 ### `nodes/solution_architect.py` — cross-program domain-entity unification, against real data for all four programs
 
@@ -444,13 +483,18 @@ mermaid-diagram-parse check reused from `agentic-sdlc-control-plane`.
   requires for anything a unit test can't meaningfully reach. This also means ADR-0004's own
   deferred question — whether `spec_critic`'s cheaper model tier holds up empirically once real
   critiques exist — is still unanswered.
-- **`FILE SECTION` and `LINKAGE SECTION` fields are never parsed** — the real defect the numeric
-  cross-check above found, and the reason Milestone C2's gate is not yet met in full. Track C's only
-  two `COMP-3` fields are among the fields this hides. Recorded as a falsifiable test, with the
-  detail in that entry; the fix is a `parsing/cobol_parser.py` contract change with real downstream
-  reach (`CBACT04C`'s golden fixture field count, `gate_items` counts, and `solution_architect`'s
-  domain entities all change), so it is its own separate change rather than folded into the
-  verification that found it.
+- **A fixed `OCCURS` cannot be represented, only flagged.** `PicMapping` has no cardinality field
+  and `DomainField` cannot express a collection, so `CBACT01C`'s `ARR-ACCT-BAL OCCURS 5 TIMES`
+  group is routed to the human gate rather than mapped (ADR-0011). That is the correct behavior
+  given the current types — flattening an array to a scalar would be a wrong answer that looks
+  right — but it is a capability gap, not a solved problem. Track C has exactly one occurrence and
+  no node consumes that file yet; revisit when Milestone C4 generates a reader for it, or with
+  Track B's B3 alias-analysis module.
+- **`FD` record layouts do not become domain entities.** They are now parsed and visible in
+  `spec.md`, but `build_domain_entities` only promotes copybook-sourced fields (ADR-0010), and
+  these are program-local. Whether a file record layout should be an entity in its own right is a
+  real open question for Milestone C4, when a Spring Batch reader needs a type to read into —
+  deliberately not answered by ADR-0011.
 - **Only `CBACT04C` has a hand-verified golden fixture**, and that is now a deliberate choice
   rather than an open question. `CBCUS01C`, `CBACT01C`, and `CBTRN02C` have real, byte-verified
   source, confirmed-working `spec_extractor`/`spec_critic` extraction (via the

@@ -19,9 +19,11 @@ unresolvable; the other 75 are not affected by it and gain nothing from being bl
 **Question 2 — what does "trace back to the exact COBOL source line" mean for the first node that
 actually produces an artifact?** `CLAUDE.md`'s standing provenance goal is line-precise. But
 `parsing/cobol_parser.py` — already merged, independently tested (28 tests, 98% coverage) before
-this node existed — does not carry line numbers through `extract_working_storage_fields` or
-`extract_paragraphs`; it discards them once a field/paragraph's raw text is assembled. Line-level
-provenance would mean extending that module's data model, not just consuming it.
+this node existed — does not carry line numbers through `extract_working_storage_fields` (renamed
+`extract_record_fields` by [ADR-0011](0011-parse-every-data-division-section-and-reject-fixed-occurs.md))
+or `extract_paragraphs`; it discards them once a field/paragraph's raw text is assembled. Line-level
+provenance would mean extending that module's data model, not just consuming it. Still true after
+ADR-0011, which widened which sections are parsed without adding line numbers.
 
 ## Decision
 

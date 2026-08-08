@@ -1,5 +1,13 @@
 # 0002 - A hand-rolled parser for a deliberately bounded grammar
 
+> **Amended by [ADR-0011](0011-parse-every-data-division-section-and-reject-fixed-occurs.md)
+> (2026-08-07).** Where this ADR says the parser "walks `WORKING-STORAGE`" for field declarations,
+> it now walks the whole `DATA DIVISION` — `FILE SECTION` and `LINKAGE SECTION` included. Reading
+> only `WORKING-STORAGE` turned out to drop real field declarations silently rather than reporting
+> them, which contradicts this ADR's own reasoning below about not failing quietly. ADR-0011 also
+> moves a fixed `OCCURS` (no `DEPENDING ON`) into the unsupported set. The decision recorded here
+> is otherwise unchanged and still stands.
+
 ## Context
 
 Track C's scope (documented in `docs/cobol-construct-support-matrix.md`) is deliberately narrow:
