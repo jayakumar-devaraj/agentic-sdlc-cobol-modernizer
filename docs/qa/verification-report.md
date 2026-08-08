@@ -369,9 +369,12 @@ of going quiet. Three real consequences, verified against the fixture source, no
 
 - `CBACT01C`'s `OUT-ACCT-CURR-CYC-DEBIT` and `ARR-ACCT-CURR-CYC-DEBIT` are declared
   `PIC S9(10)V99 USAGE IS COMP-3` — the **only** `COMP-3` fields anywhere in Track C, and the
-  construct the gate names explicitly. Neither is seen. (`docs/cobol-construct-support-matrix.md`'s
-  claim that no Track C *copybook* declares `COMP-3` remains accurate as written — both of these
-  are in a program's own `FILE SECTION`.)
+  construct the gate names explicitly. Neither is seen. This also **corrected a real error in
+  `docs/cobol-construct-support-matrix.md`**, which recorded `COMP-3` as "not present in Track C's
+  scope": that verdict was reached by reading every copybook the four programs `COPY` (where it is
+  still true that none declares `COMP-3`) and wrongly generalized to the programs' own source. The
+  matrix now separates "in scope" from "currently reached by the parser", which is the distinction
+  it had been collapsing.
 - `CBACT04C`'s `PARM-LENGTH` belongs to `EXTERNAL-PARMS`, the record its own
   `PROCEDURE DIVISION USING EXTERNAL-PARMS` clause names — the program's actual input parameter.
 - All four programs' `FD` record layouts describe the files each batch job reads and writes: 1
