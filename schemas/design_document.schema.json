@@ -1,5 +1,166 @@
 {
   "$defs": {
+    "BatchJobDesign": {
+      "description": "One program's Spring Batch job design -- one per Track C program, LLM-authored.",
+      "properties": {
+        "domain_entities": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Domain Entities",
+          "type": "array"
+        },
+        "job_name": {
+          "title": "Job Name",
+          "type": "string"
+        },
+        "program_name": {
+          "title": "Program Name",
+          "type": "string"
+        },
+        "steps": {
+          "items": {
+            "$ref": "#/$defs/BatchStepDesign"
+          },
+          "title": "Steps",
+          "type": "array"
+        }
+      },
+      "required": [
+        "program_name",
+        "job_name",
+        "domain_entities",
+        "steps"
+      ],
+      "title": "BatchJobDesign",
+      "type": "object"
+    },
+    "BatchStepDesign": {
+      "description": "One step of a `BatchJobDesign`, LLM-authored (ADR-0010 decision 3).\n\n`source_paragraphs` names the real COBOL paragraph(s) (from `SpecExtractionResult.paragraph_names`)\nthis step's logic comes from -- provenance one hop further than `spec_extractor`'s own\nsource-label tracing (ADR-0006), now into the batch design itself.",
+      "properties": {
+        "description": {
+          "title": "Description",
+          "type": "string"
+        },
+        "role": {
+          "enum": [
+            "reader",
+            "processor",
+            "writer",
+            "tasklet"
+          ],
+          "title": "Role",
+          "type": "string"
+        },
+        "source_paragraphs": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Source Paragraphs",
+          "type": "array"
+        },
+        "step_name": {
+          "title": "Step Name",
+          "type": "string"
+        }
+      },
+      "required": [
+        "step_name",
+        "source_paragraphs",
+        "role",
+        "description"
+      ],
+      "title": "BatchStepDesign",
+      "type": "object"
+    },
+    "DomainEntity": {
+      "description": "One unified domain entity -- every program that `COPY`s the same copybook shares one.\n\n`source_copybook` is the exact copybook name that produced this entity; two different\ncopybook names are never merged into one entity, even when structurally similar (ADR-0010\ndecision 1) -- `source_copybook` is what makes that traceable and checkable.",
+      "properties": {
+        "fields": {
+          "items": {
+            "$ref": "#/$defs/DomainField"
+          },
+          "title": "Fields",
+          "type": "array"
+        },
+        "name": {
+          "title": "Name",
+          "type": "string"
+        },
+        "source_copybook": {
+          "title": "Source Copybook",
+          "type": "string"
+        },
+        "used_by_programs": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Used By Programs",
+          "type": "array"
+        }
+      },
+      "required": [
+        "name",
+        "source_copybook",
+        "used_by_programs",
+        "fields"
+      ],
+      "title": "DomainEntity",
+      "type": "object"
+    },
+    "DomainField": {
+      "description": "One field of a `DomainEntity`, reusing `pic_mapper`'s deterministic output verbatim.\n\n`java_field_name` and the entity's own `name` are direct, mechanical transforms of the COBOL\nname (kebab-case to camelCase/PascalCase, `-RECORD` suffix stripped from the entity name) --\nnot a business-semantic rename. See ADR-0010 decision 2 for why: a human-readable name is a\njudgment call for the LLM-authored parts of `UnifiedDesign` to make, not this deterministic\nfield.",
+      "properties": {
+        "cobol_field_name": {
+          "title": "Cobol Field Name",
+          "type": "string"
+        },
+        "java_field_name": {
+          "title": "Java Field Name",
+          "type": "string"
+        },
+        "java_type": {
+          "title": "Java Type",
+          "type": "string"
+        },
+        "precision": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Precision"
+        },
+        "scale": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Scale"
+        },
+        "signed": {
+          "title": "Signed",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "java_field_name",
+        "cobol_field_name",
+        "java_type",
+        "precision",
+        "scale",
+        "signed"
+      ],
+      "title": "DomainField",
+      "type": "object"
+    },
     "GateItem": {
       "description": "One fact a human (via control-plane's gate) should look at before approving `design.json`.\n\n`summary` is a short, skimmable one-liner; `detail` carries the full context (the original\nexception message, fidelity-check finding, rationale, or matched text) -- a reviewer scanning\n`gate_items` reads summaries first, then opens `detail` on whichever ones warrant it.",
       "properties": {
@@ -175,6 +336,41 @@
       "title": "ProgramDesignEntry",
       "type": "object"
     },
+    "RestEndpointDesign": {
+      "description": "One thin-REST-layer endpoint, LLM-authored -- control/observability or a point query.\n\nPer ADR-0009, this layer triggers/monitors Spring Batch jobs and serves genuine point queries\nagainst `domain_entities` -- never the bulk batch logic itself.",
+      "properties": {
+        "description": {
+          "title": "Description",
+          "type": "string"
+        },
+        "domain_entity": {
+          "title": "Domain Entity",
+          "type": "string"
+        },
+        "method": {
+          "enum": [
+            "GET",
+            "POST",
+            "PUT",
+            "DELETE"
+          ],
+          "title": "Method",
+          "type": "string"
+        },
+        "path": {
+          "title": "Path",
+          "type": "string"
+        }
+      },
+      "required": [
+        "method",
+        "path",
+        "domain_entity",
+        "description"
+      ],
+      "title": "RestEndpointDesign",
+      "type": "object"
+    },
     "RuleConfidence": {
       "description": "One claim from `spec.md`, independently scored against the real COBOL source.\n\n`rule` is a self-contained restatement of the claim (not just \"see spec.md line N\") so it's\nidentifiable without cross-referencing the narration again. `confidence` is in `[0.0, 1.0]`.",
       "properties": {
@@ -285,6 +481,39 @@
       "title": "SpecExtractionResult",
       "type": "object"
     },
+    "UnifiedDesign": {
+      "description": "`design.json`'s `unified_design` -- ADR-0010's real shape for what ADR-0008 left untyped.\n\n`domain_entities` is deterministic (see `nodes/solution_architect.build_domain_entities`);\n`batch_jobs` and `rest_endpoints` are LLM-authored, informed by but never re-deriving the\nentity data.",
+      "properties": {
+        "batch_jobs": {
+          "items": {
+            "$ref": "#/$defs/BatchJobDesign"
+          },
+          "title": "Batch Jobs",
+          "type": "array"
+        },
+        "domain_entities": {
+          "items": {
+            "$ref": "#/$defs/DomainEntity"
+          },
+          "title": "Domain Entities",
+          "type": "array"
+        },
+        "rest_endpoints": {
+          "items": {
+            "$ref": "#/$defs/RestEndpointDesign"
+          },
+          "title": "Rest Endpoints",
+          "type": "array"
+        }
+      },
+      "required": [
+        "domain_entities",
+        "batch_jobs",
+        "rest_endpoints"
+      ],
+      "title": "UnifiedDesign",
+      "type": "object"
+    },
     "UnsupportedField": {
       "description": "One field declaration `pic_mapper` refused to map deterministically.\n\nPer ADR-0002, `REDEFINES`/`OCCURS ... DEPENDING ON` (`UnsupportedPicConstructError`) and any\n`PIC` clause `pic_mapper` cannot resolve without guessing (`ValueError`) are both caught here,\none field at a time -- see the module docstring. `reason` is the caught exception's own\nmessage, verbatim, so a human reviewing this as a gate item sees exactly why without\nre-deriving it themselves.",
       "properties": {
@@ -335,7 +564,7 @@
       "type": "string"
     }
   },
-  "description": "The `design.json` contract: everything control-plane's gate needs to review one `design`\ninvocation across every program it covered.\n\nSee the module docstring for why `unified_design` is untyped. Build this via\n`build_design_document`, not by hand, so `gate_items` can never go stale relative to\n`programs`.",
+  "description": "The `design.json` contract: everything control-plane's gate needs to review one `design`\ninvocation across every program it covered.\n\nBuild this via `build_design_document`, not by hand, so `gate_items` can never go stale\nrelative to `programs`. `unified_design` is `None` until `nodes/solution_architect.py` has\nactually run -- it's a real, typed `UnifiedDesign` (ADR-0010), not a placeholder dict.",
   "properties": {
     "gate_items": {
       "items": {
@@ -364,15 +593,13 @@
     "unified_design": {
       "anyOf": [
         {
-          "additionalProperties": true,
-          "type": "object"
+          "$ref": "#/$defs/UnifiedDesign"
         },
         {
           "type": "null"
         }
       ],
-      "default": null,
-      "title": "Unified Design"
+      "default": null
     }
   },
   "required": [

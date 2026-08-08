@@ -22,15 +22,18 @@ for why.
 This is the design the implementation is built against, not a record of what already exists —
 the specialist nodes below land incrementally across Milestones C2–C4 (tracked in
 [`docs/adr/`](docs/adr/) and the repo's task list), but the shape doesn't change as they do.
-Today the CLI skeleton and every tool the first two `design`-phase nodes depend on (`parsing/`,
-`pic_mapper`, `tenant_repo`, `guardrails`, `knowledge_store`, `model_routing`, `source_units`) are
-real and independently tested, and `spec_extractor` + `spec_critic` are both implemented and
-verified standalone against real CardDemo source (`docs/qa/verification-report.md`). The
-`design.json` contract itself — including `gate_items`, the concrete payload control-plane's gate
-reviews (see "How human review actually happens" below) — is also real and schema-checked
-(`core/contracts.py`, `schemas/*.schema.json`, ADR-0008). None of this is wired into the CLI's
-`design` subcommand yet (Milestone C3, plan step 36), so there is no end-to-end run today — the
-diagrams below describe the target composition, verified piece by piece as each lands.
+Today the CLI skeleton and every tool the three real `design`-phase nodes depend on (`parsing/`,
+`pic_mapper`, `tenant_repo`, `guardrails`, `knowledge_store`, `model_routing`, `source_units`,
+`structured_output`) are real and independently tested, and `spec_extractor`, `spec_critic`, and
+`solution_architect` are all implemented and verified standalone against real CardDemo source for
+all four Track C programs (`docs/qa/verification-report.md`) — `solution_architect` is the first
+to unify them, merging every program's shared copybooks (`Account`/`CVACT01Y` alone spans three of
+the four) into one real domain model. The `design.json` contract itself — including `gate_items`,
+the concrete payload control-plane's gate reviews (see "How human review actually happens" below),
+and `unified_design`'s real, typed shape (ADR-0010) — is also real and schema-checked
+(`core/contracts.py`, `schemas/*.schema.json`). None of this is wired into the CLI's `design`
+subcommand yet (Milestone C3, plan step 36), so there is no end-to-end run today — the diagrams
+below describe the target composition, verified piece by piece as each lands.
 
 ### How this repo fits in the platform
 
@@ -197,7 +200,7 @@ compile.
 ./.venv/Scripts/python -m pytest --cov=cobol_modernizer --cov-report=term-missing --cov-fail-under=90
 ```
 
-191 tests passing, 98% coverage as of this change — the number a real run produces, not a claim.
+214 tests passing, 98% coverage as of this change — the number a real run produces, not a claim.
 Some tests (`tools/knowledge_store.py`'s) need the local Postgres+pgvector instance above; they
 skip with a clear reason rather than failing if it isn't running, and CI runs them for real against
 its own service container rather than letting them skip silently there too.

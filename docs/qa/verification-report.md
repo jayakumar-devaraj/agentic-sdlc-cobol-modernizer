@@ -13,7 +13,7 @@ was never treated as proof on its own.
 pytest --cov=cobol_modernizer --cov-report=term-missing --cov-fail-under=90
 ```
 
-As of this report: **191 tests passed, 98.20% overall coverage.**
+As of this report: **214 tests passed, 98.22% overall coverage.**
 
 | Module | Coverage |
 |---|---|
@@ -23,8 +23,10 @@ As of this report: **191 tests passed, 98.20% overall coverage.**
 | `core/model_routing.py` | 100% |
 | `core/schema_export.py` | 100% |
 | `core/source_units.py` | 100% |
+| `core/structured_output.py` | 100% |
+| `nodes/solution_architect.py` | 98% |
 | `nodes/spec_critic.py` | 97% |
-| `nodes/spec_extractor.py` | 96% |
+| `nodes/spec_extractor.py` | 97% |
 | `parsing/cobol_parser.py` | 98% |
 | `prompts_registry_client/loader.py` | 100% |
 | `tools/knowledge_store.py` | 100% |
@@ -34,9 +36,10 @@ As of this report: **191 tests passed, 98.20% overall coverage.**
 
 `cli.py`'s uncovered lines are the `not_implemented` skeleton branches for `design`/`generate`
 that Milestones C2–C4 replace with real logic — not a gap in what currently exists.
-`nodes/spec_extractor.py` and `nodes/spec_critic.py`'s uncovered lines are `_default_narrate`'s
-and `_default_critique`'s bodies respectively (the real Anthropic API calls) — see "Not yet
-covered" below for why, and what covers the rest of each module instead.
+`nodes/spec_extractor.py`, `nodes/spec_critic.py`, and `nodes/solution_architect.py`'s uncovered
+lines are `_default_narrate`/`_default_critique`/`_default_architect`'s bodies respectively (the
+real Anthropic API calls) — see "Not yet covered" below for why, and what covers the rest of each
+module instead.
 
 ## Functional verification
 
@@ -330,6 +333,35 @@ detected for each program.
 **Command**: `pytest tests/system/test_spec_critic_track_c_programs.py -v`
 **Result**: 12/12 passed.
 
+### `nodes/solution_architect.py` — cross-program domain-entity unification, against real data for all four programs
+
+**Verified**: `build_domain_entities` against real `extract_spec`/`critique_spec` output for all
+four Track C programs at once (`CBACT04C`, `CBCUS01C`, `CBACT01C`, `CBTRN02C`) — the first node in
+this repo to look across every program together, not one at a time:
+
+- **Real cross-program merge**: `Account` (from `CVACT01Y`) correctly merges into one entity used
+  by all three programs that `COPY` it (`CBACT04C`, `CBACT01C`, `CBTRN02C`), with 12 non-`FILLER`
+  fields and byte-exact `pic_mapper` data reused verbatim (`ACCT-CURR-BAL`: `BigDecimal`,
+  precision 12, scale 2 — the same real value `test_spec_extractor.py` already verifies).
+- **`CODATECN` correctly produces no domain entity at all** — confirmed it contributes zero
+  successfully-mapped fields (all 28 are inside its four real `REDEFINES` groups), so there is
+  nothing to represent, rather than an empty or guessed-at entity.
+- **Structurally similar copybooks stay separate, confirmed directly**: `CVTRA06Y`'s
+  `Dalytran` and `CVTRA05Y`'s `Tran` are both real 350-byte transaction-shaped records but remain
+  two distinct entities — proving the merge-by-exact-copybook-name-only rule (ADR-0010 decision 1)
+  actually holds against real, easily-confusable data, not just a description of intent.
+- **A real bug in ADR-0010 itself was caught by running this against real data, not assumed
+  correct from the design alone**: the ADR's own Consequences section originally claimed 6 domain
+  entities; running `build_domain_entities` for real produced 7 (`Dalytran` was missed in the
+  original count). Corrected in the same commit as the code that surfaced it.
+- **Structured-output validation** (an architect response referencing an unknown program, domain
+  entity, batch-step role, or REST method; a response missing required fields; a response covering
+  only some of the four real programs) is exercised directly against real Known Facts data, not
+  synthetic placeholders.
+
+**Command**: `pytest tests/system/test_solution_architect.py -v`
+**Result**: 22/22 passed.
+
 ### CI itself — verified on GitHub, not just locally
 
 Every module above was also verified green on a **real GitHub Actions run**, not assumed from a
@@ -341,19 +373,21 @@ mermaid-diagram-parse check reused from `agentic-sdlc-control-plane`.
 
 ## Not yet covered (honest gaps, not silently skipped)
 
-- **Neither `spec_extractor` nor `spec_critic`'s real model calls are tested against a live
-  Anthropic API.** This development environment has no `ANTHROPIC_API_KEY` (or equivalent)
-  available to `_default_narrate`/`_default_critique`, so neither has ever actually been invoked —
-  only every deterministic step upstream of each (field mapping, paragraph extraction, prompt
-  construction, guardrail wrapping, fidelity checks, JSON parsing) is verified against real data;
-  every test injects a fake `narrate`/`critique` in its place. This is a real gap, not a mock
-  standing in for a "done" claim — revisit once a real credential is available (Milestone C5
-  integration, or whenever this repo is actually invoked with one), by running `extract_spec` then
-  `critique_spec` against `CBACT04C` with the default callables and manually reviewing both the
-  resulting `spec.md` prose and the critic's per-rule scores against the source, the way
-  `.claude/agents/qa.md` requires for anything a unit test can't meaningfully reach. This also
-  means ADR-0004's own deferred question — whether `spec_critic`'s cheaper model tier holds up
-  empirically once real critiques exist — is still unanswered.
+- **None of `spec_extractor`, `spec_critic`, or `solution_architect`'s real model calls are tested
+  against a live Anthropic API.** This development environment has no `ANTHROPIC_API_KEY` (or
+  equivalent) available to `_default_narrate`/`_default_critique`/`_default_architect`, so none of
+  the three has ever actually been invoked — only every deterministic step upstream of each (field
+  mapping, paragraph extraction, domain-entity merging, prompt construction, guardrail wrapping,
+  fidelity checks, JSON parsing) is verified against real data; every test injects a fake
+  `narrate`/`critique`/`architect` in its place. This is a real gap, not a mock standing in for a
+  "done" claim — revisit once a real credential is available (Milestone C5 integration, or
+  whenever this repo is actually invoked with one), by running `extract_spec`, `critique_spec`,
+  then `design_solution` against all four real Track C programs with the default callables and
+  manually reviewing the resulting `spec.md` prose, the critic's per-rule scores, and the
+  architect's batch job/REST endpoint design against the source, the way `.claude/agents/qa.md`
+  requires for anything a unit test can't meaningfully reach. This also means ADR-0004's own
+  deferred question — whether `spec_critic`'s cheaper model tier holds up empirically once real
+  critiques exist — is still unanswered.
 - **Only `CBACT04C` has a hand-verified golden fixture.** `CBCUS01C`, `CBACT01C`, and `CBTRN02C`
   now have real, byte-verified source and confirmed-working `spec_extractor`/`spec_critic`
   extraction (via the faithful-Known-Facts-narration technique, not hand-written prose) — but none
