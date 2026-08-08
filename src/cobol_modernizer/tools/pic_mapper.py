@@ -8,12 +8,16 @@ answer looks exactly like a right one.
 
 Two failure modes are handled by refusing to guess, not by producing a plausible answer:
 
-- A field declaration that mixes `REDEFINES` or `OCCURS ... DEPENDING ON` into the same or an
-  adjacent record structure raises `UnsupportedPicConstructError`. Per ADR-0002
-  (docs/adr/0002-a-hand-rolled-parser-for-a-deliberately-bounded-grammar.md), these constructs
-  require resolving which of several overlapping interpretations of the same bytes is active --
-  a real alias-analysis problem this hand-rolled parser does not attempt. Callers must catch
-  this and route it to a human-in-the-loop gate, not swallow it and fall back to a best guess.
+- A field declaration that mixes `REDEFINES`, `OCCURS ... DEPENDING ON`, or a fixed `OCCURS`
+  into the same or an adjacent record structure raises `UnsupportedPicConstructError`. Per
+  ADR-0002 (docs/adr/0002-a-hand-rolled-parser-for-a-deliberately-bounded-grammar.md), the first
+  two require resolving which of several overlapping interpretations of the same bytes is active
+  -- a real alias-analysis problem this hand-rolled parser does not attempt. A fixed `OCCURS` is
+  different and is rejected for its own reason (ADR-0011): it is perfectly unambiguous, but this
+  module's `PicMapping` has no way to express "there are N of these", so mapping such a field
+  would return a correct precision and scale attached to a silently wrong cardinality -- one
+  scalar where the record really holds an array. Callers must catch this and route it to a
+  human-in-the-loop gate, not swallow it and fall back to a best guess.
 - A `PIC` clause this module cannot resolve deterministically (no recognized tokens, or a mix
   of numeric and alphanumeric tokens) raises `ValueError` rather than guessing.
 
@@ -54,12 +58,16 @@ class UsageClause(str, Enum):
 
 
 class UnsupportedPicConstructError(Exception):
-    """A field declaration involves `REDEFINES` or `OCCURS ... DEPENDING ON`.
+    """A field declaration involves `REDEFINES`, `OCCURS ... DEPENDING ON`, or a fixed `OCCURS`.
 
-    Per ADR-0002, these must be detected and routed to a human-in-the-loop gate, never
-    partially parsed or guessed at. Catch this at the call site and surface it as a gate item
-    in the JSON this repo's CLI returns to control-plane -- do not catch-and-continue with a
-    best-effort mapping.
+    Per ADR-0002 (the first two) and ADR-0011 (the third), these must be detected and routed to a
+    human-in-the-loop gate, never partially parsed or guessed at. Catch this at the call site and
+    surface it as a gate item in the JSON this repo's CLI returns to control-plane -- do not
+    catch-and-continue with a best-effort mapping.
+
+    `construct` names which one was found (`"REDEFINES"`, `"OCCURS ... DEPENDING ON"`, or
+    `"OCCURS (fixed)"`) so a reviewer reading a gate item knows what kind of ambiguity they are
+    being asked about without re-reading the source.
     """
 
     def __init__(self, construct: str, declaration_text: str) -> None:
@@ -96,6 +104,7 @@ _PIC_TOKEN_RE = re.compile(r"([S9VXA])(?:\((\d+)\))?", re.IGNORECASE)
 
 _REDEFINES_RE = re.compile(r"\bREDEFINES\b", re.IGNORECASE)
 _OCCURS_DEPENDING_RE = re.compile(r"\bOCCURS\b.*?\bDEPENDING\s+ON\b", re.IGNORECASE | re.DOTALL)
+_OCCURS_RE = re.compile(r"\bOCCURS\b", re.IGNORECASE)
 
 # Order matters: more specific patterns (COMP-3) must be checked before their prefix (COMP).
 _USAGE_PATTERNS: list[tuple[re.Pattern[str], UsageClause]] = [
@@ -109,18 +118,31 @@ _USAGE_PATTERNS: list[tuple[re.Pattern[str], UsageClause]] = [
 
 
 def _check_unsupported_constructs(*texts: str) -> None:
-    """Raise if `REDEFINES` or `OCCURS ... DEPENDING ON` appears in any of the given texts.
+    """Raise if `REDEFINES`, `OCCURS ... DEPENDING ON`, or a fixed `OCCURS` appears in the texts.
 
     Callers pass both the field's own declaration text and any adjacent record-structure text
     they have available, so a construct on a sibling field in the same 01-level group is still
     caught -- the ADR-0002 boundary applies to "the same or an adjacent record structure", not
     just the single field line being mapped.
+
+    `OCCURS ... DEPENDING ON` is checked before the plain `OCCURS` fallback so the more specific
+    construct keeps its own, more informative name in the raised error -- the same
+    specific-before-general ordering `_USAGE_PATTERNS` uses for `COMP-3` before `COMP`.
+
+    Scoping note, unchanged in spirit from ADR-0006: because the parser hands over a whole
+    01-level group as `adjacent_text` and carries no nesting information, a group containing one
+    of these constructs has *all* of its fields isolated, not only the fields genuinely inside
+    it. That over-flags -- `ARR-ACCT-ID` sits beside `CBACT01C`'s real `OCCURS 5 TIMES` group
+    without being part of it -- and over-flagging routes an unambiguous field to a human gate,
+    which is the safe direction to be wrong in. See ADR-0011.
     """
     combined = "\n".join(texts)
     if _REDEFINES_RE.search(combined):
         raise UnsupportedPicConstructError("REDEFINES", combined)
     if _OCCURS_DEPENDING_RE.search(combined):
         raise UnsupportedPicConstructError("OCCURS ... DEPENDING ON", combined)
+    if _OCCURS_RE.search(combined):
+        raise UnsupportedPicConstructError("OCCURS (fixed)", combined)
 
 
 def _detect_usage(declaration_text: str) -> UsageClause:
@@ -142,16 +164,20 @@ def map_pic_clause(declaration_text: str, *, adjacent_text: str = "") -> PicMapp
         declaration_text: The raw field declaration, e.g.
             `"05  ACCT-CURR-BAL                     PIC S9(10)V99."`.
         adjacent_text: Optional surrounding record-structure text (sibling fields in the same
-            01-level group) to also scan for `REDEFINES`/`OCCURS ... DEPENDING ON`, per the
-            ADR-0002 boundary that these constructs are rejected even when found in an adjacent
-            structure, not only the field being mapped.
+            01-level group) to also scan for `REDEFINES`/`OCCURS ... DEPENDING ON`/fixed
+            `OCCURS`, per the ADR-0002 boundary that these constructs are rejected even when
+            found in an adjacent structure, not only the field being mapped. A fixed `OCCURS`
+            especially needs this: it is declared on the *parent* group line
+            (`05 ARR-ACCT-BAL OCCURS 5 TIMES.`), never on the `PIC`-carrying children it
+            actually multiplies, so checking the field's own line alone would always miss it.
 
     Returns:
         A `PicMapping` with precision/scale/signedness for numeric fields, or a string-length
         signal for alphanumeric fields -- never a guess.
 
     Raises:
-        UnsupportedPicConstructError: `REDEFINES` or `OCCURS ... DEPENDING ON` was detected.
+        UnsupportedPicConstructError: `REDEFINES`, `OCCURS ... DEPENDING ON`, or a fixed
+            `OCCURS` was detected.
         ValueError: No `PIC` clause was found, or its tokens can't be resolved deterministically
             (e.g. it mixes numeric and alphanumeric characters).
     """

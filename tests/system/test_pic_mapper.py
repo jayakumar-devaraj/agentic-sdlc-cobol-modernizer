@@ -161,13 +161,44 @@ def test_redefines_on_adjacent_sibling_field_is_still_rejected():
         map_pic_clause(field_declaration, adjacent_text=sibling_with_redefines)
 
 
-def test_ordinary_occurs_without_depending_on_is_not_rejected():
-    # OCCURS alone (a fixed-size table) is in scope; only OCCURS ... DEPENDING ON is excluded.
+def test_fixed_occurs_is_rejected_because_pic_mapping_cannot_express_cardinality():
+    # This REVERSES an earlier decision here (the previous test asserted a fixed OCCURS mapped
+    # fine, on the reasoning that it is unambiguous). It is unambiguous -- that was never the
+    # problem. The problem is that PicMapping has no cardinality field, so the mapping returned
+    # was a correct precision and scale attached to a silently wrong shape: one scalar standing
+    # in for a 12-element table. A consumer generating Java from it gets `BigDecimal total`
+    # rather than a collection, which compiles and is wrong -- the exact failure mode this
+    # module exists to prevent. Rejected until PicMapping can carry cardinality. See ADR-0011.
     declaration = "05  WS-MONTHLY-TOTAL OCCURS 12 TIMES  PIC S9(09)V99."
-    result = map_pic_clause(declaration)
-    assert result.field_type == PicFieldType.NUMERIC
-    assert result.precision == 11
-    assert result.scale == 2
+    with pytest.raises(UnsupportedPicConstructError) as exc_info:
+        map_pic_clause(declaration)
+    assert exc_info.value.construct == "OCCURS (fixed)"
+
+
+def test_occurs_depending_on_keeps_its_own_name_rather_than_the_fixed_occurs_one():
+    # Specific-before-general ordering: an OCCURS ... DEPENDING ON also matches the plain OCCURS
+    # pattern, so without ordering it would be reported under the less informative name.
+    declaration = "05  WS-TABLE  OCCURS 1 TO 50 TIMES DEPENDING ON WS-COUNT  PIC X(10)."
+    with pytest.raises(UnsupportedPicConstructError) as exc_info:
+        map_pic_clause(declaration)
+    assert exc_info.value.construct == "OCCURS ... DEPENDING ON"
+
+
+def test_fixed_occurs_on_the_parent_group_line_still_rejects_its_children():
+    # The real shape from CBACT01C's FILE SECTION, verbatim: OCCURS sits on the parent group
+    # line and the PIC-carrying children below it have no OCCURS text of their own. Checking
+    # only a field's own declaration would map both children as scalars and never notice.
+    parent_and_siblings = (
+        "       01 ARR-ARRAY-REC.\n"
+        "          05  ARR-ACCT-ID                PIC 9(11).\n"
+        "          05  ARR-ACCT-BAL OCCURS 5  TIMES.\n"
+        "            10  ARR-ACCT-CURR-CYC-DEBIT  PIC S9(10)V99\n"
+        "                                         USAGE IS COMP-3."
+    )
+    child = "            10  ARR-ACCT-CURR-BAL        PIC S9(10)V99."
+    with pytest.raises(UnsupportedPicConstructError) as exc_info:
+        map_pic_clause(child, adjacent_text=parent_and_siblings)
+    assert exc_info.value.construct == "OCCURS (fixed)"
 
 
 def test_no_pic_clause_fails_loudly_rather_than_guessing():

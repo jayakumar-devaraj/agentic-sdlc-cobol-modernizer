@@ -106,8 +106,13 @@ def test_cbact01c_isolates_codatecns_four_redefines_groups():
     mapped_names = {m.field_name for m in mappings}
     assert unsupported_names.isdisjoint(mapped_names)
 
-    # Real count, computed by running this module against the real fixture.
-    assert len(unsupported) == 28
+    # Real count, computed by running this module against the real fixture. 28 -> 32 under
+    # ADR-0011: the four extra are CBACT01C's ARR-ARRAY-REC group (ARR-ACCT-ID,
+    # ARR-ACCT-CURR-BAL, ARR-ACCT-CURR-CYC-DEBIT, ARR-FILLER), isolated by the fixed
+    # "OCCURS 5 TIMES" rather than by REDEFINES -- they live in the FILE SECTION, which this
+    # module could not see before. The 28 CODATECN REDEFINES fields are unchanged.
+    assert len(unsupported) == 32
+    assert len([u for u in unsupported if "REDEFINES" in u.reason]) == 28
 
 
 def test_cbact01c_isolates_a_standalone_elementary_redefines():
@@ -155,8 +160,10 @@ def test_cbtrn02c_field_mapping_and_paragraph_flow():
     assert (by_name["TRAN-AMT"].precision, by_name["TRAN-AMT"].scale) == (11, 2)
     assert (by_name["TRAN-CAT-BAL"].precision, by_name["TRAN-CAT-BAL"].scale) == (11, 2)
 
-    # Real count, computed by running this module against the real fixture.
-    assert len(mappings) == 88
+    # Real count, computed by running this module against the real fixture. 88 -> 102 under
+    # ADR-0011 (CBTRN02C's five FD record layouts); it has no LINKAGE SECTION and no fixed
+    # OCCURS, so the unsupported count is unchanged.
+    assert len(mappings) == 102
     assert len(unsupported) == 9
 
 

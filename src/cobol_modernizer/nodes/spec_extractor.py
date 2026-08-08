@@ -1,4 +1,4 @@
-"""`spec_extractor` -- the first LLM-calling node, parses COBOL structure and narrates `spec.md`.
+﻿"""`spec_extractor` -- the first LLM-calling node, parses COBOL structure and narrates `spec.md`.
 
 Per the plan's Milestone C2 gate, this module composes every foundational tool built so far:
 `tools/tenant_repo.py` reads a program's real source plus every copybook it `COPY`s;
@@ -53,7 +53,7 @@ from cobol_modernizer.core.source_units import iter_source_units
 from cobol_modernizer.parsing.cobol_parser import (
     Paragraph,
     extract_paragraphs,
-    extract_working_storage_fields,
+    extract_record_fields,
 )
 from cobol_modernizer.prompts_registry_client.loader import prompt_path
 from cobol_modernizer.tools.pic_mapper import (
@@ -126,7 +126,7 @@ def group_field_mappings_by_source(
     for source_label, source_text in iter_source_units(resolved):
         mappings: list[PicMapping] = []
         unsupported: list[UnsupportedField] = []
-        for field in extract_working_storage_fields(source_text):
+        for field in extract_record_fields(source_text):
             if "PIC" not in field.raw_text.upper():
                 continue
             try:
