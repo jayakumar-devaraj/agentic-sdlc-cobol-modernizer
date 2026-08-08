@@ -87,11 +87,15 @@ This repo's own architecture diagrams (`README.md`) need correcting to match: `S
 writes); a new node for `card-service` receives the writes control-plane's clone enables, the same
 shape as the existing `TENANT` edge, not a new kind of relationship.
 
-`card-service` does not exist yet — this ADR is a forward architecture decision guiding Milestone
-C4's design, not a claim that the repo has been created. Per this platform's own "don't build
-ahead of demonstrated need" discipline (the same reasoning `docker-compose.yml` waited for
-`knowledge_store.py` to actually need it), the real repo gets created when Milestone C4 first has
-real generated Java to put in it — not speculatively now.
+**Update**: `card-service` is now live —
+[github.com/jayakumar-devaraj/card-service](https://github.com/jayakumar-devaraj/card-service),
+created by explicit user request shortly after this ADR was written, ahead of this section's
+original "wait for Milestone C4" reasoning. Recorded here plainly rather than silently edited
+away: the repo exists earlier than this ADR originally planned for, but its content still doesn't
+— it holds only a `README`/`LICENSE`/`.gitignore` scaffold stating its own purpose and empty
+status, no generated Java, no Spring Boot/Maven skeleton, no CI. Milestone C4 still owns actually
+populating it; only the timing of the repo's *existence* changed, not the scope of what's real
+inside it.
 
 This is scoped entirely to Track C's four batch programs. Track B (CICS/BMS online transaction
 programs, out of scope until Track C completes) may need this decision revisited: an *online*
