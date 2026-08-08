@@ -173,12 +173,22 @@ def test_every_node_is_called_through_its_own_registry_prompt(tmp_path, fake_ant
     assert nodes.count("solution_architect") == 1
 
 
-def test_complexity_routes_the_two_programs_to_different_models(tmp_path, fake_anthropic):
-    """ADR-0014 end to end: the cheap program really does get the cheap model.
+def test_complexity_still_varies_effort_and_ceiling_per_program(tmp_path, fake_anthropic):
+    """ADR-0014 tiering, as it stands after ADR-0015's evidence gate.
 
     `PROGRAMS` spans both bands on purpose -- `CBCUS01C` measures 11,346 prompt characters and 5
-    paragraphs (simple), `CBACT01C` measures 78,647 and 16 (complex). If tiering silently stopped
-    working, both would resolve to the same entry and this is the test that notices.
+    paragraphs (simple), `CBACT01C` measures 78,647 and 16 (complex).
+
+    **This test used to assert the two programs got different *models*, and no longer does.**
+    ADR-0014 routed the simple program to Haiku on the reasoning that a small program is an easy
+    task -- but Haiku had never been benchmarked on extraction. When it was (2026-08-08), it
+    scored 4/6 on CBACT04C, missing both COMPUTE-without-ROUNDED truncation and the unreachable
+    branch. So ADR-0015's `verified_for` gate withdrew that saving: no model except Opus 5 has
+    evidence for this node at any tier, and the gate refuses to route on a guess.
+
+    Tiering is still real and still measured here -- effort and the output ceiling both vary. The
+    model will vary again as soon as a cheaper model is benchmarked for extraction, with no code
+    change: that is the point of computing selection from the catalog.
     """
     assert cli.main(design_argv(tmp_path)) == 0
 
@@ -187,13 +197,14 @@ def test_complexity_routes_the_two_programs_to_different_models(tmp_path, fake_a
         for node, model, effort, max_tokens in fake_anthropic
         if node == "spec_extractor"
     ]
-    models = {model for model, _e, _m in extractor_calls}
-    efforts = {effort for _m, effort, _t in extractor_calls}
 
-    assert len(models) == 2, f"both programs routed to the same model: {models}"
-    assert "claude-haiku-4-5" in models  # CBCUS01C, the simple one
-    assert "claude-opus-5" in models  # CBACT01C, the complex one
-    assert efforts == {"low", "high"}
+    # Only Opus is verified for extraction, so every tier resolves to it -- deliberately, and this
+    # is the assertion that would fail if someone re-added a cheaper model without a benchmark.
+    assert {model for model, _e, _m in extractor_calls} == {"claude-opus-5"}
+
+    # Tiering still varies the levers it has evidence for.
+    assert {effort for _m, effort, _t in extractor_calls} == {"low", "high"}
+    assert len({max_tokens for _m, _e, max_tokens in extractor_calls}) == 2
 
     # The ceiling really reaches the request -- the previous hardcoded 4096 would have truncated
     # every real narration measured so far.

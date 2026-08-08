@@ -13,7 +13,7 @@ was never treated as proof on its own.
 pytest --cov=cobol_modernizer --cov-report=term-missing --cov-fail-under=90
 ```
 
-As of this report: **338 tests passed (4 skipped — the opt-in live-CLI tests), 99.35% overall
+As of this report: **369 tests passed (4 skipped — the opt-in live-CLI tests), 99.01% overall
 coverage.**
 
 | Module | Coverage |
@@ -672,6 +672,47 @@ model output, valuable because it is what the pipeline really produces.
 **Command**: `pytest tests/system/test_critic_discrimination.py -v` (add
 `COBOL_MODERNIZER_RUN_LIVE_CLI_TESTS=1` for the billed half)
 **Result**: 4 passed, 3 skipped without the opt-in; 7 passed with it.
+
+### `spec_extractor` — can a cheaper model do this job? (ADR-0015)
+
+**Verified**: four models run through the real extractor over `CBACT04C`, the hardest Track C
+program, each narration scored against six facts independently verified against the source.
+
+| Model | Facts | `fidelity_issues` | In tok | Out tok | Cost @ API rates |
+|---|---:|---|---:|---:|---:|
+| **`claude-opus-5`** | **6/6** | 0 | 36,320 | 13,000 | $0.507 |
+| `claude-sonnet-5` | 5/6 | 0 | 40,099 | 12,619 | $0.206 |
+| `claude-sonnet-4-6` | 5/6 | 0 | 30,246 | 11,652 | $0.266 |
+| `claude-haiku-4-5` | 4/6 | 0 | 23,867 | 7,996 | $0.064 |
+
+**The missing sixth fact is a confident false statement, not an omission.** `CBACT04C`'s
+`ELSE PERFORM 1050-UPDATE-ACCOUNT` is unreachable, so the last account's accrued interest is never
+posted. Opus 5 identified it; both Sonnets asserted the opposite — Sonnet 5: *"the main loop still
+performs one final `1050-UPDATE-ACCOUNT` call after EOF to flush the last account's accumulated
+interest"*; Sonnet 4.6: *"the loop's outer `ELSE` branch fires on the next iteration"*, naming a
+mechanism that is backwards. Haiku additionally missed COMPUTE-without-`ROUNDED` truncation.
+
+Three findings beyond the ranking:
+
+- **All four scored `fidelity_issues = 0`.** The deterministic layer cannot distinguish them at
+  all, including the one narrating dead code as live. That is the sharpest available statement
+  that those checks are necessary and nowhere near sufficient.
+- **The Sonnet-5 tokenizer difference is confirmed for COBOL**: 30,246 input tokens (Sonnet 4.6)
+  vs 40,099 (Sonnet 5) on the byte-identical prompt — **+32.6%**, matching the documented ~30%.
+  So Sonnet 4.6's lower token count does not make it cheaper per unit of work while Sonnet 5's
+  introductory rate holds; it becomes cheaper only after 2026-08-31.
+- **Detection was by substring and therefore under-reports.** Every narration was written to disk
+  and the contested claims read directly — the Sonnet quotes above were confirmed by reading, not
+  inferred from a missing keyword.
+
+**This withdrew a saving the repo had already claimed.** ADR-0014 routed `CBCUS01C` to Haiku on the
+reasoning that a small program is an easy task; Haiku had never been benchmarked on extraction, and
+scored 4/6 when it was. With `verified_for` enforced, **every `spec_extractor` tier now resolves to
+Opus 5** and `CBCUS01C` costs more than before. Restoring the saving is a benchmark on a *simple*
+program, not a code change.
+
+**Command**: `pytest tests/system/test_model_catalog.py tests/system/test_model_routing.py -v`
+**Result**: 73/73 passed.
 
 ### CI itself — verified on GitHub, not just locally
 
