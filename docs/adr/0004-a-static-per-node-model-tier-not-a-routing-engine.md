@@ -1,5 +1,21 @@
 # 0004 - A static per-node model tier, not a routing engine
 
+> **Amended twice.**
+>
+> **1. The key is now `(node, tier)`** — see
+> [ADR-0014](0014-route-by-measured-complexity-not-one-model-per-node.md). Still a lookup table,
+> not the routing engine this ADR rejected; the tier comes from deterministic pre-call
+> measurement.
+>
+> **2. `spec_critic`'s cheaper tier is confirmed by measurement (2026-08-08)** — the empirical
+> comparison this ADR promised below and deferred. A real `CBCUS01C` narration was corrupted with
+> three factual errors that the deterministic fidelity checks provably do *not* catch, then scored
+> by both tiers. Haiku 4.5 flagged all three (0.00 / 0.20 / 0.40) and Opus 5 flagged all three
+> (0.30 / 0.15 / 0.35), at **$0.1058 vs $0.2388**. The cheap tier was, if anything, more decisive —
+> and this also establishes the critic is load-bearing rather than decorative, since the
+> deterministic layer caught none of the three. Kept as a permanent, opt-in regression test:
+> `tests/system/test_critic_discrimination.py`.
+
 ## Context
 
 Track P1 (in `agentic-sdlc-control-plane`) routes *which specialist CLI* control-plane invokes for

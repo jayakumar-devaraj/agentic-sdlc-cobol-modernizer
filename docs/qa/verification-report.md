@@ -13,7 +13,7 @@ was never treated as proof on its own.
 pytest --cov=cobol_modernizer --cov-report=term-missing --cov-fail-under=90
 ```
 
-As of this report: **334 tests passed (1 skipped — the opt-in live-CLI test), 99.35% overall
+As of this report: **338 tests passed (4 skipped — the opt-in live-CLI tests), 99.35% overall
 coverage.**
 
 | Module | Coverage |
@@ -608,6 +608,70 @@ figures.
 
 **Command**: `pytest tests/system/test_complexity.py tests/system/test_model_routing.py tests/system/test_cli_design.py -v`
 **Result**: 71/71 passed.
+
+### `spec_critic` — does it actually catch a wrong narration, and is the cheap model enough?
+
+**Verified** — the question ADR-0004 flagged at Milestone C2 and deferred, now answered with real
+model runs rather than reasoning.
+
+A genuine `CBCUS01C` narration (from the live run, checked in at
+`tests/fixtures/narrations/CBCUS01C/spec.md`) was corrupted with three factual errors, each
+checkable against the source by line number:
+
+| Corruption | Source says |
+|---|---|
+| `APPL-EOF` = 16 → **99** | line 63: `88 APPL-EOF VALUE 16.` |
+| abend code 999 → **16** | line 157: `MOVE 999 TO ABCODE` |
+| status `'10'` is clean EOF → **fatal** | lines 98/107–108 |
+
+Every paragraph name, field name, and Known-Facts row was left intact, so the deterministic checks
+cannot see these — asserted, not assumed: `compute_fidelity_issues` returns `[]` on the corrupted
+narration, which makes the model the only line of defence.
+
+| Model | Rules | Min score | Below 0.7 | Notional cost |
+|---|---:|---:|---:|---:|
+| `claude-haiku-4-5` | 12 | **0.00** | **3** | $0.1058 |
+| `claude-opus-5` | 28 | 0.15 | **3** | $0.2388 |
+
+**Both caught all three.** Haiku was more decisive on the `APPL-EOF` constant (0.00 vs 0.30) at
+2.3× lower cost, so the cheap tier is not a compromise for this node — ADR-0004's deferred question
+is closed in favour of keeping Haiku. It also establishes the critic is **load-bearing rather than
+decorative**: the deterministic layer caught none of the three.
+
+**This calibrates `LOW_CONFIDENCE_THRESHOLD` too** (ADR-0008 shipped `0.7` as an admitted guess).
+Genuine narrations score 0.70–1.00 at minimum; a corrupted one scores 0.00–0.40. The threshold
+separates them with margin. **An earlier reading was wrong** and is corrected in ADR-0008: a 0.70
+minimum failing to flag looked like the threshold being too permissive, but that was a borderline
+claim about a timestamp format, not a missed defect.
+
+**A real limitation in the verification technique, found by this work.** The `faithful_narrate`
+approach used across the suite — feeding the Known Facts block back as the narration — produces a
+prompt a live critic rejects outright: *"I don't see the `spec.md` narration file in your
+message."* It is right to; that prompt contains the same block twice under two labels. The
+technique validates the deterministic machinery correctly, but every test using it also injects a
+*fake* critic, so nothing exercised the combination. Hence the checked-in real narration, which is
+explicitly **not** a golden fixture (`tests/fixtures/narrations/README.md`) — it is unreviewed
+model output, valuable because it is what the pipeline really produces.
+
+**Two measurements that came out negative, recorded rather than dropped:**
+
+- **`--effort` does not measurably control the critic's cost on the CLI backend.** Six runs
+  (low/medium/high × 2) on identical input: `medium` spanned 11,530→25,721 output tokens (2.2×),
+  and `low` averaged *more* than `high`. Within-level variance exceeds between-level difference; at
+  n=2 there is no signal. No cost saving is claimed from effort tuning.
+- **The critic is not reproducible run-to-run.** The same input produced **11 to 20** scored rules
+  across runs. For what ADR-0001 calls "the only independent check on extraction quality", that is
+  a real property to know; it does not affect the pass/fail behaviour measured above (all runs
+  flagged all three defects) but it means rule counts are not a stable metric.
+- **An earlier hypothesis was disproved.** The critic's output was assumed to be verbose prose
+  (~1,200 tokens per scored rule). Measuring the real output: the JSON is 1,535–2,028 tokens with
+  rationales averaging 196 characters — already tight. **~90% of reported output tokens are
+  thinking, not answer.** The planned "tighten the critic prompt" work was cancelled as addressing
+  the wrong 10%.
+
+**Command**: `pytest tests/system/test_critic_discrimination.py -v` (add
+`COBOL_MODERNIZER_RUN_LIVE_CLI_TESTS=1` for the billed half)
+**Result**: 4 passed, 3 skipped without the opt-in; 7 passed with it.
 
 ### CI itself — verified on GitHub, not just locally
 
