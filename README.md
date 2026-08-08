@@ -37,6 +37,7 @@ diagrams below describe the target composition, verified piece by piece as each 
 ```mermaid
 flowchart TB
     TENANT["carddemo-tenant-service<br/>forked CardDemo, real legacy COBOL"]
+    TARGET["card-service<br/>generated Java, real deployable target"]
 
     subgraph platform["agentic-sdlc-* platform"]
         EB["agentic-sdlc-eventbus<br/>Kafka broker, shared contract"]
@@ -48,20 +49,25 @@ flowchart TB
     TENANT -.->|"batch-drift event, Milestone C5"| EB
     EB -->|"drift and decisions"| CP
     CP -->|"invokes as subprocess<br/>one bounded call"| SPEC
-    SPEC -->|"structured JSON:<br/>spec, design, generated files,<br/>compile diagnosis"| CP
-    CP -.->|"read-only clone per run"| TENANT
-    SPEC -.->|"reads/writes worktree<br/>via control-plane's clone"| TENANT
+    SPEC -->|"structured JSON:<br/>spec, design, gate items,<br/>compile diagnosis"| CP
+    CP -.->|"read-only clone per run<br/>(design + generate)"| TENANT
+    SPEC -.->|"reads COBOL source<br/>(read-only)"| TENANT
+    CP -.->|"clone/create per run<br/>(generate only)"| TARGET
+    SPEC -.->|"writes generated Java<br/>via control-plane's clone"| TARGET
 
     style TENANT fill:#f5f5f5,stroke-dasharray:5 5
+    style TARGET fill:#f5f5f5,stroke-dasharray:5 5
     style SPEC fill:#e8f0ff
 ```
 
 Every solid arrow into or out of this repo is a single bounded subprocess call. This repo never
-talks to Kafka or the tenant repo's git remote directly — control-plane owns the clone and hands
-this repo a worktree path (`docs/adr/0001`). It does talk to Postgres directly, but only for the
-knowledge store's own schema (`tools/knowledge_store.py`), via a credentials file path, never an
-embedded credential (`docs/adr/0005`) — durable orchestration state stays entirely control-plane's
-concern.
+talks to Kafka, or either repo's git remote, directly — control-plane owns both clones and hands
+this repo worktree paths (`docs/adr/0001`). `card-service` (ADR-0009) is the `generate` phase's
+write target, created fresh once Milestone C4 has real Java to put in it — not this repo's own
+output, and not `carddemo-tenant-service`'s, which stays read-only source of truth throughout. This
+repo does talk to Postgres directly, but only for the knowledge store's own schema
+(`tools/knowledge_store.py`), via a credentials file path, never an embedded credential
+(`docs/adr/0005`) — durable orchestration state stays entirely control-plane's concern.
 
 ### This repo's internal pipeline — two separate, independently bounded invocations
 
@@ -112,7 +118,9 @@ flowchart TB
 both depend on account data and run after the join. The self-healing loop is a bounded retry, not
 an open-ended one — a third failed compile returns a result to control-plane rather than looping
 forever. `design.json` must be fully self-contained (ADR-0003): invocation 2 has no access to
-anything invocation 1 reasoned about that isn't written into that file.
+anything invocation 1 reasoned about that isn't written into that file. `CODE`'s output lands in
+`card-service`, not this repo or `carddemo-tenant-service` (ADR-0009) — `generate --output <path>`
+resolves to control-plane's clone of that target repo's worktree.
 
 ### How human review actually happens (the HITL story, in one place)
 
