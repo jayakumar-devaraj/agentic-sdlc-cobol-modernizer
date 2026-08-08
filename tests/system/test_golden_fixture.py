@@ -22,6 +22,7 @@ from pathlib import Path
 
 import pytest
 
+from cobol_modernizer.core.complexity import classify_prompt
 from cobol_modernizer.nodes.spec_critic import compute_fidelity_issues
 from cobol_modernizer.nodes.spec_extractor import SpecExtractionResult, extract_field_mappings
 from cobol_modernizer.parsing.cobol_parser import extract_paragraphs
@@ -46,6 +47,11 @@ def golden_extraction():
         unsupported_fields=unsupported_fields,
         injection_flags=[],
         spec_markdown=spec_markdown,
+        # CBACT04C's real measured prompt size (ADR-0014) -- keeps this fixture's tier the same
+        # `complex` one a live run would produce, so the golden path exercises the real routing.
+        complexity=classify_prompt(
+            "CBACT04C", prompt_chars=74_230, paragraph_count=len(paragraphs)
+        ),
     )
 
 

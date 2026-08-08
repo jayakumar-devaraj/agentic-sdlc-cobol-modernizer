@@ -63,7 +63,13 @@ DEFAULT_BACKEND: Backend = "claude_cli"
 REQUEST_TIMEOUT_SECONDS = float(os.getenv("COBOL_MODERNIZER_LLM_TIMEOUT", "300"))
 MAX_ATTEMPTS = int(os.getenv("COBOL_MODERNIZER_LLM_MAX_ATTEMPTS", "5"))
 MAX_BACKOFF_SECONDS = 30.0
-MAX_OUTPUT_TOKENS = 4096
+
+#: Ceiling used only when a caller supplies none. Deliberately generous rather than the previous
+#: hardcoded 4096: every real response measured so far runs 5,485-23,366 output tokens, so 4096
+#: would have truncated all of them -- silently on the CLI backend (which never sent the value)
+#: and as a mid-JSON parse error on the SDK backend. Real callers pass the per-tier ceiling from
+#: `core/model_routing.py` instead of relying on this.
+DEFAULT_MAX_OUTPUT_TOKENS = 32_000
 
 #: Every tool the CLI could otherwise expose. Listed explicitly rather than via a wildcard so a
 #: newly-added tool is a visible omission in review, not silently permitted.
@@ -149,7 +155,9 @@ def _claude_executable() -> str:
     return path
 
 
-def _call_claude_cli(model: str, system_prompt: str, user_content: str) -> tuple[dict, int | None]:
+def _call_claude_cli(
+    model: str, system_prompt: str, user_content: str, effort: str | None
+) -> tuple[dict, int | None]:
     """One `claude -p` invocation. Returns (parsed result envelope, retryable HTTP status or None).
 
     A retryable status is returned rather than raised so the caller owns the retry loop -- keeping
@@ -164,15 +172,20 @@ def _call_claude_cli(model: str, system_prompt: str, user_content: str) -> tuple
     prompt_file = Path(prompt_path_str)
     try:
         prompt_file.write_text(system_prompt, encoding="utf-8", newline="\n")
+        argv = [
+            executable,
+            "-p",
+            "--output-format", "json",
+            "--model", model,
+            "--system-prompt-file", str(prompt_file),
+            "--disallowed-tools", _DISALLOWED_TOOLS,
+        ]
+        # The CLI has no max-tokens flag, so the ceiling is SDK-only -- see call_model's docstring
+        # on why that asymmetry is documented rather than papered over.
+        if effort is not None:
+            argv += ["--effort", effort]
         completed = subprocess.run(
-            [
-                executable,
-                "-p",
-                "--output-format", "json",
-                "--model", model,
-                "--system-prompt-file", str(prompt_file),
-                "--disallowed-tools", _DISALLOWED_TOOLS,
-            ],
+            argv,
             input=user_content,
             capture_output=True,
             text=True,
@@ -223,16 +236,22 @@ def _result_from_cli_envelope(envelope: dict, model: str, attempts: int) -> Mode
 # --- Anthropic SDK backend ------------------------------------------------------------------
 
 
-def _call_anthropic_sdk(model: str, system_prompt: str, user_content: str) -> ModelCallResult:
+def _call_anthropic_sdk(
+    model: str, system_prompt: str, user_content: str, effort: str | None, max_output_tokens: int
+) -> ModelCallResult:
     # max_retries=0: the SDK has its own retry loop, which would silently multiply against this
     # module's -- 5 attempts here x 2 there is 10 real requests, and neither layer's logs would
     # show the true count. One retry policy, owned here.
     client = anthropic.Anthropic(timeout=REQUEST_TIMEOUT_SECONDS, max_retries=0)
+    extra: dict = {}
+    if effort is not None:
+        extra["output_config"] = {"effort": effort}
     response = client.messages.create(
         model=model,
-        max_tokens=MAX_OUTPUT_TOKENS,
+        max_tokens=max_output_tokens,
         system=system_prompt,
         messages=[{"role": "user", "content": user_content}],
+        **extra,
     )
     usage = response.usage
     return ModelCallResult(
@@ -267,17 +286,28 @@ def call_model(
     system_prompt: str,
     user_content: str,
     *,
+    effort: str | None = None,
+    max_output_tokens: int = DEFAULT_MAX_OUTPUT_TOKENS,
     backend: Backend | None = None,
 ) -> ModelCallResult:
     """Call a model for `node`, retrying transient failures, and record what it cost.
 
     Args:
         node: The calling node's name (`"spec_extractor"` etc.) -- used only for log correlation,
-            never to choose a model. Model selection stays `core/model_routing.py`'s job (ADR-0004).
+            never to choose a model. Model selection stays `core/model_routing.py`'s job
+            (ADR-0004, amended by ADR-0014).
         model: The already-resolved model identifier.
         system_prompt/user_content: The two turns. `user_content` may be very large; see the
             module docstring on why it travels over stdin.
-        backend: Overrides the configured backend -- tests and explicit callers only.
+        effort: `low`|`medium`|`high`|`xhigh`|`max`, from the resolved `RoutingDecision`. Passed
+            to the CLI as `--effort` and to the SDK as `output_config.effort`. Left unset only by
+            callers that genuinely have no routing decision, in which case each backend applies
+            its own default -- which is not free: on Claude Opus 5 thinking is *on* by default and
+            effort defaults to `high`, so an unset value is the most expensive setting, not a
+            neutral one.
+        max_output_tokens: Safety ceiling. **Applied on the SDK backend only** -- the `claude` CLI
+            exposes no max-tokens flag, so the two backends are not at parity here. Stated rather
+            than hidden: a workload that depends on a hard output cap must use the SDK backend.
 
     Raises:
         ModelCallError: a non-retryable failure, or every attempt exhausted. Never returns a
@@ -290,13 +320,17 @@ def call_model(
         retryable_status: int | None = None
         try:
             if chosen == "claude_cli":
-                envelope, retryable_status = _call_claude_cli(model, system_prompt, user_content)
+                envelope, retryable_status = _call_claude_cli(
+                    model, system_prompt, user_content, effort
+                )
                 if retryable_status is None:
                     result = _result_from_cli_envelope(envelope, model, attempt)
                     _log_success(node, result)
                     return result
             else:
-                result = _call_anthropic_sdk(model, system_prompt, user_content)
+                result = _call_anthropic_sdk(
+                    model, system_prompt, user_content, effort, max_output_tokens
+                )
                 result = ModelCallResult(**{**result.__dict__, "attempts": attempt})
                 _log_success(node, result)
                 return result

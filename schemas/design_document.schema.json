@@ -73,6 +73,16 @@
       "title": "BatchStepDesign",
       "type": "object"
     },
+    "ComplexityTier": {
+      "description": "Which routing band a unit of work falls into.\n\nOrdered cheapest to most capable. `COMPLEX` is the safe default for any caller that cannot\ncompute signals (see `core.model_routing.resolve_routing`) -- being wrong toward *more*\ncapability costs money, being wrong toward less costs correctness, and this repo's whole\nposture is that a plausible-but-wrong answer is the worst outcome available.",
+      "enum": [
+        "simple",
+        "moderate",
+        "complex"
+      ],
+      "title": "ComplexityTier",
+      "type": "string"
+    },
     "DomainEntity": {
       "description": "One unified domain entity -- every program that `COPY`s the same copybook shares one.\n\n`source_copybook` is the exact copybook name that produced this entity; two different\ncopybook names are never merged into one entity, even when structurally similar (ADR-0010\ndecision 1) -- `source_copybook` is what makes that traceable and checkable.",
       "properties": {
@@ -314,6 +324,54 @@
       "title": "PicMapping",
       "type": "object"
     },
+    "ProgramComplexity": {
+      "description": "The measured signals and the tier they produce, kept together so a decision is explainable.\n\nCarried rather than discarded because `tier` alone cannot answer \"why was this program routed\nto the cheap model?\" at a review gate -- the signals are the answer, and they are free to keep.",
+      "properties": {
+        "copybook_count": {
+          "title": "Copybook Count",
+          "type": "integer"
+        },
+        "mapped_field_count": {
+          "title": "Mapped Field Count",
+          "type": "integer"
+        },
+        "paragraph_count": {
+          "title": "Paragraph Count",
+          "type": "integer"
+        },
+        "program_name": {
+          "title": "Program Name",
+          "type": "string"
+        },
+        "prompt_chars": {
+          "title": "Prompt Chars",
+          "type": "integer"
+        },
+        "rationale": {
+          "title": "Rationale",
+          "type": "string"
+        },
+        "tier": {
+          "$ref": "#/$defs/ComplexityTier"
+        },
+        "unsupported_field_count": {
+          "title": "Unsupported Field Count",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "program_name",
+        "prompt_chars",
+        "paragraph_count",
+        "mapped_field_count",
+        "unsupported_field_count",
+        "copybook_count",
+        "tier",
+        "rationale"
+      ],
+      "title": "ProgramComplexity",
+      "type": "object"
+    },
     "ProgramDesignEntry": {
       "description": "One program's full `spec_extractor` + `spec_critic` output, as it goes into `design.json`.",
       "properties": {
@@ -433,6 +491,9 @@
     "SpecExtractionResult": {
       "description": "Everything `spec_extractor` produces for one program.\n\n`spec_markdown` is the model's narration; every other field is deterministic and independent\nof it -- a caller that only needs the field/paragraph facts (e.g. `spec_critic`, checking\nextraction quality) does not need to re-derive them from `spec_markdown` prose.",
       "properties": {
+        "complexity": {
+          "$ref": "#/$defs/ProgramComplexity"
+        },
         "field_mappings": {
           "items": {
             "$ref": "#/$defs/PicMapping"
@@ -476,7 +537,8 @@
         "field_mappings",
         "unsupported_fields",
         "injection_flags",
-        "spec_markdown"
+        "spec_markdown",
+        "complexity"
       ],
       "title": "SpecExtractionResult",
       "type": "object"

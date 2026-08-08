@@ -41,14 +41,16 @@ for how this gap is tracked, not silently assumed away.
 
 from __future__ import annotations
 
+import logging
 from collections.abc import Callable
 from pathlib import Path
 
 from pydantic import BaseModel
 
+from cobol_modernizer.core.complexity import ProgramComplexity, classify_prompt
 from cobol_modernizer.core.guardrails import InjectionFlag, prepare_untrusted_cobol_for_prompt
 from cobol_modernizer.core.model_client import call_model
-from cobol_modernizer.core.model_routing import resolve_model
+from cobol_modernizer.core.model_routing import RoutingDecision, resolve_routing
 from cobol_modernizer.core.source_units import iter_source_units
 from cobol_modernizer.parsing.cobol_parser import (
     Paragraph,
@@ -62,6 +64,8 @@ from cobol_modernizer.tools.pic_mapper import (
     map_pic_clause,
 )
 from cobol_modernizer.tools.tenant_repo import ResolvedProgram, resolve_program
+
+logger = logging.getLogger(__name__)
 
 _NODE_NAME = "spec_extractor"
 
@@ -96,6 +100,11 @@ class SpecExtractionResult(BaseModel):
     unsupported_fields: list[UnsupportedField]
     injection_flags: list[InjectionFlag]
     spec_markdown: str
+    #: Which routing band this program fell into and why (ADR-0014). Carried into `design.json`
+    #: so a reviewer at the gate can see that a cheap model was used and on what evidence --
+    #: "routed to the cheap tier" is a fact a human reviewing a spec deserves, not an internal
+    #: optimization detail.
+    complexity: ProgramComplexity
 
 
 def group_field_mappings_by_source(
@@ -235,15 +244,26 @@ def build_prompt(
     return user_content, injection_flags
 
 
-#: `(model, system_prompt, user_content) -> narration text`. Injected so `extract_spec`'s tests
+#: `(routing, system_prompt, user_content) -> narration text`. Injected so `extract_spec`'s tests
 #: exercise every deterministic step above without a live model credential -- see module docstring.
-NarrateFn = Callable[[str, str, str], str]
+#:
+#: Takes the whole `RoutingDecision` rather than just a model string (ADR-0014): effort and the
+#: output ceiling are as much a part of "which call to make" as the model is, and a fake that only
+#: sees the model name cannot assert that a simple program was actually routed cheaply.
+NarrateFn = Callable[[RoutingDecision, str, str], str]
 
 
-def _default_narrate(model: str, system_prompt: str, user_content: str) -> str:
+def _default_narrate(routing: RoutingDecision, system_prompt: str, user_content: str) -> str:
     """Call a real model through `core/model_client.py` (ADR-0013), which owns backend choice,
     timeout, retry/backoff, and usage capture -- this node does not reimplement any of that."""
-    return call_model(_NODE_NAME, model, system_prompt, user_content).text
+    return call_model(
+        _NODE_NAME,
+        routing.model,
+        system_prompt,
+        user_content,
+        effort=routing.effort,
+        max_output_tokens=routing.max_output_tokens,
+    ).text
 
 
 def _load_system_prompt() -> str:
@@ -285,13 +305,25 @@ def extract_spec(
     field_mappings, unsupported_fields = extract_field_mappings(resolved)
     user_content, injection_flags = build_prompt(resolved, paragraphs, field_mappings, unsupported_fields)
 
-    system_prompt = _load_system_prompt()
-    model = (
-        resolve_model(_NODE_NAME)
-        if model_routing_config is None
-        else resolve_model(_NODE_NAME, config_path=model_routing_config)
+    # Classified from the prompt that is about to be sent, not an estimate of it -- the exact
+    # figure is already in hand at this point (ADR-0014).
+    complexity = classify_prompt(
+        program_name=program_name,
+        prompt_chars=len(user_content),
+        paragraph_count=len(paragraphs),
+        mapped_field_count=len(field_mappings),
+        unsupported_field_count=len(unsupported_fields),
+        copybook_count=len(resolved.copybook_sources),
     )
-    spec_markdown = narrate(model, system_prompt, user_content)
+
+    system_prompt = _load_system_prompt()
+    routing_kwargs = {} if model_routing_config is None else {"config_path": model_routing_config}
+    routing = resolve_routing(_NODE_NAME, complexity.tier, **routing_kwargs)
+    logger.info(
+        "spec_extractor routing: program=%s tier=%s model=%s effort=%s (%s)",
+        program_name, routing.tier.value, routing.model, routing.effort, complexity.rationale,
+    )
+    spec_markdown = narrate(routing, system_prompt, user_content)
 
     return SpecExtractionResult(
         program_name=program_name,
@@ -300,4 +332,5 @@ def extract_spec(
         unsupported_fields=unsupported_fields,
         injection_flags=injection_flags,
         spec_markdown=spec_markdown,
+        complexity=complexity,
     )

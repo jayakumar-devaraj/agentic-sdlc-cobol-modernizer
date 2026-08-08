@@ -14,6 +14,7 @@ from pathlib import Path
 import pytest
 from pydantic import ValidationError
 
+from cobol_modernizer.core.complexity import classify_prompt
 from cobol_modernizer.core.contracts import (
     LOW_CONFIDENCE_THRESHOLD,
     SCHEMA_VERSION,
@@ -52,6 +53,9 @@ def golden_extraction() -> SpecExtractionResult:
         unsupported_fields=unsupported_fields,
         injection_flags=[],
         spec_markdown=GOLDEN_SPEC_MD.read_text(encoding="utf-8"),
+        complexity=classify_prompt(
+            "CBACT04C", prompt_chars=74_230, paragraph_count=len(paragraphs)
+        ),
     )
 
 
@@ -162,6 +166,9 @@ def test_build_gate_items_surfaces_a_real_fidelity_issue():
         unsupported_fields=unsupported_fields,
         injection_flags=[],
         spec_markdown=corrupted_markdown,
+        complexity=classify_prompt(
+            "CBACT04C", prompt_chars=74_230, paragraph_count=len(paragraphs)
+        ),
     )
 
     def fake_critique(model, system_prompt, user_content):
