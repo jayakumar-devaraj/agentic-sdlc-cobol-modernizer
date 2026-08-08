@@ -13,16 +13,18 @@ was never treated as proof on its own.
 pytest --cov=cobol_modernizer --cov-report=term-missing --cov-fail-under=90
 ```
 
-As of this report: **284 tests passed (1 skipped — the opt-in live-CLI test), 99.47% overall
+As of this report: **334 tests passed (1 skipped — the opt-in live-CLI test), 99.35% overall
 coverage.**
 
 | Module | Coverage |
 |---|---|
 | `cli.py` | 98% |
+| `core/complexity.py` | 100% |
 | `core/contracts.py` | 100% |
 | `core/design_outputs.py` | 100% |
 | `core/guardrails.py` | 100% |
-| `core/model_client.py` | 99% |
+| `core/model_client.py` | 98% |
+| `core/model_routing.py` | 98% |
 | `core/model_routing.py` | 100% |
 | `core/schema_export.py` | 100% |
 | `core/source_units.py` | 100% |
@@ -563,6 +565,49 @@ being the exact bug worth catching. Confirmed falsifiable: removing the `config=
 
 **Command**: `pytest tests/system/test_design_graph.py -v`
 **Result**: 12/12 passed.
+
+### Complexity-based routing — measured, not assumed (ADR-0014)
+
+**Verified**: the bands were set from real measurements of all four Track C programs taken by
+running the real pipeline, *before* the thresholds were chosen — not chosen first and justified
+after.
+
+| Program | Prompt chars | Paragraphs | Tier | Model (was) |
+|---|---:|---:|---|---|
+| `CBCUS01C` | 11,346 | 5 | `simple` | `claude-haiku-4-5` (was `claude-opus-5`) |
+| `CBACT04C` | 74,230 | 22 | `complex` | `claude-opus-5` (unchanged) |
+| `CBACT01C` | 78,647 | 16 | `complex` | `claude-opus-5` (unchanged) |
+| `CBTRN02C` | 81,902 | 26 | `complex` | `claude-opus-5` (unchanged) |
+
+- **The tiering works end to end through the real CLI, not just in unit isolation.**
+  `test_complexity_routes_the_two_programs_to_different_models` runs `cobol-modernizer design`
+  over `CBCUS01C` + `CBACT01C` and asserts the two extractor calls really reached the API with
+  *different* models and efforts (`claude-haiku-4-5`/`low` and `claude-opus-5`/`high`). If tiering
+  silently stopped working, both would resolve to the same entry and that test is what notices.
+- **Bands are not borderline.** `CBCUS01C` measures 11,346 against a 25,000 ceiling; the next
+  smallest program measures 74,230 against a 60,000 floor. `test_complexity.py` asserts that
+  headroom directly, so a future threshold tweak that puts a real program on a knife edge fails
+  here rather than in production.
+- **Classification provably makes no model call.** The test that measures `CBTRN02C` replaces
+  `model_client.call_model` with a function that fails the test if invoked — so a regression to
+  "probe a model to pick a model" is caught rather than showing up as a quiet bill increase.
+- **The architect takes the highest tier present**, asserted directly: a run containing one
+  complex program routes the architect to `complex` even though half its programs are simple.
+- **Config validation covers the whole file, not just the entry requested** — asserted by putting
+  an invalid `effort` in a tier the test never asks for and confirming the lookup still fails. A
+  typo in a band nothing hits today would otherwise lie in wait for whichever program first lands
+  there.
+
+**A latent truncation bug this surfaced, now fixed and pinned by a test**: `max_output_tokens` was
+hardcoded at 4096, while every real response measured runs 5,485–23,366 output tokens. The SDK
+backend would have truncated all of them (silently mid-narration, or as a hard parse error
+mid-JSON); the CLI backend never sent the value, which is the only reason nothing had failed yet.
+Per-tier ceilings now sit above observed output, and
+`test_real_config_ceilings_clear_every_observed_output_length` asserts that against the measured
+figures.
+
+**Command**: `pytest tests/system/test_complexity.py tests/system/test_model_routing.py tests/system/test_cli_design.py -v`
+**Result**: 71/71 passed.
 
 ### CI itself — verified on GitHub, not just locally
 

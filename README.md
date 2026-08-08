@@ -35,6 +35,14 @@ choice, timeout, bounded retry with jittered backoff, and per-call token/cost ca
 reimplements any of that, and a rate limit is handled once rather than three times. Program
 branches are capped rather than fanning out without limit.
 
+**Which model runs is decided per program, not per node** (ADR-0014). `core/complexity.py`
+measures the work before any call — paragraph count, field counts, and the exact prompt about to
+be sent — and `config/model_routing.yaml` maps `(node, tier)` to a model, an effort level, and an
+output ceiling. Track C's programs span a 7× prompt-size range, so a small program runs on a cheap
+model at low effort while a large one keeps the strongest tier. The classification costs nothing
+and makes no model call of its own; the tier and the signals behind it ride into `design.json`, so
+a reviewer can see which model produced a spec and on what evidence.
+
 Two honest limits. **No full `design` run against real models has happened yet** — a live
 round-trip through the `claude` CLI is verified, but no `spec.md` has been narrated, critiqued, or
 architected by a real model and read by a human, so output *quality* is unevaluated. And the
