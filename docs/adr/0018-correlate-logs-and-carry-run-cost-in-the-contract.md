@@ -107,6 +107,17 @@ would have forced every such construction through an accumulator for no benefit.
 choice is that a consumer must handle `None`, so the schema says so rather than implying a
 guarantee the type cannot make.
 
+**Amendment (2026-08-08, same day, found by code review).** As first merged, both the cost log
+line and the `RunCost` construction sat *after* `app.invoke` returned, so a run that raised
+partway reported no cost at all — even though the branches that completed had already spent real
+money, and even though `DesignCliResult` carries no cost field to fall back on. A failed
+four-program run that died on the fourth program silently discarded the spend on the first three.
+The summary now happens in a `finally`, and a test drives a real failure (one valid program, one
+missing) and asserts the line still reports `model_calls=1`. Confirmed falsifiable by restoring
+the original shape and watching that test fail. The lesson generalises past this ADR: **the
+failure path is exactly when someone asks what a run cost**, so cost accounting belongs in
+`finally`, not after the happy path.
+
 **Cost is reported but not enforced.** Nothing budgets, caps, or fails a run for being expensive,
 and `DesignCliResult` — the `--json` stdout summary — still does not carry cost, only
 `gate_item_count`. Surfacing a number for a human gate to read is a different thing from

@@ -15,6 +15,7 @@ while the three Anthropic calls are not -- this environment has no credential. S
 from __future__ import annotations
 
 import json
+import logging
 import threading
 import time
 from pathlib import Path
@@ -404,3 +405,34 @@ def test_run_cost_reports_a_partial_total_when_a_backend_gives_no_cost(monkeypat
     assert document.cost.input_tokens == 7 * len(PARALLEL_PAIR)
     assert document.cost.notional_cost_usd is None
     assert document.cost.calls_without_reported_cost == len(PARALLEL_PAIR)
+
+
+def test_run_cost_is_logged_even_when_the_run_fails(monkeypatch, caplog):
+    """A failed run has still spent money, and that is when the question gets asked.
+
+    No `design.json` is written on the failure path and `DesignCliResult` carries no cost field
+    (ADR-0008), so the stderr line is the only surviving record. Before this was moved into a
+    `finally`, an invocation that died on its fourth program reported nothing about the three it
+    had already paid for.
+    """
+    fake = ModelCallResult(
+        text="[]", model="fake-model", backend="anthropic_sdk", attempts=1,
+        input_tokens=11, output_tokens=2, notional_cost_usd=0.5,
+    )
+    monkeypatch.setattr(model_client, "_call_anthropic_sdk", lambda *a, **k: fake)
+
+    def narrate_then_fail(model, system_prompt, user_content):
+        model_client.call_model("spec_extractor", "fake-model", system_prompt, "probe")
+        return faithful_narrate(model, system_prompt, user_content)
+
+    with (
+        caplog.at_level(logging.INFO, logger="cobol_modernizer.graph.design_graph"),
+        pytest.raises(TenantRepoFileNotFoundError),
+    ):
+        run(["CBCUS01C", "NOSUCHPROGRAM"], narrate=narrate_then_fail)
+
+    cost_lines = [r.message for r in caplog.records if "design run cost" in r.message]
+    assert cost_lines, "a failed run must still report what it spent"
+    # The valid program's branch really did call a model before the invalid one raised.
+    assert "model_calls=1" in cost_lines[0]
+    assert "input_tokens=11" in cost_lines[0]

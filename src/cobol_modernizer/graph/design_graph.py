@@ -59,7 +59,7 @@ from cobol_modernizer.core.contracts import (
     UnifiedDesign,
     build_design_document,
 )
-from cobol_modernizer.core.model_client import collect_usage
+from cobol_modernizer.core.model_client import UsageAccumulator, collect_usage
 from cobol_modernizer.nodes.solution_architect import ArchitectFn, design_solution
 from cobol_modernizer.nodes.spec_critic import CritiqueFn, critique_spec
 from cobol_modernizer.nodes.spec_extractor import NarrateFn, SpecExtractionResult, extract_spec
@@ -272,19 +272,35 @@ def run_design(
     # context (ADR-0018). Binding it inside a node would be too late for the branches already
     # running, and would give each its own instance.
     with collect_usage() as usage:
-        final_state = app.invoke(
-            {
-                "worktree_root": str(worktree_root),
-                "program_names": list(program_names),
-                "program_entries": [],
-            },
-            config={"max_concurrency": MAX_CONCURRENT_PROGRAMS},
-        )
+        try:
+            final_state = app.invoke(
+                {
+                    "worktree_root": str(worktree_root),
+                    "program_names": list(program_names),
+                    "program_entries": [],
+                },
+                config={"max_concurrency": MAX_CONCURRENT_PROGRAMS},
+            )
+        finally:
+            # In a `finally` because a failed run has still spent money: a run that dies on its
+            # fourth program has already paid for the first three, and the failure path is
+            # exactly when someone asks what it cost. No `design.json` is written on that path
+            # and `DesignCliResult` carries no cost field (ADR-0008), so this stderr line is the
+            # only record that survives.
+            cost = _summarize_cost(usage)
+            _log_run_cost(cost)
 
     entries_by_name = {entry.program_name: entry for entry in final_state["program_entries"]}
     ordered_entries = [entries_by_name[name] for name in program_names]
 
-    cost = RunCost(
+    return build_design_document(
+        ordered_entries, unified_design=final_state["unified_design"], cost=cost
+    )
+
+
+def _summarize_cost(usage: UsageAccumulator) -> RunCost:
+    """Snapshot the accumulator into the immutable contract type."""
+    return RunCost(
         model_calls=usage.model_calls,
         input_tokens=usage.input_tokens,
         output_tokens=usage.output_tokens,
@@ -293,6 +309,9 @@ def run_design(
         notional_cost_usd=usage.notional_cost_usd,
         calls_without_reported_cost=usage.calls_without_reported_cost,
     )
+
+
+def _log_run_cost(cost: RunCost) -> None:
     logger.info(
         "design run cost: model_calls=%d input_tokens=%d output_tokens=%d "
         "cache_creation=%d cache_read=%d notional_cost_usd=%s calls_without_cost=%d",
@@ -303,8 +322,4 @@ def run_design(
         cost.cache_read_input_tokens,
         cost.notional_cost_usd,
         cost.calls_without_reported_cost,
-    )
-
-    return build_design_document(
-        ordered_entries, unified_design=final_state["unified_design"], cost=cost
     )
