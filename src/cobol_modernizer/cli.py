@@ -71,6 +71,17 @@ def build_parser() -> argparse.ArgumentParser:
     generate.add_argument("--design", required=True, help="Path to the approved design.json")
     generate.add_argument("--tenant-repo", required=True, help="Path to the cloned tenant repo worktree")
     generate.add_argument("--output", required=True, help="Directory to write generated Java into")
+    generate.add_argument(
+        "--run-id",
+        default=None,
+        help=(
+            "Correlation id for this invocation, echoed in --json output and every log line. "
+            "Pass control-plane's own audit-log run id to tie the two together; omitted, one is "
+            "generated. Identical in meaning to `design --run-id`; a caller running both phases "
+            "of one migration should pass the same value to both, since they are separate "
+            "processes with no shared state (ADR-0003)."
+        ),
+    )
     generate.add_argument("--json", action="store_true", help="Emit structured JSON on stdout")
 
     return parser
@@ -138,11 +149,19 @@ def _run_design_command(args: argparse.Namespace) -> tuple[DesignCliResult, int]
 
 
 def _run_generate_command(args: argparse.Namespace) -> tuple[GenerateCliResult, int]:
-    """The Milestone C1 skeleton, unchanged -- `generate` lands in Milestone C4."""
+    """The Milestone C1 skeleton -- the sub-pipeline itself still lands in Milestone C4.
+
+    The correlation id is bound here rather than in the C4 work that will fill this in, so that
+    every log line the loop eventually emits inherits it without that change having to remember to.
+    """
+    run_id = args.run_id or uuid.uuid4().hex
+    bind_run_id(run_id)
+
     logger.info("generate phase: design_file=%s", args.design)
     return (
         GenerateCliResult(
             status="error",
+            run_id=run_id,
             output_path=args.output,
             detail="Not implemented: the generate sub-pipeline lands in Milestone C4.",
         ),

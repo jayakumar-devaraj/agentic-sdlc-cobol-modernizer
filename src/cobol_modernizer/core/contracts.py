@@ -228,10 +228,18 @@ class GenerateCliResult(BaseModel):
     fields (attempt count, compile diagnosis) are Milestone C4 work, once `build_validator` exists
     to define them; inventing them now would be the same speculative-design mistake
     `DesignDocument.unified_design` avoids.
+
+    `run_id` carries the same meaning as `DesignCliResult.run_id` and was added for the same
+    reason, late: until this field existed, `--run-id` was accepted by `design` and **not** by
+    `generate`, so the half of the pipeline that runs the compile loop and the second model stage
+    could not be correlated with control-plane's audit chain at all. That silently violated the
+    specialist contract's rule that a specialist accepts `--run-id` to join the chain -- on the
+    noisier half. Both phases now echo it.
     """
 
     status: Literal["ok", "error"]
     phase: Literal["generate"] = "generate"
+    run_id: str
     output_path: str
     detail: str
 
