@@ -13,8 +13,11 @@ was never treated as proof on its own.
 pytest --cov=cobol_modernizer --cov-report=term-missing --cov-fail-under=90
 ```
 
-As of this report: **380 tests passed (4 skipped — the opt-in live-CLI tests), 99.06% overall
+As of this report: **386 tests passed (4 skipped — the opt-in live-CLI tests), 99.06% overall
 coverage.**
+
+`templates/target-spring-boot-baseline/` is Java and is not in that figure. It has its own suite —
+13 tests, 0 skipped — run by CI on the JDK it pins; see the entry below.
 
 | Module | Coverage |
 |---|---|
@@ -942,6 +945,87 @@ then each file's base64 `content` decoded locally and its bytes counted (record 
 totals, and the literal characters at the signed-field offsets).
 **Result**: as stated above.
 
+### `templates/target-spring-boot-baseline/` — the Java 25 stack, compiled and run on Java 25 (step 38)
+
+**Verified**: the four mitigations ADR-0019 wrote as *gates* on step 38, executed rather than
+intended. This repo has no JDK, so all of it runs in CI (`.github/workflows/ci.yml`, job
+`template-build`).
+
+**The toolchain is the pinned one, confirmed from the build's own output** — not from the workflow
+file that asked for it:
+
+```
+openjdk version "25.0.3" 2026-04-21 LTS
+Apache Maven 3.9.16
+Compiling 3 source files with javac [debug parameters release 25] to target/classes
+Tests run: 13, Failures: 0, Errors: 0, Skipped: 0
+BUILD SUCCESS
+```
+
+`BaselineStackTest` asserts `Runtime.version().feature() == 25` from inside the JVM as well, so a
+workflow that silently resolved a different JDK fails rather than going green —
+`maven.compiler.release` constrains the bytecode target and says nothing about what ran.
+
+**Each named ecosystem risk is exercised against a real PostgreSQL container**, because all three
+fail at *runtime*, where a compile-error-driven self-healing loop cannot help:
+
+- **Hibernate/ByteBuddy**: the `EntityManagerFactory` is built and opened. Building it is what
+  drives ByteBuddy, the library that historically breaks first on a new class-file version.
+- **Mockito's instrumentation agent**: a `final` class is mocked, deliberately — an interface would
+  be proxied by plain JDK reflection and would pass with the agent completely broken. Surefire runs
+  with `-XX:+EnableDynamicAgentLoading` so the dependency on self-attach is explicit in the build
+  rather than one JDK release from an unpredicted failure.
+- **Testcontainers 2.0.5** starts the container at all.
+
+**Zero tests skip.** A container test that skips without Docker would turn this gate into
+decoration — the failure this repo already corrected once, when `test_knowledge_store.py` could
+have skipped in CI forever.
+
+**ADR-0019's fourth reason for choosing PostgreSQL is checked, not restated**: a `NUMERIC(12,2)`
+column accepts `9999999999.99` and **rejects** `10000000000.00` with `numeric field overflow`,
+where a COBOL `MOVE` would silently discard the high-order digit. That is the zero-drift property
+becoming a database constraint rather than an application convention.
+
+**A real defect was found by the first CI run, and it is a trap for the code generator.**
+`BaselineStackTest` initially set `spring.batch.jdbc.initialize-schema=always` and then counted
+**zero** batch metadata tables. **Spring Boot 4 removed `spring.batch.jdbc.*` from
+`BatchProperties` entirely**; unknown configuration keys are silently ignored, so the key looked
+decided and did nothing. Every pre-Boot-4 Spring Batch example sets it — the same shape as
+`@EnableBatchProcessing`, which in Boot 3+ switches auto-configuration *off*. The test now applies
+`org/springframework/batch/core/schema-postgresql.sql` itself, `application.yml` states the absence
+and the reason instead of carrying a dead key, and ADR-0019 gains an amendment moving schema
+ownership to step 40a. **Twelve of thirteen tests passed on that first run**, so the JDK 25 gate
+itself was clear before this was fixed.
+
+**Two coordinate facts verified against Maven Central before writing the pom**, rather than
+discovered by a failed build: Testcontainers 2.x renamed `org.testcontainers:postgresql` to
+`org.testcontainers:testcontainers-postgresql` (the 1.x coordinates resolve to nothing), and the
+Spring Boot 4.1.0 BOM manages Hibernate 7.4.1, ByteBuddy 1.18.10, Mockito 5.23.0 and Testcontainers
+2.0.5 — the four libraries ADR-0019 names as the actual risk.
+
+**`CobolArithmetic`'s 8 tests pin the rules a literal translation gets wrong**, each with the wrong
+answer asserted alongside the right one so the difference is visible rather than claimed:
+truncation vs rounding (`194.995` → `194.99`, not `195.00`); truncation toward zero rather than
+toward negative infinity (`-194.999` → `-194.99`, where `FLOOR` gives `-195.00` — the two agree on
+every positive number, so this is the case that can tell them apart); `BigDecimal.divide` throwing
+on `100/3` where the helper returns `33.33`; single rounding (`20099/20000` = `1.00495` → `1.00`,
+where an intermediate-precision implementation gives `1.01`); and `requireFits` raising on
+`10000000000.00` against `PIC S9(10)V99` instead of losing the high-order digit in silence.
+
+**The template's textual invariants are pinned from this repo's own suite**
+(`tests/system/test_target_template.py`, 6 tests, 0.02s, no JDK) because compiling proves the
+ecosystem supports the pin but not that the pin still says 25, that no preview flag appeared, or
+that the scaffold stayed free of this tenant's vocabulary. **Writing them found a real defect
+immediately**: XML forbids a double hyphen inside a comment, so the pom comment explaining that the
+preview flag stays off was making the file not well-formed — with no JDK on this machine, nothing
+else would have caught it before CI. **Confirmed falsifiable**: flipping
+`maven.compiler.release` to 21 fails exactly that one test and nothing else, with the substitution
+asserted to have applied before the result was believed.
+
+**Command**: `mvn -B -ntp verify` (CI job `template-build`, `temurin` 25) and
+`pytest tests/system/test_target_template.py -v`
+**Result**: `Tests run: 13, Failures: 0, Errors: 0, Skipped: 0` / `BUILD SUCCESS`; 6/6 passed.
+
 ## Not yet covered (honest gaps, not silently skipped)
 
 - *(corrected 2026-08-08 — this entry was stale, not merely incomplete)* This previously read
@@ -978,6 +1062,11 @@ totals, and the literal characters at the signed-field offsets).
   right — but it is a capability gap, not a solved problem. Track C has exactly one occurrence and
   no node consumes that file yet; revisit when Milestone C4 generates a reader for it, or with
   Track B's B3 alias-analysis module.
+- **The template has a scaffold, not a program.** `templates/target-spring-boot-baseline/` compiles
+  and its stack is proven on JDK 25, but it contains one arithmetic helper and an application class.
+  **No line of Java has been generated from COBOL yet** — `modernization_engineer` (step 39) is what
+  makes the template earn its place, and until then a green `template-build` proves the target
+  stack works, not that anything can be modernized into it.
 - **`FD` record layouts do not become domain entities.** They are now parsed and visible in
   `spec.md`, but `build_domain_entities` only promotes copybook-sourced fields (ADR-0010), and
   these are program-local. Whether a file record layout should be an entity in its own right is a

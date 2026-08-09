@@ -238,9 +238,12 @@ deliberately isolated from `agentic-sdlc-control-plane`'s own Postgres instance,
 deployment reuses instead (`docs/adr/0005`). This is a throwaway dev/test resource this repo fully
 owns; production never points at it. `tests/fixtures/db_credentials_sample/local.conn` has the
 matching local credentials pre-filled (a docker-compose default password for a local-only,
-unreachable-from-outside container, not a real secret — see that file's own header comment). No
-sandboxed-compiler stack yet — that's Milestone C4, added when there's real generated Java to
-compile.
+unreachable-from-outside container, not a real secret — see that file's own header comment).
+
+`templates/target-spring-boot-baseline/` is a real Maven project, not a scaffold of placeholders —
+`mvn -B verify` inside it needs **JDK 25** and a running Docker daemon, and CI builds it on every
+push. There is still no sandboxed-compiler stack driving it from Python; that's the rest of
+Milestone C4.
 
 ## Testing
 
@@ -248,8 +251,9 @@ compile.
 ./.venv/Scripts/python -m pytest --cov=cobol_modernizer --cov-report=term-missing --cov-fail-under=90
 ```
 
-380 tests passing (4 skipped — the opt-in live-CLI tests), 99.06% coverage as of this change — the
-numbers a real run produces, not a claim. Some tests (`tools/knowledge_store.py`'s) need the local
+386 tests passing (4 skipped — the opt-in live-CLI tests), 99.06% coverage as of this change — the
+numbers a real run produces, not a claim. The target template's own 13 Java tests are not in that
+figure; CI runs them separately on JDK 25 (`mvn -B verify`, job `template-build`). Some tests (`tools/knowledge_store.py`'s) need the local
 Postgres+pgvector instance above; they skip with a clear reason rather than failing if it isn't
 running, and CI runs them for real against its own service container rather than letting them skip
 silently there too. If that local instance predates `docs/adr/0016`, its `knowledge_entries` table
@@ -259,6 +263,10 @@ re-run. CI is unaffected; its Postgres service container is fresh every run.
 ## Deployment / CI
 
 `.github/workflows/ci.yml` runs lint + the test suite with the coverage floor above on every push
-and pull request. No deployment pipeline yet — this repo has nothing running in production until
+and pull request, and a second job (`template-build`) compiles and tests
+`templates/target-spring-boot-baseline/` on JDK 25 against a real PostgreSQL container. That job
+exists so an ecosystem dependency that has not caught up to the pinned JDK fails here rather than
+inside the self-healing compile loop, where a compile-error-driven loop cannot diagnose it
+(`docs/adr/0019`). No deployment pipeline yet — this repo has nothing running in production until
 control-plane's specialist router (Track P) can invoke it, and Kubernetes/Terraform manifests
 (Track P4, in `agentic-sdlc-control-plane`) exist to run it against.
