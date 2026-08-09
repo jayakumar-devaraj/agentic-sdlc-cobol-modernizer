@@ -1,0 +1,40 @@
+# Baseline configuration. Everything here is what any modernized batch program needs regardless of
+# which program it is; nothing tenant-specific belongs in this file.
+spring:
+  application:
+    name: modernized-batch-baseline
+
+  datasource:
+    # No embedded fallback on purpose. An in-memory database that silently stands in for PostgreSQL
+    # would let a job pass its tests against different NUMERIC semantics than it runs against -
+    # and NUMERIC(p,s) fidelity to the COBOL PIC clause is the whole reason ADR-0019 chose
+    # PostgreSQL. A missing URL should fail at startup, loudly.
+    url: ${DATABASE_URL:}
+    username: ${DATABASE_USER:}
+    password: ${DATABASE_PASSWORD:}
+
+  jpa:
+    open-in-view: false
+    hibernate:
+      # Never generated from entities. The schema is derived from the COBOL copybooks via
+      # pic_mapper's precision and scale (ADR-0019); letting Hibernate infer it instead would
+      # replace a mapping this platform can verify with one it cannot.
+      ddl-auto: none
+
+  batch:
+    jdbc:
+      # Spring Batch's own metadata tables. `embedded` (the default) means they are only created
+      # for an embedded database, so against a real PostgreSQL nothing is created and the first
+      # job launch fails on a missing table. Deployment owns the real answer here once migration
+      # tooling is chosen; ADR-0019 defers that to the first schema that has to change.
+      initialize-schema: never
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,metrics,prometheus
+  endpoint:
+    health:
+      probes:
+        enabled: true

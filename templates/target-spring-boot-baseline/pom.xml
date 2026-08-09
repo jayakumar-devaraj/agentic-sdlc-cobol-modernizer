@@ -1,0 +1,158 @@
+﻿<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Baseline Maven project that generated COBOL-to-Java batch code is seeded into (ADR-0009,
+  ADR-0019). Deliberately a real, buildable project rather than a file of placeholders: it is
+  compiled on JDK 25 by this repo's own CI on every push, which is the only way an ecosystem
+  dependency that has not caught up to a new JDK surfaces here (step 38) instead of inside the
+  self-healing compile loop (step 42), where the loop would be diagnosing a dependency problem it
+  was never built to fix.
+
+  Maven, not Gradle, and the reason is that same loop: Maven's XML is predictable to generate and
+  its compiler diagnostics are mechanically parseable. A Kotlin build DSL would make the build
+  script a second codegen surface.
+-->
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
+  <modelVersion>4.0.0</modelVersion>
+
+  <!--
+    Pinned to an exact version, never a range. ADR-0019 deliberately does not name a Spring Boot
+    version, because an ADR that carries one is wrong within a quarter and nobody re-reads an
+    accepted ADR to bump a number. The pin lives here, where a build proves it.
+  -->
+  <parent>
+    <groupId>org.springframework.boot</groupId>
+    <artifactId>spring-boot-starter-parent</artifactId>
+    <version>4.1.0</version>
+    <relativePath/>
+  </parent>
+
+  <!--
+    Coordinates are the ONLY thing modernization_engineer (step 39) rewrites when it seeds this
+    into card-service. The Java package below is not rewritten - generated code lands in
+    sub-packages of com.modernized.batch - so no source file is ever string-substituted, which is
+    one less way seeding can go wrong.
+  -->
+  <groupId>com.modernized</groupId>
+  <artifactId>modernized-batch-baseline</artifactId>
+  <version>0.1.0-SNAPSHOT</version>
+  <name>modernized-batch-baseline</name>
+  <description>Baseline scaffold for batch programs modernized from COBOL</description>
+
+  <properties>
+    <!--
+      Java 25 (ADR-0019, decision 1). maven.compiler.release is set explicitly as well as
+      java.version so the pin is greppable and so tests/system/test_target_template.py can assert
+      it without knowing how the Spring Boot parent wires its own property through.
+
+      The `enable-preview` compiler flag stays OFF, permanently, and is deliberately absent rather
+      than present-and-false. Preview features change between releases, so generated code using one
+      is brittle in exactly the way the self-healing loop cannot recover from: it compiles today and
+      stops compiling on the next JDK.
+    -->
+    <java.version>25</java.version>
+    <maven.compiler.release>25</maven.compiler.release>
+    <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
+  </properties>
+
+  <dependencies>
+    <!-- Spring Batch: the execution model ADR-0009 chose. Its JobRepository is also the reason
+         ADR-0019 chose a relational store - restart-from-checkpoint needs one regardless. -->
+    <dependency>
+      <groupId>org.springframework.boot</groupId>
+      <artifactId>spring-boot-starter-batch</artifactId>
+    </dependency>
+
+    <!-- JPA, for the keyed lookups that COBOL does with ACCESS MODE IS RANDOM. Those become
+         repositories injected into an ItemProcessor, not additional ItemReaders (ADR-0019). -->
+    <dependency>
+      <groupId>org.springframework.boot</groupId>
+      <artifactId>spring-boot-starter-data-jpa</artifactId>
+    </dependency>
+
+    <!-- The thin REST layer for control and point queries (ADR-0009). -->
+    <dependency>
+      <groupId>org.springframework.boot</groupId>
+      <artifactId>spring-boot-starter-web</artifactId>
+    </dependency>
+    <dependency>
+      <groupId>org.springframework.boot</groupId>
+      <artifactId>spring-boot-starter-validation</artifactId>
+    </dependency>
+
+    <!-- Actuator + Micrometer. card-service is long-running, unlike this specialist's bounded
+         subprocess, so it is the first place in the platform where runtime observability
+         (audit gap G3) can actually close. -->
+    <dependency>
+      <groupId>org.springframework.boot</groupId>
+      <artifactId>spring-boot-starter-actuator</artifactId>
+    </dependency>
+    <dependency>
+      <groupId>io.micrometer</groupId>
+      <artifactId>micrometer-registry-prometheus</artifactId>
+      <scope>runtime</scope>
+    </dependency>
+
+    <dependency>
+      <groupId>org.postgresql</groupId>
+      <artifactId>postgresql</artifactId>
+      <scope>runtime</scope>
+    </dependency>
+
+    <dependency>
+      <groupId>org.springframework.boot</groupId>
+      <artifactId>spring-boot-starter-test</artifactId>
+      <scope>test</scope>
+    </dependency>
+    <dependency>
+      <groupId>org.springframework.batch</groupId>
+      <artifactId>spring-batch-test</artifactId>
+      <scope>test</scope>
+    </dependency>
+    <!--
+      Testcontainers. Module coordinates were VERIFIED against Maven Central before being written
+      here, not copied from a 1.x example: Testcontainers 2.x renamed org.testcontainers:postgresql
+      to org.testcontainers:testcontainers-postgresql (and junit-jupiter likewise). The 1.x names
+      resolve to nothing and would have failed the first build.
+    -->
+    <dependency>
+      <groupId>org.springframework.boot</groupId>
+      <artifactId>spring-boot-testcontainers</artifactId>
+      <scope>test</scope>
+    </dependency>
+    <dependency>
+      <groupId>org.testcontainers</groupId>
+      <artifactId>testcontainers-postgresql</artifactId>
+      <scope>test</scope>
+    </dependency>
+    <dependency>
+      <groupId>org.testcontainers</groupId>
+      <artifactId>testcontainers-junit-jupiter</artifactId>
+      <scope>test</scope>
+    </dependency>
+  </dependencies>
+
+  <build>
+    <plugins>
+      <plugin>
+        <groupId>org.springframework.boot</groupId>
+        <artifactId>spring-boot-maven-plugin</artifactId>
+      </plugin>
+      <plugin>
+        <groupId>org.apache.maven.plugins</groupId>
+        <artifactId>maven-surefire-plugin</artifactId>
+        <configuration>
+          <!--
+            Mockito's inline mock maker instruments bytecode through a JVM agent it attaches to
+            itself. Dynamic self-attach is deprecated and warns on modern JDKs; this flag keeps it
+            working and, more importantly, makes the dependency explicit rather than leaving the
+            build one JDK release away from a failure nobody predicted. That agent path is the
+            actual Java 25 risk ADR-0019 names - not the language level.
+          -->
+          <argLine>-XX:+EnableDynamicAgentLoading</argLine>
+        </configuration>
+      </plugin>
+    </plugins>
+  </build>
+</project>
