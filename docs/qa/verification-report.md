@@ -13,7 +13,7 @@ was never treated as proof on its own.
 pytest --cov=cobol_modernizer --cov-report=term-missing --cov-fail-under=90
 ```
 
-As of this report: **370 tests passed (4 skipped — the opt-in live-CLI tests), 99.02% overall
+As of this report: **372 tests passed (4 skipped — the opt-in live-CLI tests), 99.02% overall
 coverage.**
 
 | Module | Coverage |
@@ -552,6 +552,86 @@ contract with control-plane and `capsys` is an in-process approximation of it.
 
 **Command**: `pytest tests/system/test_design_graph.py tests/system/test_cli_design.py tests/system/test_cli_contract.py -v`
 **Result**: 30/30 passed.
+
+### Prompt duplication between `spec_extractor` and `spec_critic` (ADR-0017)
+
+**Verified**: a harness captured the real user-turn prompt of every call in a four-program run
+(fakes in place of models, no spend), rather than reasoning about prompt sizes from the source.
+
+**What it found.** `spec_critic` re-resolves each program from disk and rebuilds `spec_extractor`'s
+entire prompt character for character:
+
+| Program | Extractor | Critic | Byte-identical | Dup |
+|---|---:|---:|---:|---:|
+| `CBCUS01C` | 11,346 | 11,419 | 11,346 | 99.4% |
+| `CBACT01C` | 78,647 | 78,720 | 78,647 | 99.9% |
+| `CBTRN02C` | 81,902 | 81,975 | 81,902 | 99.9% |
+| `CBACT04C` | 74,230 | 74,303 | 74,230 | 99.9% |
+| **Total** | **246,125** | **246,417** | **246,125** | |
+
+Calibrated against ADR-0015's measured `CBACT04C` extraction (74,230 chars → 36,320 input tokens =
+**2.04 chars/token**), that is ≈120,400 duplicated input tokens per run — ≈$0.60, or **~26% of the
+measured $2.31 four-program run**. Two framings the measurement ruled out, both checked rather than
+assumed: **no multi-turn history exists anywhere** (every call is stateless and single-turn, the
+graph passes typed objects not transcripts), and **nothing is near a context limit** (largest
+prompt ≈40k tokens against 1M).
+
+**The fix verified here is the ordering, not the caching.** Before ADR-0017 the shared span was a
+*suffix* of the critic prompt, which no prefix-matched cache could act on. After the reorder,
+confirmed directly for all four programs:
+
+```
+CBCUS01C   prefix=True  suffix=False  shared= 11,346/ 11,428 = 99.3%
+CBACT01C   prefix=True  suffix=False  shared= 78,647/ 78,729 = 99.9%
+CBTRN02C   prefix=True  suffix=False  shared= 81,902/ 81,984 = 99.9%
+CBACT04C   prefix=True  suffix=False  shared= 74,230/ 74,312 = 99.9%
+```
+
+Pinned by two tests, because `in prompt` assertions pass under either order and the property would
+otherwise regress silently: one asserts `Known Facts < source < narration` and that the narration
+is the tail, the other asserts the critic prompt literally `startswith` the extractor's captured
+real prompt and that the shared span exceeds half the total.
+
+**Command**: `pytest tests/system/test_spec_critic.py -v`
+**Result**: 23/23 passed (21 pre-existing + 2 new ordering tests).
+
+**Open, deliberately not claimed**: the reorder itself is unbenchmarked against a live model. The
+registry prompt now states the new order explicitly, so the model is not surprised by it, but no
+live run confirms identical critic behaviour. `test_critic_discrimination.py` (a real narration
+with three planted errors, opt-in, ~$0.10–0.35 on Haiku) is the cheap check that would.
+
+### `claude` CLI prompt-cache behaviour, and why ADR-0017 dropped its caching half
+
+**Verified**: three live `claude` CLI calls (~$0.03 of real Haiku spend) run *before* implementing
+`cache_control`, to test whether that backend already reuses a cached prefix across separate
+subprocess invocations. `A` = the real `spec_critic` system prompt, `B` = a byte-identical repeat,
+`C` = the larger `spec_extractor` prompt as a confound control — the CLI ships its own harness
+system prompt, so a constant read on `B` would be the harness caching itself rather than ours.
+
+| Call | input | cache_write | cache_read | output |
+|---|---:|---:|---:|---:|
+| A `spec_critic` sys, 1st | 10 | 10,704 | 0 | 44 |
+| B identical repeat | 10 | 4,506 | **6,318** | 84 |
+| C `spec_extractor` sys | 10 | 5,599 | 5,441 | 59 |
+
+- **Caching works across separate `claude -p` invocations** — `cache_read` goes 0 → 6,318. Each
+  call is a fresh subprocess; the cache is keyed on content, not process.
+- **Reuse is partial**: a byte-identical repeat reused ~59% of the prefix and re-wrote 4,506
+  tokens, so something volatile sits inside the CLI's own prefix. n=1 per condition — recorded as
+  suggestive, not established.
+- **The decisive figure**: total prefix ≈10,700–11,050 tokens against system prompts of only
+  ~900–1,100 tokens, putting **CLI harness overhead at ≈9,800 tokens per call**. This
+  independently corroborates ADR-0013's measured **9,819** cache-creation tokens with the default
+  system prompt replaced — the same number reached from the opposite direction.
+
+**Consequence**: across a nine-call design run the harness costs ≈88,200 tokens versus ≈9,350 for
+every system prompt in the repo combined — **~9.4× larger than the entire target** — and the CLI
+exposes no `cache_control` flag regardless. The planned caching work was **dropped on this
+measurement** rather than implemented and then found worthless.
+
+**Command**: three `call_model(..., backend="claude_cli")` calls on `claude-haiku-4-5`, usage read
+from `ModelCallResult` (instrumentation ADR-0013 already provides).
+**Result**: as tabulated above.
 
 ### `core/model_client.py` — the real `claude` CLI, and the retry policy (ADR-0013)
 

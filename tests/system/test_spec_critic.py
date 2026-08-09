@@ -175,6 +175,54 @@ def test_build_critique_prompt_includes_narration_known_facts_and_real_source(fa
     assert "COMPUTE WS-MONTHLY-INT" in prompt
 
 
+def test_build_critique_prompt_puts_the_stable_blocks_first_and_the_narration_last(
+    faithful_extraction,
+):
+    """Order is the contract here, not an implementation detail -- see ADR-0017.
+
+    This assertion exists because the *previous* order (narration first) made the span shared with
+    `spec_extractor` a suffix rather than a prefix, which no cache configuration could work with.
+    `in prompt` checks pass under either order, so without this the property could regress silently
+    the next time someone edits the f-string.
+    """
+    prompt = build_critique_prompt(FIXTURE_ROOT, faithful_extraction)
+
+    known_facts_at = prompt.index("# Known Facts")
+    first_source_at = prompt.index('<untrusted-cobol-source label="CBACT04C">')
+    narration_at = prompt.index("# spec.md under review for CBACT04C")
+
+    assert known_facts_at < first_source_at < narration_at
+    # The narration is the tail: nothing follows it, so everything before it is the stable span.
+    assert prompt.endswith(faithful_extraction.spec_markdown)
+
+
+def test_build_critique_prompt_shares_a_real_prefix_with_the_extractor_prompt():
+    """The shared span must be a genuine leading substring, not merely present somewhere.
+
+    Pins the measurement behind ADR-0017 (74,230 of 74,303 chars for `CBACT04C`, 99.9%) as a
+    *property* rather than as the numbers, so it survives a fixture regeneration that moves the
+    exact totals. Captures the extractor's real prompt through `extract_spec` with a fake
+    `narrate` -- the same technique the rest of this suite uses -- rather than reassembling
+    `build_prompt`'s inputs by hand, which would duplicate `extract_spec`'s internals and could
+    drift from what the node really sends.
+    """
+    captured: dict[str, str] = {}
+
+    def capture(routing, system_prompt, user_content):
+        captured["user_content"] = user_content
+        return "# CBACT04C\n\n## Business rules\n\nplaceholder narration\n"
+
+    extraction = extract_spec(FIXTURE_ROOT, "CBACT04C", narrate=capture)
+    critique_prompt = build_critique_prompt(FIXTURE_ROOT, extraction)
+
+    assert critique_prompt.startswith(captured["user_content"]), (
+        "the critic prompt must open with byte-identical extractor content; if this fails the "
+        "shared span has stopped being a prefix and ADR-0017's premise no longer holds"
+    )
+    # Over half the critic's prompt is that shared span -- the reason the ordering matters at all.
+    assert len(captured["user_content"]) / len(critique_prompt) > 0.5
+
+
 # --- _parse_rule_confidence (via critique_spec, its only real entry point) --------------------
 
 

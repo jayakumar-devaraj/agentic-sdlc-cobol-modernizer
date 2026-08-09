@@ -224,7 +224,22 @@ def compute_fidelity_issues(extraction: SpecExtractionResult) -> list[str]:
 
 
 def build_critique_prompt(worktree_root: Path, extraction: SpecExtractionResult) -> str:
-    """Build the user-turn prompt content: the narration under review, Known Facts, then source.
+    """Build the user-turn prompt content: Known Facts, then source, then the narration to judge.
+
+    **Order is load-bearing and deliberate (ADR-0017), not incidental.** The leading blocks are
+    byte-identical to what `spec_extractor` was given for the same program -- measured at 74,230
+    of 74,303 characters for `CBACT04C`, 99.9% -- while the trailing narration is the only part
+    unique to this call. Stable-prefix-first is what makes that shared span a *prefix* rather than
+    a suffix, which is the precondition for ever serving it from cache instead of paying full
+    input price twice within seconds. The previous order put the volatile narration first, so no
+    amount of cache configuration could have helped.
+
+    Caching is not claimed here and no `cache_control` is set -- see ADR-0017 for why that half was
+    measured and dropped. This function only stops the ordering from being the blocker.
+
+    `prompts/registry/spec_critic/v1_0_0.md` states this same order to the model and **must stay in
+    step with it**: a prompt that tells the critic to expect the narration first while the payload
+    delivers it last is worse than either order chosen consistently.
 
     Re-resolves the program from `worktree_root` rather than requiring the caller to keep the
     original `ResolvedProgram` around -- `spec_critic` can run against a `SpecExtractionResult`
@@ -246,10 +261,10 @@ def build_critique_prompt(worktree_root: Path, extraction: SpecExtractionResult)
     ]
 
     return (
-        f"# spec.md under review for {extraction.program_name}\n\n{extraction.spec_markdown}\n\n"
-        + known_facts
+        known_facts
         + "\n\n"
         + "\n\n".join(wrapped_sections)
+        + f"\n\n# spec.md under review for {extraction.program_name}\n\n{extraction.spec_markdown}"
     )
 
 
