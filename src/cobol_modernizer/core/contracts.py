@@ -152,6 +152,32 @@ class ProgramDesignEntry(BaseModel):
     critique: SpecCritiqueResult
 
 
+class RunCost(BaseModel):
+    """What one `design` invocation actually consumed, for the reviewing gate to see (ADR-0018).
+
+    Actuals, summed from real `ModelCallResult`s -- deliberately not
+    `RoutingDecision.estimated_cost_usd`, which is what *selection predicted* from a measured
+    token profile before any call ran. Both are worth having and the gap between them is worth
+    surfacing, but conflating them in one field would make the number unfalsifiable. Estimated
+    cost is not carried here yet; that is a follow-up, named rather than half-built.
+
+    `notional_cost_usd` is `None` when no backend reported a cost, and is a **partial** sum when
+    `calls_without_reported_cost > 0` -- read the two together or not at all. The SDK backend
+    reports none by design (`core/model_client.py` keeps no rate card, so it cannot go stale), so
+    on that backend the token counts are the real signal and the dollar figure is absent rather
+    than wrong. On a subscription the CLI's own `total_cost_usd` is notional in the first place:
+    it is what the call *would* cost at API rates, not what anyone was billed.
+    """
+
+    model_calls: int
+    input_tokens: int
+    output_tokens: int
+    cache_creation_input_tokens: int
+    cache_read_input_tokens: int
+    notional_cost_usd: float | None = None
+    calls_without_reported_cost: int = 0
+
+
 class DesignDocument(BaseModel):
     """The `design.json` contract: everything control-plane's gate needs to review one `design`
     invocation across every program it covered.
@@ -159,6 +185,9 @@ class DesignDocument(BaseModel):
     Build this via `build_design_document`, not by hand, so `gate_items` can never go stale
     relative to `programs`. `unified_design` is `None` until `nodes/solution_architect.py` has
     actually run -- it's a real, typed `UnifiedDesign` (ADR-0010), not a placeholder dict.
+
+    `cost` is `None` only when the document was built outside a `model_client.collect_usage`
+    scope -- i.e. by a test constructing one directly. A real `run_design` always populates it.
     """
 
     schema_version: str = SCHEMA_VERSION
@@ -166,6 +195,7 @@ class DesignDocument(BaseModel):
     programs: list[ProgramDesignEntry]
     gate_items: list[GateItem]
     unified_design: UnifiedDesign | None = None
+    cost: RunCost | None = None
 
 
 class DesignCliResult(BaseModel):
@@ -267,7 +297,9 @@ def build_gate_items(programs: list[ProgramDesignEntry]) -> list[GateItem]:
 
 
 def build_design_document(
-    programs: list[ProgramDesignEntry], unified_design: UnifiedDesign | None = None
+    programs: list[ProgramDesignEntry],
+    unified_design: UnifiedDesign | None = None,
+    cost: RunCost | None = None,
 ) -> DesignDocument:
     """Build a `DesignDocument`, deriving `gate_items` from `programs` so the two can't drift apart."""
     return DesignDocument(
@@ -276,4 +308,5 @@ def build_design_document(
         programs=programs,
         gate_items=build_gate_items(programs),
         unified_design=unified_design,
+        cost=cost,
     )

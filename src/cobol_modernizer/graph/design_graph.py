@@ -55,9 +55,11 @@ from langgraph.types import Send
 from cobol_modernizer.core.contracts import (
     DesignDocument,
     ProgramDesignEntry,
+    RunCost,
     UnifiedDesign,
     build_design_document,
 )
+from cobol_modernizer.core.model_client import collect_usage
 from cobol_modernizer.nodes.solution_architect import ArchitectFn, design_solution
 from cobol_modernizer.nodes.spec_critic import CritiqueFn, critique_spec
 from cobol_modernizer.nodes.spec_extractor import NarrateFn, SpecExtractionResult, extract_spec
@@ -266,16 +268,43 @@ def run_design(
         architect=architect,
         model_routing_config=model_routing_config,
     )
-    final_state = app.invoke(
-        {
-            "worktree_root": str(worktree_root),
-            "program_names": list(program_names),
-            "program_entries": [],
-        },
-        config={"max_concurrency": MAX_CONCURRENT_PROGRAMS},
-    )
+    # The accumulator is bound *before* invoke so every branch thread inherits it in its copied
+    # context (ADR-0018). Binding it inside a node would be too late for the branches already
+    # running, and would give each its own instance.
+    with collect_usage() as usage:
+        final_state = app.invoke(
+            {
+                "worktree_root": str(worktree_root),
+                "program_names": list(program_names),
+                "program_entries": [],
+            },
+            config={"max_concurrency": MAX_CONCURRENT_PROGRAMS},
+        )
 
     entries_by_name = {entry.program_name: entry for entry in final_state["program_entries"]}
     ordered_entries = [entries_by_name[name] for name in program_names]
 
-    return build_design_document(ordered_entries, unified_design=final_state["unified_design"])
+    cost = RunCost(
+        model_calls=usage.model_calls,
+        input_tokens=usage.input_tokens,
+        output_tokens=usage.output_tokens,
+        cache_creation_input_tokens=usage.cache_creation_input_tokens,
+        cache_read_input_tokens=usage.cache_read_input_tokens,
+        notional_cost_usd=usage.notional_cost_usd,
+        calls_without_reported_cost=usage.calls_without_reported_cost,
+    )
+    logger.info(
+        "design run cost: model_calls=%d input_tokens=%d output_tokens=%d "
+        "cache_creation=%d cache_read=%d notional_cost_usd=%s calls_without_cost=%d",
+        cost.model_calls,
+        cost.input_tokens,
+        cost.output_tokens,
+        cost.cache_creation_input_tokens,
+        cost.cache_read_input_tokens,
+        cost.notional_cost_usd,
+        cost.calls_without_reported_cost,
+    )
+
+    return build_design_document(
+        ordered_entries, unified_design=final_state["unified_design"], cost=cost
+    )

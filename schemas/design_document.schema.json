@@ -453,6 +453,57 @@
       "title": "RuleConfidence",
       "type": "object"
     },
+    "RunCost": {
+      "description": "What one `design` invocation actually consumed, for the reviewing gate to see (ADR-0018).\n\nActuals, summed from real `ModelCallResult`s -- deliberately not\n`RoutingDecision.estimated_cost_usd`, which is what *selection predicted* from a measured\ntoken profile before any call ran. Both are worth having and the gap between them is worth\nsurfacing, but conflating them in one field would make the number unfalsifiable. Estimated\ncost is not carried here yet; that is a follow-up, named rather than half-built.\n\n`notional_cost_usd` is `None` when no backend reported a cost, and is a **partial** sum when\n`calls_without_reported_cost > 0` -- read the two together or not at all. The SDK backend\nreports none by design (`core/model_client.py` keeps no rate card, so it cannot go stale), so\non that backend the token counts are the real signal and the dollar figure is absent rather\nthan wrong. On a subscription the CLI's own `total_cost_usd` is notional in the first place:\nit is what the call *would* cost at API rates, not what anyone was billed.",
+      "properties": {
+        "cache_creation_input_tokens": {
+          "title": "Cache Creation Input Tokens",
+          "type": "integer"
+        },
+        "cache_read_input_tokens": {
+          "title": "Cache Read Input Tokens",
+          "type": "integer"
+        },
+        "calls_without_reported_cost": {
+          "default": 0,
+          "title": "Calls Without Reported Cost",
+          "type": "integer"
+        },
+        "input_tokens": {
+          "title": "Input Tokens",
+          "type": "integer"
+        },
+        "model_calls": {
+          "title": "Model Calls",
+          "type": "integer"
+        },
+        "notional_cost_usd": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Notional Cost Usd"
+        },
+        "output_tokens": {
+          "title": "Output Tokens",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "model_calls",
+        "input_tokens",
+        "output_tokens",
+        "cache_creation_input_tokens",
+        "cache_read_input_tokens"
+      ],
+      "title": "RunCost",
+      "type": "object"
+    },
     "SpecCritiqueResult": {
       "description": "Everything `spec_critic` produces for one program's `spec_extractor` output.\n\n`overall_confidence` is `0.0` whenever `fidelity_issues` is non-empty, regardless of\n`rule_confidence` -- see the module docstring's decision (1). Otherwise it is the minimum of\n`rule_confidence`'s scores (decision (2)), or `1.0` if the critic model found no checkable\nrules at all (an empty spec has nothing to be unconfident about, which is itself something\n`fidelity_issues`' paragraph-coverage check would already have caught if it were a defect).",
       "properties": {
@@ -626,8 +677,19 @@
       "type": "string"
     }
   },
-  "description": "The `design.json` contract: everything control-plane's gate needs to review one `design`\ninvocation across every program it covered.\n\nBuild this via `build_design_document`, not by hand, so `gate_items` can never go stale\nrelative to `programs`. `unified_design` is `None` until `nodes/solution_architect.py` has\nactually run -- it's a real, typed `UnifiedDesign` (ADR-0010), not a placeholder dict.",
+  "description": "The `design.json` contract: everything control-plane's gate needs to review one `design`\ninvocation across every program it covered.\n\nBuild this via `build_design_document`, not by hand, so `gate_items` can never go stale\nrelative to `programs`. `unified_design` is `None` until `nodes/solution_architect.py` has\nactually run -- it's a real, typed `UnifiedDesign` (ADR-0010), not a placeholder dict.\n\n`cost` is `None` only when the document was built outside a `model_client.collect_usage`\nscope -- i.e. by a test constructing one directly. A real `run_design` always populates it.",
   "properties": {
+    "cost": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/RunCost"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
+    },
     "gate_items": {
       "items": {
         "$ref": "#/$defs/GateItem"

@@ -17,6 +17,7 @@ import os
 import pytest
 
 from cobol_modernizer.core.model_client import BACKEND_ENV_VAR
+from cobol_modernizer.telemetry.logging_config import UNBOUND_RUN_ID, bind_run_id
 
 #: Set this to `1` to allow tests marked `live_claude_cli` to actually run. They are skipped
 #: otherwise, so neither CI nor an ordinary local run ever spends subscription quota.
@@ -44,3 +45,19 @@ def pin_model_backend(request: pytest.FixtureRequest, monkeypatch: pytest.Monkey
             pytest.skip(f"live claude CLI test: set {LIVE_CLI_ENV_VAR}=1 to run")
         return
     monkeypatch.setenv(BACKEND_ENV_VAR, "anthropic_sdk")
+
+
+@pytest.fixture(autouse=True)
+def reset_run_id() -> None:
+    """Clear the `run_id` binding between tests (ADR-0018).
+
+    `bind_run_id` deliberately mutates the ambient context and never restores it: a real CLI
+    process binds once and exits, so there is nothing to undo. Under pytest every test shares one
+    context, so without this a test that binds an id leaks it into every test that runs after --
+    and the failure is order-dependent, which is the worst kind to debug. Caught immediately by a
+    test asserting the unbound placeholder, which passed alone and failed in suite order.
+
+    Same reasoning as `pin_model_backend` above: autouse and unconditional, because an opt-in guard
+    only protects the tests that remembered to ask for it.
+    """
+    bind_run_id(UNBOUND_RUN_ID)
