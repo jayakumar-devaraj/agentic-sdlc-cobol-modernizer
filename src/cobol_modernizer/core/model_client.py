@@ -140,7 +140,10 @@ class UsageAccumulator:
     finishing at once would lose updates.
     """
 
-    lock: threading.Lock = field(default_factory=threading.Lock, repr=False)
+    # compare=False as well as repr=False: without it the generated __eq__ compares Lock objects
+    # by identity, so two accumulators with identical totals are never equal -- and repr=False
+    # hides the culprit, leaving a failing assertion whose diff shows every number matching.
+    lock: threading.Lock = field(default_factory=threading.Lock, repr=False, compare=False)
     model_calls: int = 0
     input_tokens: int = 0
     output_tokens: int = 0

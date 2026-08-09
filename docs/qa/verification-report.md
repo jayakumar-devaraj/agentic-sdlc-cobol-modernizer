@@ -13,7 +13,7 @@ was never treated as proof on its own.
 pytest --cov=cobol_modernizer --cov-report=term-missing --cov-fail-under=90
 ```
 
-As of this report: **379 tests passed (4 skipped — the opt-in live-CLI tests), 99.06% overall
+As of this report: **380 tests passed (4 skipped — the opt-in live-CLI tests), 99.06% overall
 coverage.**
 
 | Module | Coverage |
@@ -586,8 +586,17 @@ with zero tests** — every line executed because `cli.main()` calls `configure_
 CLI tests, so coverage confirmed the module ran while nothing asserted what the logging did.
 `tests/system/test_logging_config.py` now exists. Coverage measures execution, not verification.
 
+**A code-review pass found the cost summary was unreachable on the failure path**, and it is fixed
+here. Both the log line and the `RunCost` construction sat *after* `app.invoke` returned, so a run
+that raised partway discarded the spend of every branch that had already completed — the exact
+situation in which the question gets asked, and one where no `design.json` and no cost-bearing
+`DesignCliResult` exist to fall back on. The summary now happens in a `finally`, driven by a test
+that causes a real failure (one valid program, one missing) and asserts the line still reports
+`model_calls=1`. **Confirmed falsifiable**: restoring the original shape makes exactly that test
+fail, and nothing else.
+
 **Command**: `pytest tests/system/test_design_graph.py tests/system/test_logging_config.py -v`
-**Result**: 19/19 passed (12 pre-existing + 7 new).
+**Result**: 20/20 passed (12 pre-existing + 8 new).
 
 ### Prompt duplication between `spec_extractor` and `spec_critic` (ADR-0017)
 
