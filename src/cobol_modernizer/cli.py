@@ -29,7 +29,7 @@ from pathlib import Path
 from cobol_modernizer.core.contracts import DesignCliResult, GenerateCliResult
 from cobol_modernizer.core.design_outputs import write_design_outputs
 from cobol_modernizer.graph.design_graph import run_design
-from cobol_modernizer.telemetry.logging_config import configure_logging
+from cobol_modernizer.telemetry.logging_config import bind_run_id, configure_logging
 
 logger = logging.getLogger(__name__)
 
@@ -81,9 +81,13 @@ def _run_design_command(args: argparse.Namespace) -> tuple[DesignCliResult, int]
     run_id = args.run_id or uuid.uuid4().hex
     output_dir = Path(args.output)
 
+    # Bind before anything else in this subcommand: from here on every record -- including the
+    # ones model_client and the nodes emit from concurrent branch threads -- carries the id
+    # (ADR-0018), so these three lines no longer interpolate it by hand.
+    bind_run_id(run_id)
+
     logger.info(
-        "design: start run_id=%s programs=%s tenant_repo=%s output=%s",
-        run_id,
+        "design: start programs=%s tenant_repo=%s output=%s",
         ",".join(args.programs),
         args.tenant_repo,
         output_dir,
@@ -97,7 +101,7 @@ def _run_design_command(args: argparse.Namespace) -> tuple[DesignCliResult, int]
         # produce a parseable stdout object for control-plane, and the full traceback still goes
         # to stderr via logger.exception. Narrowing this to the node-specific exception types
         # would mean an unanticipated one silently breaks the --json contract instead.
-        logger.exception("design: failed run_id=%s", run_id)
+        logger.exception("design: failed")
         return (
             DesignCliResult(
                 status="error",
@@ -112,8 +116,7 @@ def _run_design_command(args: argparse.Namespace) -> tuple[DesignCliResult, int]
 
     gate_item_count = len(document.gate_items)
     logger.info(
-        "design: done run_id=%s programs=%d gate_items=%d output=%s",
-        run_id,
+        "design: done programs=%d gate_items=%d output=%s",
         len(document.programs),
         gate_item_count,
         design_json_path,

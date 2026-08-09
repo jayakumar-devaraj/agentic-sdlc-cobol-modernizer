@@ -36,6 +36,7 @@ repository. `--system-prompt-file` already replaces the CLI's default instructio
 
 from __future__ import annotations
 
+import contextvars
 import json
 import logging
 import os
@@ -43,8 +44,11 @@ import random
 import shutil
 import subprocess
 import tempfile
+import threading
 import time
-from dataclasses import dataclass
+from collections.abc import Iterator
+from contextlib import contextmanager
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Literal
 
@@ -96,9 +100,10 @@ class ModelCallError(Exception):
 class ModelCallResult:
     """One completed model call: its text, and what it cost to get.
 
-    `text` is what every existing caller wants; the usage fields exist so a future
-    `DesignDocument` field can carry per-run cost without another round of plumbing (see
-    ADR-0013's Consequences -- deliberately not wired into the contract yet).
+    `text` is what every existing caller wants. The usage fields were added by ADR-0013 against a
+    future need and sat unread for four PRs; ADR-0018 wires them through `UsageAccumulator` into
+    `DesignDocument.cost`, so a run's cost now reaches control-plane's gate instead of existing
+    only in a stderr line.
     """
 
     text: str
@@ -112,6 +117,75 @@ class ModelCallResult:
     notional_cost_usd: float | None = None
     duration_ms: int | None = None
     session_id: str | None = None
+
+
+@dataclass
+class UsageAccumulator:
+    """Running usage totals for one CLI invocation, shared across every concurrent branch.
+
+    `ModelCallResult` has carried these fields since ADR-0013 and every caller threw them away --
+    the nodes return `.text` and drop the rest -- so a run's real cost existed for a microsecond
+    per call and was never summed. This is the sum.
+
+    **Why a mutable object behind a `ContextVar`, and the trap it avoids.** `design` fans out on a
+    real `ThreadPoolExecutor` (ADR-0012). `contextvars` copies the *binding* into each worker, not
+    the object, so a parent that binds one accumulator before fan-out and children that call
+    `record()` are all mutating the same instance -- and the parent sees the totals afterwards. Had
+    this been a `ContextVar[int]` of running totals instead, every child would have incremented its
+    own private copy and the parent would have read zero. That failure is invisible to a
+    single-threaded test, which is exactly why `test_design_graph.py` asserts the totals after a
+    real concurrent run rather than after a sequential one.
+
+    The `Lock` is not optional: `+=` on an `int` field is a read-modify-write, and four branches
+    finishing at once would lose updates.
+    """
+
+    lock: threading.Lock = field(default_factory=threading.Lock, repr=False)
+    model_calls: int = 0
+    input_tokens: int = 0
+    output_tokens: int = 0
+    cache_creation_input_tokens: int = 0
+    cache_read_input_tokens: int = 0
+    #: Summed only over calls whose backend actually reported a cost. `None` when none did.
+    notional_cost_usd: float | None = None
+    #: How many recorded calls reported no cost, so a consumer can tell a real total from a
+    #: partial one. The SDK backend never reports cost (no rate card here, by design), so on that
+    #: backend this equals `model_calls` and `notional_cost_usd` stays `None`.
+    calls_without_reported_cost: int = 0
+
+    def record(self, result: ModelCallResult) -> None:
+        with self.lock:
+            self.model_calls += 1
+            self.input_tokens += result.input_tokens
+            self.output_tokens += result.output_tokens
+            self.cache_creation_input_tokens += result.cache_creation_input_tokens
+            self.cache_read_input_tokens += result.cache_read_input_tokens
+            if result.notional_cost_usd is None:
+                self.calls_without_reported_cost += 1
+            else:
+                self.notional_cost_usd = (self.notional_cost_usd or 0.0) + result.notional_cost_usd
+
+
+_usage_accumulator: contextvars.ContextVar[UsageAccumulator | None] = contextvars.ContextVar(
+    "usage_accumulator", default=None
+)
+
+
+@contextmanager
+def collect_usage() -> Iterator[UsageAccumulator]:
+    """Collect usage from every `call_model` in this context (and any thread it spawns).
+
+    Scoped rather than global so tests, and any future caller that runs two graphs in one process,
+    cannot bleed totals into each other. Outside this context `call_model` records nothing, which
+    keeps the accounting opt-in: a node called directly from a test should not silently accumulate
+    into whatever ran before it.
+    """
+    accumulator = UsageAccumulator()
+    token = _usage_accumulator.set(accumulator)
+    try:
+        yield accumulator
+    finally:
+        _usage_accumulator.reset(token)
 
 
 def resolve_backend(explicit: Backend | None = None) -> Backend:
@@ -324,16 +398,12 @@ def call_model(
                     model, system_prompt, user_content, effort
                 )
                 if retryable_status is None:
-                    result = _result_from_cli_envelope(envelope, model, attempt)
-                    _log_success(node, result)
-                    return result
+                    return _finish(node, _result_from_cli_envelope(envelope, model, attempt))
             else:
                 result = _call_anthropic_sdk(
                     model, system_prompt, user_content, effort, max_output_tokens
                 )
-                result = ModelCallResult(**{**result.__dict__, "attempts": attempt})
-                _log_success(node, result)
-                return result
+                return _finish(node, ModelCallResult(**{**result.__dict__, "attempts": attempt}))
         except subprocess.TimeoutExpired:
             retryable_status = 504
         except ModelCallError:
@@ -354,6 +424,19 @@ def call_model(
         )
 
     raise AssertionError("unreachable: the loop either returns or raises")
+
+
+def _finish(node: str, result: ModelCallResult) -> ModelCallResult:
+    """Log the call and record its usage -- the single exit both backends share.
+
+    One helper rather than two lines repeated at each `return`, so a future third backend cannot
+    log without accounting (or vice versa) by forgetting one of them.
+    """
+    _log_success(node, result)
+    accumulator = _usage_accumulator.get()
+    if accumulator is not None:
+        accumulator.record(result)
+    return result
 
 
 def _log_success(node: str, result: ModelCallResult) -> None:

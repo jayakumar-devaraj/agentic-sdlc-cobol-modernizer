@@ -13,7 +13,7 @@ was never treated as proof on its own.
 pytest --cov=cobol_modernizer --cov-report=term-missing --cov-fail-under=90
 ```
 
-As of this report: **372 tests passed (4 skipped — the opt-in live-CLI tests), 99.02% overall
+As of this report: **379 tests passed (4 skipped — the opt-in live-CLI tests), 99.06% overall
 coverage.**
 
 | Module | Coverage |
@@ -552,6 +552,42 @@ contract with control-plane and `capsys` is an in-process approximation of it.
 
 **Command**: `pytest tests/system/test_design_graph.py tests/system/test_cli_design.py tests/system/test_cli_contract.py -v`
 **Result**: 30/30 passed.
+
+### `run_id` correlation and `RunCost`, verified under real concurrency (ADR-0018)
+
+**Verified**: both halves of ADR-0018 against a real four-program `run_design` on a real thread
+pool — not sequentially, because sequential execution cannot distinguish a working implementation
+from a broken one here.
+
+- **`run_id` reaches every branch.** A fake `narrate` records `current_run_id()` per program;
+  all four branches report the id bound before `invoke`, and the test separately asserts **more
+  than one thread id was observed** — without that, the propagation assertion would pass trivially
+  on a single thread and prove nothing.
+- **`RunCost` sums across concurrent branches.** With `_call_anthropic_sdk` faked to a known
+  result, a four-program run totals exactly `2 × 4 + 1 = 9` calls (4 extractor + 4 critic
+  concurrent, 1 architect after fan-in) with token counts multiplying out exactly. **This is the
+  assertion that catches the subtle failure**: had the accumulator been a `ContextVar` of running
+  integers rather than a mutable object, each branch would have incremented a private copy and the
+  parent would have read only the architect's call.
+- **Partial cost is distinguishable from zero cost.** On a backend reporting no cost,
+  `notional_cost_usd` stays `None` while `calls_without_reported_cost` equals the call count and
+  token counts stay exact — so a consumer can tell "nothing cost anything" from "nobody said".
+- **The `--json` stdout contract still holds.** `test_cli_design.py` passes unchanged: the new
+  cost log line goes to stderr with everything else, and stdout carries exactly one object.
+
+**A real defect was found by the tests, not after them.** `bind_run_id` mutates the ambient
+context and never restores it — correct for a CLI process, wrong under pytest where all tests share
+one context. A test asserting the unbound placeholder **passed in isolation and failed in suite
+order**. Fixed with an autouse reset in `tests/conftest.py`, alongside the existing backend pin,
+rather than by weakening the assertion.
+
+**A coverage blind spot worth recording.** `telemetry/logging_config.py` reported **100% coverage
+with zero tests** — every line executed because `cli.main()` calls `configure_logging` during the
+CLI tests, so coverage confirmed the module ran while nothing asserted what the logging did.
+`tests/system/test_logging_config.py` now exists. Coverage measures execution, not verification.
+
+**Command**: `pytest tests/system/test_design_graph.py tests/system/test_logging_config.py -v`
+**Result**: 19/19 passed (12 pre-existing + 7 new).
 
 ### Prompt duplication between `spec_extractor` and `spec_critic` (ADR-0017)
 

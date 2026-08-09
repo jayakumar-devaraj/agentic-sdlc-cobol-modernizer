@@ -21,9 +21,12 @@ from pathlib import Path
 
 import pytest
 
+from cobol_modernizer.core import model_client
 from cobol_modernizer.core.contracts import DesignDocument
+from cobol_modernizer.core.model_client import ModelCallResult
 from cobol_modernizer.graph import design_graph
 from cobol_modernizer.graph.design_graph import build_design_graph, run_design
+from cobol_modernizer.telemetry.logging_config import bind_run_id, current_run_id
 from cobol_modernizer.tools.tenant_repo import TenantRepoFileNotFoundError
 
 FIXTURE_ROOT = Path(__file__).parent.parent / "fixtures" / "tenant_repo_sample"
@@ -299,3 +302,105 @@ def test_the_compiled_graph_exposes_the_named_specialist_nodes():
     expanded = " ".join(graph.get_graph(xray=True).nodes)
     assert "spec_extractor" in expanded
     assert "spec_critic" in expanded
+
+
+# --- ADR-0018: run_id and usage must cross LangGraph's thread pool ------------------------------
+
+
+def test_run_id_reaches_every_concurrent_branch():
+    """A `ContextVar` bound before `invoke` must be visible inside each branch thread.
+
+    This is the assertion that would have caught a broken implementation. `contextvars` copies the
+    calling context into each worker, so binding *before* fan-out works and binding inside a node
+    would not -- and a sequential test cannot tell those apart, because with one thread every
+    variant passes.
+    """
+    bind_run_id("run-under-test")
+    seen: dict[str, str] = {}
+    seen_threads: set[int] = set()
+    lock = threading.Lock()
+
+    def narrate_capturing_run_id(model, system_prompt, user_content):
+        program = user_content.split("\n", 1)[0]
+        with lock:
+            seen[program] = current_run_id()
+            seen_threads.add(threading.get_ident())
+        return faithful_narrate(model, system_prompt, user_content)
+
+    run(ALL_PROGRAMS, narrate=narrate_capturing_run_id)
+
+    assert len(seen) == len(ALL_PROGRAMS)
+    assert set(seen.values()) == {"run-under-test"}, seen
+    # If everything ran on one thread the assertion above proves nothing about propagation.
+    assert len(seen_threads) > 1, "branches did not actually run on separate threads"
+
+
+def test_run_cost_sums_usage_across_concurrent_branches(monkeypatch):
+    """`DesignDocument.cost` must total every real `call_model`, including from branch threads.
+
+    The accumulator is a mutable object behind a `ContextVar` precisely so child threads mutate the
+    parent's instance. Had it been a `ContextVar` of running integers, each branch would have
+    incremented a private copy and this total would come back as zero from the branch calls --
+    passing a single-threaded test and failing in production (ADR-0018).
+    """
+    fake = ModelCallResult(
+        text="[]", model="fake-model", backend="anthropic_sdk", attempts=1,
+        input_tokens=100, output_tokens=10,
+        cache_creation_input_tokens=5, cache_read_input_tokens=2,
+        notional_cost_usd=0.25,
+    )
+    monkeypatch.setattr(
+        model_client, "_call_anthropic_sdk",
+        lambda *a, **k: fake,
+    )
+
+    def via_call_model(node_name, fallback):
+        def call(model, system_prompt, user_content):
+            model_client.call_model(node_name, "fake-model", system_prompt, "probe")
+            return fallback(model, system_prompt, user_content)
+        return call
+
+    document = run(
+        ALL_PROGRAMS,
+        narrate=via_call_model("spec_extractor", faithful_narrate),
+        critique=via_call_model("spec_critic", confident_critique),
+        architect=via_call_model("solution_architect", make_architect(ALL_PROGRAMS)),
+    )
+
+    # 4 extractor + 4 critic (concurrent branches) + 1 architect (after fan-in).
+    expected_calls = 2 * len(ALL_PROGRAMS) + 1
+    assert document.cost is not None
+    assert document.cost.model_calls == expected_calls
+    assert document.cost.input_tokens == 100 * expected_calls
+    assert document.cost.output_tokens == 10 * expected_calls
+    assert document.cost.cache_creation_input_tokens == 5 * expected_calls
+    assert document.cost.cache_read_input_tokens == 2 * expected_calls
+    assert document.cost.notional_cost_usd == pytest.approx(0.25 * expected_calls)
+    assert document.cost.calls_without_reported_cost == 0
+
+
+def test_run_cost_reports_a_partial_total_when_a_backend_gives_no_cost(monkeypatch):
+    """Token counts stay exact while the dollar figure goes absent, not wrong.
+
+    The SDK backend reports no cost by design (`model_client` keeps no rate card so it cannot go
+    stale), so a consumer must be able to tell "nothing cost anything" from "nobody said".
+    """
+    fake = ModelCallResult(
+        text="[]", model="fake-model", backend="anthropic_sdk", attempts=1,
+        input_tokens=7, output_tokens=3, notional_cost_usd=None,
+    )
+    monkeypatch.setattr(
+        model_client, "_call_anthropic_sdk", lambda *a, **k: fake
+    )
+
+    def call(model, system_prompt, user_content):
+        model_client.call_model("spec_extractor", "fake-model", system_prompt, "probe")
+        return faithful_narrate(model, system_prompt, user_content)
+
+    document = run(PARALLEL_PAIR, narrate=call)
+
+    assert document.cost is not None
+    assert document.cost.model_calls == len(PARALLEL_PAIR)
+    assert document.cost.input_tokens == 7 * len(PARALLEL_PAIR)
+    assert document.cost.notional_cost_usd is None
+    assert document.cost.calls_without_reported_cost == len(PARALLEL_PAIR)
