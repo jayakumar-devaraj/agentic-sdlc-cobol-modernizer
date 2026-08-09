@@ -68,3 +68,30 @@ jobs:
             exit 1
           fi
           echo "no extraction node yet, or guardrail test present"
+
+  # Compiles and tests templates/target-spring-boot-baseline on the exact JDK it pins.
+  # ADR-0019 makes this a gate rather than an intention: the Java 25 risk is not the language but
+  # the ecosystem's bytecode tooling (Hibernate/ByteBuddy, Mockito's instrumentation agent,
+  # Testcontainers), which fails at *runtime*. Running it here means an unsupported transitive
+  # dependency surfaces at step 38 instead of inside the self-healing compile loop at step 42,
+  # where the loop would be diagnosing a dependency problem it was never built to fix.
+  # Docker is available on this runner, which BaselineStackTest needs - it deliberately does not
+  # skip without it.
+  template-build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "25"
+          cache: maven
+
+      - name: Report the resolved toolchain
+        run: java -version && mvn -version
+
+      - name: Build and test the target baseline template
+        working-directory: templates/target-spring-boot-baseline
+        run: mvn -B -ntp verify

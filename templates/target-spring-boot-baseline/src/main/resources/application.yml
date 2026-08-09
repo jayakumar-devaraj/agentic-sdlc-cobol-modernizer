@@ -1,0 +1,44 @@
+# Baseline configuration. Everything here is what any modernized batch program needs regardless of
+# which program it is; nothing tenant-specific belongs in this file.
+spring:
+  application:
+    name: modernized-batch-baseline
+
+  datasource:
+    # No embedded fallback on purpose. An in-memory database that silently stands in for PostgreSQL
+    # would let a job pass its tests against different NUMERIC semantics than it runs against -
+    # and NUMERIC(p,s) fidelity to the COBOL PIC clause is the whole reason ADR-0019 chose
+    # PostgreSQL. A missing URL should fail at startup, loudly.
+    url: ${DATABASE_URL:}
+    username: ${DATABASE_USER:}
+    password: ${DATABASE_PASSWORD:}
+
+  jpa:
+    open-in-view: false
+    hibernate:
+      # Never generated from entities. The schema is derived from the COBOL copybooks via
+      # pic_mapper's precision and scale (ADR-0019); letting Hibernate infer it instead would
+      # replace a mapping this platform can verify with one it cannot.
+      ddl-auto: none
+
+# Spring Batch's metadata tables are NOT configured here, and their absence is the point.
+# Spring Boot 4 removed `spring.batch.jdbc.*` from BatchProperties entirely - there is no
+# `initialize-schema` any more. Setting it would be a key the framework silently ignores, which is
+# worse than an absent one because it looks decided. Verified by building this template: the key
+# was set to `always` in a test and no table was created.
+#
+# Every Spring Batch example predating Boot 4 sets that property, so this is a trap the code
+# generator will walk into unless the schema is owned somewhere explicit. It is: the metadata
+# schema ships as `org/springframework/batch/core/schema-postgresql.sql` inside spring-batch-core
+# and is applied by whatever owns migrations, alongside the domain schema pic_mapper derives
+# (ADR-0019).
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,metrics,prometheus
+  endpoint:
+    health:
+      probes:
+        enabled: true
