@@ -887,6 +887,61 @@ mermaid-diagram-parse check reused from `agentic-sdlc-control-plane`.
 **Command**: `gh run list --repo jayakumar-devaraj/agentic-sdlc-cobol-modernizer --limit 1`
 **Result**: `completed success` on every merge to date.
 
+### Track C's real file I/O, and CardDemo's real data files (ADR-0019)
+
+**Verified**: the two factual premises ADR-0019 rests on, both of which had been asserted from
+memory in a draft before being checked — and checking each one found the draft wrong.
+
+**1. Every `SELECT` in the four programs, read from the real fixture source.** 16 files: 10
+`ORGANIZATION IS INDEXED` (VSAM KSDS) and **6 `SEQUENTIAL`**, 7 `ACCESS MODE IS RANDOM`, 3 opened
+`I-O` and `REWRITE`n. The full table is in ADR-0019. **This falsified the draft's claim that "these
+are VSAM KSDS files, not flat files"**: `CBTRN02C`'s *driving* dataset (`DALYTRAN-FILE`) is a plain
+sequential file, and five of six outputs are sequential. It also falsified a long-standing line in
+`docs/cobol-construct-support-matrix.md` — *"Track C only reads existing files"* — contradicted by
+`CBACT04C.cbl:356`, `CBTRN02C.cbl:510,528,554`, and five `OPEN OUTPUT` statements. Both are
+corrected in this change rather than carried forward.
+
+**Command**: `rg "^\s+(SELECT|ORGANIZATION|ACCESS MODE|RECORD KEY|OPEN|READ|WRITE|REWRITE)\s" tests/fixtures/tenant_repo_sample/app/cbl/`
+**Result**: as tabulated in ADR-0019.
+
+**2. CardDemo's real data files, against `carddemo-tenant-service` itself.** The plan carried this
+as an explicitly *unverified* precondition ("this repo's fixture is source only"). It is now checked
+and it changed what step 40a has to build:
+
+- `app/data/ASCII/` holds nine fixed-width `.txt` files; `app/data/EBCDIC/` holds the mainframe
+  `.PS` datasets. Five of the six files a Track C program reads match their copybook's own `RECLN`
+  exactly: `acctdata.txt` 50 records × 300 bytes (`CVACT01Y`), `tcatbal.txt` 50 × 50 (`CVTRA01Y`),
+  `dailytran.txt` 300 × 350 (`CVTRA06Y`), `custdata.txt` 50 × 500 (`CVCUS01Y`), `discgrp.txt`
+  51 × 50 (`CVTRA02Y`).
+- **The sixth does not, and that was the point of counting rather than assuming.** `cardxref.txt`
+  is **36 bytes per record against `CVACT03Y`'s declared `RECLN 50`** — exactly the 16 + 9 + 11 of
+  its three real fields, with the trailing `FILLER PIC X(14)` simply absent from the file. A reader
+  built to the copybook's record length would misalign every record after the first. `XREF-FILE` is
+  a random keyed lookup in **both** business programs (`CBACT04C`, `CBTRN02C`), so this is on the
+  critical path, not in a demo output.
+- **Signed numerics carry a zoned-decimal sign overpunch.** The first `acctdata.txt` record's
+  `ACCT-CURR-BAL` is the twelve characters `00000001940{`, not `000000019400`; the trailing byte
+  encodes the last digit *and* the sign. `dailytran.txt`'s `DALYTRAN-AMT` shows `0000005047G`
+  (= 504.77) and contains real negatives. `new BigDecimal("00000001940{")` throws; dropping the
+  last character instead loses a factor of ten and the sign. Decoding this is a required, testable
+  part of step 40a, driven off `pic_mapper`'s existing signedness and scale.
+- **`tcatbal.txt` has 49 `CR` bytes against 50 `LF`** — 49 of 50 records `CRLF`-terminated, one not;
+  every other ASCII data file is pure `LF` (`acctdata` 0/50, `dailytran` 0/300, `discgrp` 0/51,
+  `custdata` 0/50, `cardxref` 0/50). It is `CBACT04C`'s driving dataset, so this lands on the
+  interest calculator specifically. Same defect class as `CODATECN.cpy`'s real `CRLF` (PR #10),
+  same upstream repo, found the same way — by counting bytes rather than trusting a text file to be
+  uniform.
+
+No test pins these yet, deliberately: the data files are not in this repo (the fixture is source
+only), and a test that reaches GitHub at run time would be a network dependency in a suite that has
+none. They become falsifiable when step 40a lands a byte-verified data fixture, the same way
+`tests/fixtures/tenant_repo_sample/` did for source.
+
+**Command**: `gh api repos/jayakumar-devaraj/carddemo-tenant-service/contents/app/data/ASCII --jq '.[].name'`,
+then each file's base64 `content` decoded locally and its bytes counted (record length, `CR`/`LF`
+totals, and the literal characters at the signed-field offsets).
+**Result**: as stated above.
+
 ## Not yet covered (honest gaps, not silently skipped)
 
 - *(corrected 2026-08-08 — this entry was stale, not merely incomplete)* This previously read

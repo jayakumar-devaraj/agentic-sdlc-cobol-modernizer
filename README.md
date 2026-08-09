@@ -97,7 +97,9 @@ this repo worktree paths (`docs/adr/0001`).
 phase's write target — not this repo's own output, and not `carddemo-tenant-service`'s, which
 stays read-only source of truth throughout. The repo itself exists (an empty scaffold — no
 generated Java yet, Milestone C4 hasn't started); `generate` writing real content into it is still
-real work ahead. This repo has **no Postgres edge in the diagram on purpose**: `tools/
+real work ahead. What that target looks like is decided: Java 25 on Spring Batch over **PostgreSQL**,
+with CardDemo's data files as a one-time migration source rather than the runtime store, and
+`CBACT01C`'s fixed-`OCCURS` demo outputs scoped out of generation entirely (`docs/adr/0019`). This repo has **no Postgres edge in the diagram on purpose**: `tools/
 knowledge_store.py` can talk to Postgres for the knowledge store's own schema, but nothing in the
 `design` or `generate` path calls it yet (`docs/adr/0016`), so today that connection is exercised
 only by its own tests. When it is wired, the credential arrives as a mounted file path and never
@@ -246,7 +248,7 @@ compile.
 ./.venv/Scripts/python -m pytest --cov=cobol_modernizer --cov-report=term-missing --cov-fail-under=90
 ```
 
-370 tests passing (4 skipped — the opt-in live-CLI tests), 99.02% coverage as of this change — the
+380 tests passing (4 skipped — the opt-in live-CLI tests), 99.06% coverage as of this change — the
 numbers a real run produces, not a claim. Some tests (`tools/knowledge_store.py`'s) need the local
 Postgres+pgvector instance above; they skip with a clear reason rather than failing if it isn't
 running, and CI runs them for real against its own service container rather than letting them skip
