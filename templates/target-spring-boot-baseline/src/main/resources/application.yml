@@ -21,13 +21,17 @@ spring:
       # replace a mapping this platform can verify with one it cannot.
       ddl-auto: none
 
-  batch:
-    jdbc:
-      # Spring Batch's own metadata tables. `embedded` (the default) means they are only created
-      # for an embedded database, so against a real PostgreSQL nothing is created and the first
-      # job launch fails on a missing table. Deployment owns the real answer here once migration
-      # tooling is chosen; ADR-0019 defers that to the first schema that has to change.
-      initialize-schema: never
+# Spring Batch's metadata tables are NOT configured here, and their absence is the point.
+# Spring Boot 4 removed `spring.batch.jdbc.*` from BatchProperties entirely - there is no
+# `initialize-schema` any more. Setting it would be a key the framework silently ignores, which is
+# worse than an absent one because it looks decided. Verified by building this template: the key
+# was set to `always` in a test and no table was created.
+#
+# Every Spring Batch example predating Boot 4 sets that property, so this is a trap the code
+# generator will walk into unless the schema is owned somewhere explicit. It is: the metadata
+# schema ships as `org/springframework/batch/core/schema-postgresql.sql` inside spring-batch-core
+# and is applied by whatever owns migrations, alongside the domain schema pic_mapper derives
+# (ADR-0019).
 
 management:
   endpoints:

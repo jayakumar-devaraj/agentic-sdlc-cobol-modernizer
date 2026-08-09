@@ -12,11 +12,13 @@ import org.springframework.batch.core.repository.JobRepository;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.testcontainers.service.connection.ServiceConnection;
+import org.springframework.core.io.ClassPathResource;
 import org.springframework.jdbc.core.JdbcTemplate;
-import org.springframework.test.context.TestPropertySource;
+import org.springframework.jdbc.datasource.init.ResourceDatabasePopulator;
 import org.testcontainers.containers.PostgreSQLContainer;
 import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
+import org.testcontainers.utility.DockerImageName;
 
 /**
  * The gate ADR-0019 put on step 38: prove the ecosystem's bytecode tooling actually works on the
@@ -34,16 +36,12 @@ import org.testcontainers.junit.jupiter.Testcontainers;
  */
 @SpringBootTest
 @Testcontainers
-@TestPropertySource(properties = {
-        // Batch's metadata tables are created for this test only; production defers schema
-        // ownership to migration tooling (see application.yml).
-        "spring.batch.jdbc.initialize-schema=always"
-})
 class BaselineStackTest {
 
     @Container
     @ServiceConnection
-    static final PostgreSQLContainer<?> POSTGRES = new PostgreSQLContainer<>("postgres:16-alpine");
+    static final PostgreSQLContainer<?> POSTGRES =
+            new PostgreSQLContainer<>(DockerImageName.parse("postgres:16-alpine"));
 
     @Autowired
     private JobRepository jobRepository;
@@ -73,15 +71,24 @@ class BaselineStackTest {
     }
 
     @Test
-    @DisplayName("Spring Batch's JobRepository is wired to the real database, not an embedded one")
+    @DisplayName("Spring Batch's JobRepository is wired to the real database, and its schema applies")
     void the_job_repository_uses_postgres() {
         assertThat(jobRepository).isNotNull();
 
-        String product = new JdbcTemplate(dataSource)
-                .queryForObject("select version()", String.class);
+        JdbcTemplate jdbc = new JdbcTemplate(dataSource);
+        String product = jdbc.queryForObject("select version()", String.class);
         assertThat(product).contains("PostgreSQL");
 
-        Integer batchTables = new JdbcTemplate(dataSource).queryForObject(
+        // Applied explicitly, because nothing applies it for us: Spring Boot 4 removed
+        // `spring.batch.jdbc.*` from BatchProperties entirely. The first version of this test set
+        // `spring.batch.jdbc.initialize-schema=always` and counted zero tables - the property is
+        // silently ignored, exactly as an unknown key would be. Every pre-Boot-4 Spring Batch
+        // example on the internet sets it, so this is a trap the code generator would walk into.
+        new ResourceDatabasePopulator(
+                new ClassPathResource("org/springframework/batch/core/schema-postgresql.sql"))
+                .execute(dataSource);
+
+        Integer batchTables = jdbc.queryForObject(
                 "select count(*) from information_schema.tables where table_name like 'batch\\_%'",
                 Integer.class);
         assertThat(batchTables).isGreaterThan(0);

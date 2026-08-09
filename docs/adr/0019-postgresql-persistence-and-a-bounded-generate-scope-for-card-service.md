@@ -265,4 +265,26 @@ appears — but it is no longer an open question that can be left alone.
   it ever runs outside a demo is a Milestone C5 question.
 - **Schema migration tooling.** `CREATE TABLE IF NOT EXISTS` is not a migration — this repo already
   paid for learning that (PR #22, ADR-0016) — but choosing Flyway or Liquibase belongs with the
-  first schema that has to change, not with the first one that has to exist.
+  first schema that has to change, not with the first one that has to exist. **See the amendment
+  below: the framework no longer offers the shortcut this was deferring against.**
+
+## Amendment (2026-08-09, same day, found by building the template)
+
+Decision 3 left schema ownership open on the assumption that Spring Boot's own
+`spring.batch.jdbc.initialize-schema` could create Spring Batch's metadata tables in the meantime.
+**Spring Boot 4 removed `spring.batch.jdbc.*` from `BatchProperties` entirely.** There is no
+`initialize-schema` any more, and because unknown configuration keys are silently ignored, setting
+one looks decided and does nothing.
+
+Found by running it, not by reading release notes: `BaselineStackTest`'s first version set
+`spring.batch.jdbc.initialize-schema=always` and then counted **zero** batch tables against a real
+PostgreSQL container. Every pre-Boot-4 Spring Batch example sets that property, which makes it a
+trap the code generator will walk into by default — the same shape as the `@EnableBatchProcessing`
+annotation that now switches auto-configuration *off*.
+
+Two consequences. The template's `application.yml` states the absence and why, rather than carrying
+a dead key. And schema ownership is no longer deferrable to a framework default that does not
+exist: the metadata schema ships as `org/springframework/batch/core/schema-postgresql.sql` inside
+`spring-batch-core` and has to be applied by whatever applies the domain schema `pic_mapper`
+derives. That makes migration tooling a **step 40a** concern rather than a later one — the loader
+already has to create the domain tables, and this is one more script alongside them.
