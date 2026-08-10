@@ -1741,6 +1741,40 @@ repo's design**, not about the model:
 Three of these describe work no step currently owns. They are the natural input to whatever revisits
 `solution_architect`'s step decomposition.
 
+### G26 — the composite gains `Account` and `CardXref`, and two fields stay out of reach
+
+**What was verified.** `1300-B-WRITE-TX` builds the `Tran` this step returns, and two of its moves
+read records the composite did not carry: `ACCT-ID` → `TRAN-DESC`, and `XREF-CARD-NUM` →
+`TRAN-CARD-NUM`. Both are now reachable as `item.account().acctId()` and
+`item.cardXref().xrefCardNum()`, asserted against the real COBOL text and the real `pic_mapper`
+entities rather than against the composite alone — so the test fails if either the copybooks or the
+paragraph move underneath it.
+
+**Two of the four flagged fields cannot be fixed this way, and a test says so by name.** A composite
+carries *existing domain entities* (ADR-0020), and neither of the remaining two is one:
+
+| Field | Source | Why no composite reaches it |
+|---|---|---|
+| `TRAN-ID` | `STRING PARM-DATE, WS-TRANID-SUFFIX` | A job parameter and a per-run counter. The model separately noted a stateless processor cannot produce a monotonic suffix correctly under restart or partitioning — a stronger objection than reachability |
+| `TRAN-ORIG-TS` / `TRAN-PROC-TS` | `Z-GET-DB2-FORMAT-TIMESTAMP` | Its target fields are `REDEFINES`, which the construct matrix routes to a human gate rather than translating |
+
+The real remainder is a design decision left unmade: either `1300-B-WRITE-TX` becomes its own step
+with access to job parameters and a clock, or those fields are populated outside translated logic.
+
+**Widening the composite broke the renderer twice, and both were found by compiling.**
+
+1. It **refused** unbound components. Correct while the composite was exactly balance-plus-rate;
+   wrong once it carried types the interest arithmetic does not read. Those are now constructed from
+   placeholders — refusing them would force the test's composite to differ from the design's, which
+   is the one thing a test rendered from the design must never do.
+2. The import set was derived from the **bound** entities only, so the rendered file constructed two
+   types it had not imported — `cannot find symbol`, twice, from javac. Now guarded by asserting
+   every `new X(` in the file has a matching import, which is the form that survives the next
+   component someone adds rather than a fix for these two names.
+
+Neither was visible by reading the renderer. Both are the same shape as PR #30's finding that local
+green is structurally weaker than a real build for anything touching Java.
+
 ### G27 — the accumulator's owning step, and what giving it one exposed
 
 **The gap said the accumulator needs an owning step. Giving it one showed the owning step would have
