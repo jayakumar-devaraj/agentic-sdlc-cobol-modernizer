@@ -89,9 +89,16 @@ jobs:
           java-version: "25"
           cache: maven
 
+      # `./mvnw`, not `mvn`. The runner image ships some Maven, and which one is not this repo's
+      # decision to inherit: the wrapper pins the version in `.mvn/wrapper/maven-wrapper.properties`
+      # so CI and a developer's machine resolve the same build tool. Everything else in this
+      # template is pinned deliberately -- the JDK, Spring Boot, Testcontainers, and a test that
+      # asserts the JDK's own feature version -- and the build tool was the one thing left free to
+      # drift under an image update.
       - name: Report the resolved toolchain
-        run: java -version && mvn -version
+        working-directory: templates/target-spring-boot-baseline
+        run: java -version && ./mvnw -B -ntp -version
 
       - name: Build and test the target baseline template
         working-directory: templates/target-spring-boot-baseline
-        run: mvn -B -ntp verify
+        run: ./mvnw -B -ntp verify

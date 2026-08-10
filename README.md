@@ -52,9 +52,13 @@ selected on price, because a benchmark showed it catches planted defects as well
 The decision, its estimated cost, and what it beat all ride into `design.json`, so a reviewer at
 the gate can see which model produced a spec and why.
 
-Three honest limits. **The `generate` half does not exist yet** (Milestone C4), so
-`modernization_engineer`, `build_validator`, and the self-healing compile loop in the diagram are
-target design, not built code. **Retrieval is not wired**: `tools/knowledge_store.py` is a real,
+Three honest limits. **The `generate` half is half-built** (Milestone C4). `modernization_engineer`
+is real: it asks a model for one `process(...)` method body and renders everything structural around
+it from `design.json` (`rendering/`), with the model-authored region marked in the generated file so
+a reviewer can see which lines a model wrote. What is still target design, not built code, is
+`build_validator`, the self-healing compile loop, and the wiring — **the `generate` subcommand
+itself still reports "not implemented", nothing is written to `card-service`, and no generated Java
+has been compiled.** **Retrieval is not wired**: `tools/knowledge_store.py` is a real,
 tested pgvector storage layer with no production caller, because embeddings need a second vendor
 this environment has no credential for — and because nobody has shown retrieval would help a
 four-program corpus (`docs/adr/0016` decides both halves of that). And **output quality is only
@@ -95,9 +99,10 @@ talks to Kafka, or either repo's git remote, directly — control-plane owns bot
 this repo worktree paths (`docs/adr/0001`).
 [`card-service`](https://github.com/jayakumar-devaraj/card-service) (ADR-0009) is the `generate`
 phase's write target — not this repo's own output, and not `carddemo-tenant-service`'s, which
-stays read-only source of truth throughout. The repo itself exists (an empty scaffold — no
-generated Java yet, Milestone C4 hasn't started); `generate` writing real content into it is still
-real work ahead. What that target looks like is decided: Java 25 on Spring Batch over **PostgreSQL**,
+stays read-only source of truth throughout. The repo itself exists but is still an empty scaffold —
+**no generated Java has been written to it.** Milestone C4 has started (the target template builds
+on JDK 25, and `modernization_engineer` generates real Java from real COBOL), but `generate` writing
+into `card-service` is still real work ahead. What that target looks like is decided: Java 25 on Spring Batch over **PostgreSQL**,
 with CardDemo's data files as a one-time migration source rather than the runtime store, and
 `CBACT01C`'s fixed-`OCCURS` demo outputs scoped out of generation entirely (`docs/adr/0019`). This repo has **no Postgres edge in the diagram on purpose**: `tools/
 knowledge_store.py` can talk to Postgres for the knowledge store's own schema, but nothing in the
@@ -251,7 +256,7 @@ Milestone C4.
 ./.venv/Scripts/python -m pytest --cov=cobol_modernizer --cov-report=term-missing --cov-fail-under=90
 ```
 
-487 tests passing (4 skipped — the opt-in live-CLI tests), 99.13% coverage — CI's own numbers from
+490 tests passing (4 skipped — the opt-in live-CLI tests), 99.13% coverage — CI's own numbers from
 the run on this change, not a local approximation of them. The Postgres-backed
 `tools/knowledge_store.py` suite is included and skips nothing there, because CI provides a real
 service container. The target template's own 13 Java tests are not in that

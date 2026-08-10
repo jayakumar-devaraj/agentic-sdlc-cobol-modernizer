@@ -13,7 +13,7 @@ was never treated as proof on its own.
 pytest --cov=cobol_modernizer --cov-report=term-missing --cov-fail-under=90
 ```
 
-As of this report: **487 tests passed (4 skipped — the opt-in live-CLI tests), 99.13% overall
+As of this report: **490 tests passed (4 skipped — the opt-in live-CLI tests), 99.13% overall
 coverage** (14 of 1,611 statements uncovered). These are **CI's numbers**, from the run on the
 change that added this line — not a local figure. Locally the Postgres-backed
 `tools/knowledge_store.py` suite skips without a running Docker daemon, which is why the
@@ -1020,8 +1020,10 @@ where an intermediate-precision implementation gives `1.01`); and `requireFits` 
 ecosystem supports the pin but not that the pin still says 25, that no preview flag appeared, or
 that the scaffold stayed free of this tenant's vocabulary. **Writing them found a real defect
 immediately**: XML forbids a double hyphen inside a comment, so the pom comment explaining that the
-preview flag stays off was making the file not well-formed — with no JDK on this machine, nothing
-else would have caught it before CI. **Confirmed falsifiable**: flipping
+preview flag stays off was making the file not well-formed — with no JDK on this machine *at the
+time*, nothing else would have caught it before CI. (A JDK and Maven were installed locally on
+2026-08-09; the reasoning stands as the reason these Python invariants exist, since they run in
+0.02s against no toolchain at all and CI is still the only place the Java build is authoritative.) **Confirmed falsifiable**: flipping
 `maven.compiler.release` to 21 fails exactly that one test and nothing else, with the substitution
 asserted to have applied before the result was believed.
 
@@ -1042,7 +1044,9 @@ has yet written a line of this Java, and nothing below claims otherwise.
 ```
 
 Real result locally: **466 passed, 4 skipped in 21.33s**, with the container suite excluded because
-Docker's daemon is not running on this machine.
+Docker's daemon was not running on this machine *when that run was made*. (It was started later the
+same day; the run is left as recorded rather than re-run, because the point of the entry is CI's
+number being the authoritative one, which does not change.)
 
 **CI ran the same suite with a real Postgres service container and reported 478 passed, 4 skipped,
 99.11% coverage** (run `31346976317`, both `test` and `template-build` green). The twelve-test
@@ -1098,9 +1102,12 @@ lost-update race the lock exists for, reintroduced in the check rather than the 
 
 **What this does not establish**, stated plainly so a green suite does not imply it:
 
-1. **No Java produced here has ever been compiled.** There is no JDK on this machine and Docker's
-   daemon is not running, so `javac` has not seen any of it. `templates/`'s own suite compiles on
-   CI's JDK 25; this generated output does not yet reach a build at all — that is step 40.
+1. **No Java produced here has ever been compiled.** ~~There is no JDK on this machine and Docker's
+   daemon is not running, so `javac` has not seen any of it.~~ **The stated cause is superseded
+   (2026-08-09): a JDK and Maven are now installed and the template builds green locally.** The
+   claim itself still holds and is the one that matters — **generated** output does not reach a
+   build at all yet, because nothing writes it to a project `javac` is pointed at. That is step 40,
+   and the missing toolchain was never the reason.
 2. ~~**No real model has written a body.**~~ **Superseded the same day — one real call has now run.
    See the entry below.** What remains true is narrower: no real model has yet produced a *working*
    implementation, and quality across programs is unmeasured.
@@ -1280,6 +1287,51 @@ field looks exactly like a right one. Recorded as an open gap rather than fixed 
 **Three calls, $0.84 notional, $0 billed.** Each one found a defect the injected-fake test suite
 could not: an under-specified design, a missing target API, and a missing class of deterministic
 fact. None of that Java has been compiled yet.
+
+### The Java toolchain, and pinning the last unpinned dependency
+
+**A local JDK and Maven now exist**, so the Java half of this repo is no longer CI-only. Installed
+2026-08-09: **Eclipse Temurin 25.0.4** (`winget`) and **Apache Maven 3.9.16**, the latter downloaded
+from Apache's CDN with its **SHA-512 verified against `downloads.apache.org`'s published checksum**
+before extraction — a binary that compiles model-authored code is not one to take on trust.
+
+```
+mvn -B -ntp verify   # in templates/target-spring-boot-baseline
+```
+
+Real result: **`Tests run: 13, Failures: 0, Errors: 0, Skipped: 0` — `BUILD SUCCESS`** on JDK 25.0.4
+against a **real PostgreSQL Testcontainer**, matching CI exactly. CI pins Temurin 25.0.3; the
+difference is a patch within the same feature release, and `BaselineStackTest`'s own
+`Runtime.version().feature() == 25` assertion is what actually guards this.
+
+**Maven 3.9.16 rather than 4.0.0, deliberately.** ADR-0019 chose Maven over Gradle *because* its
+compile diagnostics are straightforward to parse and auto-repair, and step 42's self-healing loop is
+built on parsing exactly that output. Anchoring a diagnostic parser to a brand-new major whose
+output format may have moved is avoidable risk that buys nothing.
+
+**Host install rather than a Maven container, with Docker available.** In production the specialist
+is a container (step 46 / gap G5). Giving *that* container a Docker socket so it could launch Maven
+containers would grant root-equivalent host access to the component that compiles LLM-authored code
+derived from untrusted COBOL — the wrong trust boundary for a repo whose standing rule is that COBOL
+is data, never instructions. The right shape is JDK and Maven **inside** the specialist image with
+`local_compiler` invoking `mvn` on `PATH`, and the development environment now mirrors it. It is
+also far faster: the self-healing loop compiles up to 12 times per run, and a cold container with a
+cold `~/.m2` on each one would dominate the loop's wall time.
+
+**The gap this exposed.** CI ran `mvn` from whatever the runner image ships — **an unpinned
+dependency in a template that pins its JDK, its Spring Boot version, its Testcontainers version, and
+asserts the JVM's own feature version at runtime.** The build tool was the one thing left free to
+change under an image update, and it is the tool whose output step 42 will parse.
+
+Closed by adding the **Maven Wrapper**, pinned to 3.9.16, with CI switched to `./mvnw`:
+
+- `distributionType=only-script`, so the repo carries **three text files and no committed jar** —
+  an opaque binary in source control that nobody reviews and every scanner flags.
+- Verified: `./mvnw -B -ntp -version` resolves `Apache Maven 3.9.16` from
+  `~/.m2/wrapper/dists`, downloading it on first use.
+- Three new invariants in `tests/system/test_target_template.py` — the version is an exact pin, no
+  jar is committed, and **CI actually calls the wrapper rather than a bare `mvn`**, because pinning
+  a version is pointless if the pipeline still runs whatever is on `PATH`.
 
 ## Not yet covered (honest gaps, not silently skipped)
 

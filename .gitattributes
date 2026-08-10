@@ -6,3 +6,11 @@
 # conversion entirely: some real upstream files are LF-only, at least one (CODATECN.cpy) is
 # genuinely CRLF -- both must round-trip through git unchanged.
 tests/fixtures/tenant_repo_sample/** -text
+
+# The Maven wrapper's POSIX launcher must stay LF, whatever the committing machine's core.autocrlf
+# says. Committed with CRLF it fails on the Linux CI runner with
+# `bad interpreter: /bin/sh^M` -- a failure whose message points at the shell rather than at the
+# line endings, so it costs a CI round-trip to diagnose. The `.cmd` is Windows-only and is left
+# alone deliberately. (The executable bit is a separate concern and is set on the index entry
+# itself, since core.fileMode is not meaningful on Windows.)
+templates/target-spring-boot-baseline/mvnw text eol=lf

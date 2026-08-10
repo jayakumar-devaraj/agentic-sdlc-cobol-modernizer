@@ -83,6 +83,47 @@ def test_the_ci_workflow_builds_on_the_same_release_the_pom_pins() -> None:
     assert "working-directory: templates/target-spring-boot-baseline" in workflow
 
 
+def test_the_maven_wrapper_pins_an_exact_maven_version() -> None:
+    """The build tool was the last unpinned thing in a template that pins everything else.
+
+    Before the wrapper, CI ran whatever Maven the runner image happened to ship. That is a
+    dependency nobody chose and which can change under an image update -- in a template whose JDK,
+    Spring Boot version and Testcontainers version are all exact, and which asserts the JVM's own
+    feature version at runtime. Step 42's self-healing loop parses Maven's diagnostics, so *which*
+    Maven produced them is not a detail.
+    """
+    properties = (TEMPLATE_ROOT / ".mvn" / "wrapper" / "maven-wrapper.properties").read_text(
+        encoding="utf-8"
+    )
+    match = re.search(r"apache-maven-(?P<version>[\d.]+)-bin\.zip", properties)
+    assert match, f"no pinned Maven distribution in:\n{properties}"
+    assert re.fullmatch(r"\d+\.\d+\.\d+", match.group("version")), (
+        f"Maven version {match.group('version')!r} is not an exact pin"
+    )
+
+
+def test_the_wrapper_needs_no_committed_binary() -> None:
+    """`only-script` mode, so the repo carries three text files and no jar.
+
+    A committed `maven-wrapper.jar` is an opaque binary in source control that nobody reviews and
+    every scanner flags. The script-only distribution avoids it entirely.
+    """
+    properties = (TEMPLATE_ROOT / ".mvn" / "wrapper" / "maven-wrapper.properties").read_text(
+        encoding="utf-8"
+    )
+    assert "distributionType=only-script" in properties
+    assert not list((TEMPLATE_ROOT / ".mvn").rglob("*.jar"))
+
+
+def test_ci_builds_through_the_wrapper_not_a_bare_mvn() -> None:
+    """Pinning the version is pointless if the pipeline still calls whatever is on PATH."""
+    workflow = (Path(__file__).resolve().parents[2] / ".github" / "workflows" / "ci.yml").read_text(
+        encoding="utf-8"
+    )
+    assert "./mvnw -B -ntp verify" in workflow
+    assert "run: mvn -B -ntp verify" not in workflow
+
+
 def test_the_spring_boot_parent_is_pinned_to_an_exact_version() -> None:
     """No ranges, no properties, no `LATEST`.
 
