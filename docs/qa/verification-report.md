@@ -13,8 +13,8 @@ was never treated as proof on its own.
 pytest --cov=cobol_modernizer --cov-report=term-missing --cov-fail-under=90
 ```
 
-As of this report: **490 tests passed (4 skipped — the opt-in live-CLI tests), 99.13% overall
-coverage** (14 of 1,611 statements uncovered). These are **CI's numbers**, from the run on the
+As of this report: **513 tests passed (4 skipped — the opt-in live-CLI tests), 99.03% overall
+coverage** (17 of 1,748 statements uncovered). These are **CI's numbers**, from the run on the
 change that added this line — not a local figure. Locally the Postgres-backed
 `tools/knowledge_store.py` suite skips without a running Docker daemon, which is why the
 authoritative count is taken from CI, where a real service container makes it skip nothing.
@@ -1332,6 +1332,65 @@ Closed by adding the **Maven Wrapper**, pinned to 3.9.16, with CI switched to `.
 - Three new invariants in `tests/system/test_target_template.py` — the version is an exact pin, no
   jar is committed, and **CI actually calls the wrapper rather than a bare `mvn`**, because pinning
   a version is pointless if the pipeline still runs whatever is on `PATH`.
+
+### `tools/local_compiler.py` — a real Maven build, and diagnostics a loop can act on (step 40)
+
+**The first module in this repo whose correctness could not be established without running it.**
+Four defects were found by compiling the real template, and every one of them would have survived a
+mocked `subprocess.run` untouched.
+
+```
+mvnw -B -ntp compile   # driven by compile_project, against a copy of the real template
+```
+
+Real result on the clean template: **`succeeded=True`, exit 0, 0 diagnostics, ~10s.** With
+`setScale` typo'd to `setScaleTypo`, one located diagnostic comes back:
+
+```
+error: src/main/java/com/modernized/batch/cobol/CobolArithmetic.java:46:21: cannot find symbol
+    symbol:   method setScaleTypo(int,java.math.RoundingMode)
+    location: variable value of type java.math.BigDecimal
+```
+
+**The four defects, in the order they were found:**
+
+1. **The wrapper path was relative to the caller's working directory** while the child ran with
+   `cwd=project_dir`, so Maven never started. Symptom: `succeeded=False`, **zero diagnostics, 186ms**
+   — byte-for-byte the shape of code that does not compile.
+2. **Maven prints every compile error twice**, and only one copy carries javac's
+   `symbol:`/`location:` lines. Two copies invite a repair loop to believe there are two problems;
+   dropping the wrong duplicate discards the only part a repair can act on.
+3. **Paths came back absolute**, on Windows in a `/C:/...` form nothing else in this pipeline
+   recognises. Diagnostics are now project-relative and POSIX-separated — a model pays for those
+   tokens and cannot act on a path whose base it does not know.
+4. **A missing JDK was indistinguishable from broken code.** Found by running this module's own
+   tests in a shell without one: the wrapper exits non-zero with no located diagnostic. `JdkNotFound
+   Error` and `CompilerNotFoundError` (both `ToolchainNotFoundError`) make the two distinguishable,
+   and `CompileTimeoutError` is kept out of `CompileResult` for the same reason — **a timeout says
+   nothing about whether the source compiles.**
+
+**A fifth was found by CI, and could not have been found here.** `resolve_build_command` chose the
+wrapper by existence order, so on the Linux runner it picked `mvnw.cmd` — a Windows batch file with
+no execute bit — and failed with `PermissionError: [Errno 13]`. Selection is now by platform, with a
+test asserting the choice matches the platform and another asserting the POSIX script still carries
+its execute bit. **This is the second time in one session that the Java toolchain behaved
+differently on the runner than on the development machine** (the first being `mvnw`'s mode bit and
+line endings), and it is the concrete argument for CI being the arbiter for anything touching it.
+
+**The Python CI job now installs a JDK** so these tests run there rather than skipping forever —
+the same standard `template-build` already applies to Docker. Had they skipped, defect 5 would have
+shipped and surfaced inside step 42's heal loop, where a `PermissionError` reads as an unparsed
+build failure: exactly the confusion `ToolchainNotFoundError` exists to prevent, arriving by a route
+that was not yet guarded.
+
+**CI result on this change: 513 passed, 4 skipped, 99% overall**, `local_compiler.py` at 98%. The
+uncovered lines are `PATH`-based JDK discovery (shadowed by `JAVA_HOME` everywhere, including CI)
+and the offline flag.
+
+**What this does not establish.** `compile_project` has only ever compiled **hand-written** Java --
+the template, and the template with a deliberate typo. **No model-generated file has been compiled**,
+because nothing yet writes one to a project: `generate` still has no caller and `card-service` still
+holds zero files. Wiring that is steps 41 and 42, and until then the round-trip count stays 0 of 4.
 
 ## Not yet covered (honest gaps, not silently skipped)
 
