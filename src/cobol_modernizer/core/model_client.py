@@ -119,6 +119,52 @@ class ModelCallResult:
     session_id: str | None = None
 
 
+#: Ceiling on model calls in one invocation. Derived, not guessed: a four-program `generate` run
+#: costs at most 7 calls per program (one generation plus three validate/heal rounds at step 42's
+#: cap of 3), so 28 is the worst legitimate run and 32 leaves margin without hiding a runaway. A
+#: `design` run is 9 calls, well under. Re-derive after the first real `generate` run.
+DEFAULT_MAX_MODEL_CALLS = int(os.getenv("COBOL_MODERNIZER_MAX_MODEL_CALLS", "32"))
+
+#: Ceiling on total tokens (input + output) in one invocation. **A placeholder derived from
+#: placeholder inputs**, and labelled that way for the same reason `config/model_routing.yaml`
+#: labels the C4 token profiles: a `design` run is ~453k tokens against measured profiles, and a
+#: `generate` run is ~576k against the *renderer* design (entities are rendered, so the model
+#: writes rule bodies rather than whole files). 1M is roughly 1.7x the larger of those -- tight
+#: enough to trip on a loop that will not stop, loose enough not to fire on a legitimate run.
+#: The first real `generate` run replaces this with a measurement.
+DEFAULT_MAX_TOTAL_TOKENS = int(os.getenv("COBOL_MODERNIZER_MAX_TOTAL_TOKENS", "1000000"))
+
+
+class RunBudgetExceededError(Exception):
+    """A run crossed its call or token ceiling and was aborted.
+
+    Joins the fail-loudly family rather than degrading: a run that has blown its ceiling is, by
+    construction, doing something nobody predicted, and the useful behaviour is to stop with the
+    numbers attached rather than to continue more cheaply.
+    """
+
+
+@dataclass(frozen=True)
+class RunBudget:
+    """Ceilings for one CLI invocation, counted in calls and tokens -- deliberately not dollars.
+
+    **Why not dollars.** `RunCost.notional_cost_usd` is what a call *would* cost at API rates, not
+    what anyone was billed; on the `claude_cli` backend against a subscription, nobody is billed
+    per call at all, and the SDK backend reports no cost by design (this module keeps no rate card
+    so it cannot go stale). A dollar ceiling would therefore cap a figure that is notional on one
+    backend and absent on the other. Calls and tokens are real on both, and they are what a
+    subscription's own limits are denominated in.
+
+    **What this is and is not.** It is a circuit breaker on a run, not a per-call pre-flight gate:
+    the check runs after a call is recorded, so a run overshoots by at most the one call that
+    tripped it. Gating before the call would mean predicting a response's token count, which is
+    the estimate-versus-actual conflation `RunCost` exists to avoid.
+    """
+
+    max_model_calls: int = DEFAULT_MAX_MODEL_CALLS
+    max_total_tokens: int = DEFAULT_MAX_TOTAL_TOKENS
+
+
 @dataclass
 class UsageAccumulator:
     """Running usage totals for one CLI invocation, shared across every concurrent branch.
@@ -155,6 +201,13 @@ class UsageAccumulator:
     #: partial one. The SDK backend never reports cost (no rate card here, by design), so on that
     #: backend this equals `model_calls` and `notional_cost_usd` stays `None`.
     calls_without_reported_cost: int = 0
+    #: `None` disables the ceiling entirely -- the shape a test or a deliberate long run wants.
+    budget: RunBudget | None = None
+
+    @property
+    def total_tokens(self) -> int:
+        """Input plus output. Cache reads/creations are already counted in `input_tokens`."""
+        return self.input_tokens + self.output_tokens
 
     def record(self, result: ModelCallResult) -> None:
         with self.lock:
@@ -167,6 +220,28 @@ class UsageAccumulator:
                 self.calls_without_reported_cost += 1
             else:
                 self.notional_cost_usd = (self.notional_cost_usd or 0.0) + result.notional_cost_usd
+            self._enforce_budget()
+
+    def _enforce_budget(self) -> None:
+        """Raise if this run has crossed a ceiling. Called under `lock`, never on its own.
+
+        Deliberately inside the same critical section as the increments: checking outside it would
+        let four concurrent branches each read a pre-increment total and all decide they were
+        under the limit, which is the same lost-update race the `Lock` exists for.
+        """
+        if self.budget is None:
+            return
+        if self.model_calls > self.budget.max_model_calls:
+            raise RunBudgetExceededError(
+                f"run aborted: {self.model_calls} model calls exceeds the ceiling of "
+                f"{self.budget.max_model_calls}"
+            )
+        if self.total_tokens > self.budget.max_total_tokens:
+            raise RunBudgetExceededError(
+                f"run aborted: {self.total_tokens} tokens ({self.input_tokens} in + "
+                f"{self.output_tokens} out) exceeds the ceiling of "
+                f"{self.budget.max_total_tokens}"
+            )
 
 
 _usage_accumulator: contextvars.ContextVar[UsageAccumulator | None] = contextvars.ContextVar(
@@ -175,15 +250,20 @@ _usage_accumulator: contextvars.ContextVar[UsageAccumulator | None] = contextvar
 
 
 @contextmanager
-def collect_usage() -> Iterator[UsageAccumulator]:
+def collect_usage(budget: RunBudget | None = None) -> Iterator[UsageAccumulator]:
     """Collect usage from every `call_model` in this context (and any thread it spawns).
 
     Scoped rather than global so tests, and any future caller that runs two graphs in one process,
     cannot bleed totals into each other. Outside this context `call_model` records nothing, which
     keeps the accounting opt-in: a node called directly from a test should not silently accumulate
     into whatever ran before it.
+
+    `budget` defaults to `None` -- no ceiling -- because this context manager is also what tests
+    use, and a default ceiling here would make the accounting helper quietly load-bearing. The
+    ceiling is applied at the real entrypoints (`graph/design_graph.py`, and `generate`'s
+    sub-pipeline once it exists), which is where a runaway actually has to be stopped.
     """
-    accumulator = UsageAccumulator()
+    accumulator = UsageAccumulator(budget=budget)
     token = _usage_accumulator.set(accumulator)
     try:
         yield accumulator
