@@ -1232,6 +1232,55 @@ not exist as a type, `card-service` still holds zero files, and no test has exec
 against real CardDemo data. Correct-looking arithmetic reviewed by a human is not a passing
 differential test, and the distinction is the whole reason Phase 1 exists.
 
+### The third real call — the prompt fix, and what it changed (step 39)
+
+Run 2's two findings were that `CobolArithmetic.divide(dividend, divisor, scale)` and
+`requireFits(value, precision, scale)` existed and the model had never been told. `rendering/
+target_api.py` now extracts the class's public API **from the real source file** and puts it at the
+head of the prompt. Run 3 is the identical step and design, re-run against that prompt.
+
+**The generated body changed to exactly what run 2 had asked for and could not write:**
+
+```java
+// Run 2 -- named by the model itself as second-choice
+BigDecimal quotient = categoryBalance.multiply(annualRatePercent)
+        .divide(new BigDecimal("1200"), MathContext.DECIMAL128);
+return CobolArithmetic.truncate(quotient, 2);
+
+// Run 3
+BigDecimal product = item.tranCatBal().multiply(item.disIntRate());
+BigDecimal monthlyInterest = CobolArithmetic.divide(product, new BigDecimal("1200"), 2);
+return CobolArithmetic.requireFits(monthlyInterest, 11, 2);
+```
+
+The intermediate `MathContext.DECIMAL128` quotient is gone in favour of the single truncating
+divide at the target scale, and the overflow guard is present. `java.math.MathContext` dropped out
+of the import list on its own.
+
+**Cost fell as well: $0.295966 -> $0.243181, an 18% reduction for better code.** The prompt grew by
+~2,800 characters of stable, cached prefix and the model stopped spending output tokens reasoning
+its way around an API it could not see. Run 2 emitted six notes; run 3 emitted four, and none of
+them is about a guessed method signature.
+
+**A new finding, from the same honesty that produced the last two.** Run 3 flagged that
+`WS-MONTHLY-INT` — the *receiving* field of the `COMPUTE`, and therefore the thing that determines
+the target precision and scale — **is not in the Known Facts at all.** It appears only in the
+untrusted narration and in the step description. The model inferred `precision 11, scale 2` and got
+it right (`PIC S9(09)V99` is 9 integer digits plus 2 decimals), but it said plainly that it was
+inferring: *"If a reviewer wants this beyond dispute, WS-MONTHLY-INT should be added to the
+pic_mapper fact list rather than left to be read off the PIC clause here."*
+
+It is correct, and this is the same defect class as the last one. `build_domain_entities` merges
+**copybook-sourced** fields only (ADR-0010), so `WORKING-STORAGE` fields — which `cobol_parser`
+already parses, per ADR-0011 — never reach the prompt as deterministic facts. **A `COMPUTE`'s
+target scale is precisely the kind of number that must be computed and handed over, never
+narrated**, for the same reason `pic_mapper` may not call a model: a wrong scale on a currency
+field looks exactly like a right one. Recorded as an open gap rather than fixed in this PR.
+
+**Three calls, $0.84 notional, $0 billed.** Each one found a defect the injected-fake test suite
+could not: an under-specified design, a missing target API, and a missing class of deterministic
+fact. None of that Java has been compiled yet.
+
 ## Not yet covered (honest gaps, not silently skipped)
 
 - *(corrected 2026-08-08 — this entry was stale, not merely incomplete)* This previously read

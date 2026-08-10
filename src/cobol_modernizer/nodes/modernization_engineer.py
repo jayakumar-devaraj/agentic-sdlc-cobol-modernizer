@@ -45,6 +45,7 @@ from cobol_modernizer.core.model_routing import RoutingDecision, resolve_routing
 from cobol_modernizer.core.structured_output import strip_code_fence
 from cobol_modernizer.prompts_registry_client.loader import prompt_path
 from cobol_modernizer.rendering.java_processor import render_processor
+from cobol_modernizer.rendering.target_api import render_target_api_facts
 from cobol_modernizer.tools.tenant_repo import resolve_program
 
 logger = logging.getLogger(__name__)
@@ -158,6 +159,11 @@ def build_engineer_prompt(
     `DelimiterForgeryError` is deliberately not caught here -- an unambiguous hard failure that
     must propagate, exactly as in every other prompt builder in this repo.
     """
+    # The target's helper API leads even the domain records: it is identical for every step of
+    # every program, so it is the outermost stable layer of the prefix. Both real calls so far
+    # reached for `CobolArithmetic` without having been told what was in it, and run 2 wrote a
+    # second-choice implementation it had itself named as second-choice for exactly that reason.
+    target_api = render_target_api_facts()
     domain_facts = render_domain_facts(entities)
     narration = wrap_untrusted_cobol(
         program_entry.spec_extraction.spec_markdown,
@@ -165,7 +171,7 @@ def build_engineer_prompt(
     )
     source = wrap_untrusted_cobol(cobol_source, source_label=program_entry.program_name)
     step_facts = render_step_facts(step, input_type=input_type, output_type=output_type)
-    return f"{domain_facts}\n\n{narration}\n\n{source}\n\n{step_facts}"
+    return f"{target_api}\n\n{domain_facts}\n\n{narration}\n\n{source}\n\n{step_facts}"
 
 
 def _parse_body_response(raw_response: str) -> tuple[str, list[str], str]:
