@@ -326,3 +326,32 @@ def test_emitting_a_transaction_for_a_zero_rate_fails_it(tmp_path, entry, entiti
     project = _generate_and_render(tmp_path, entry, entities, oracle, _ALWAYS_WRITES_BODY)
     result = compile_project(project, goal="verify")
     assert not result.succeeded, "a zero rate must produce no transaction record"
+
+
+def test_the_zero_rate_guard_is_not_in_the_paragraph_the_step_names():
+    """Why the first real model-authored body failed R10, pinned so it reads as design, not error.
+
+    On 2026-08-10 a real Opus 5 call wrote a body that passed **all nine arithmetic rows** --
+    truncation, both signs, the sub-cent cases, the negative zero, and both of `dailytran`'s real
+    extremes -- and failed only R10, returning a `Tran` with `tranAmt=0.00` where COBOL writes no
+    record at all.
+
+    That is not the model translating badly. `STEP.source_paragraphs` is `1300-COMPUTE-INTEREST`,
+    and **the guard is not in it**: `IF DIS-INT-RATE NOT = 0` sits in the main `PROCEDURE DIVISION`
+    loop that *calls* the paragraph. The model was shown one paragraph and translated exactly that
+    paragraph, faithfully.
+
+    So the finding is about scope: the oracle's R10 describes behaviour spanning the caller, while
+    the step design hands the generator only the callee. Either the step must name the guard's
+    paragraph or R10 belongs to whichever step owns the loop. Pinned rather than fixed by widening
+    `source_paragraphs` here, because which one is right is a `solution_architect` question and
+    inventing an answer in a test is how a design decision gets made by accident.
+    """
+    source = (FIXTURE_ROOT / "app" / "cbl" / "CBACT04C.cbl").read_text().splitlines()
+    guard = next(i for i, line in enumerate(source) if "IF DIS-INT-RATE NOT = 0" in line)
+    paragraph = next(i for i, line in enumerate(source) if line.strip().startswith("1300-COMPUTE-INTEREST."))
+
+    assert guard < paragraph, "the guard precedes the paragraph; it is in the caller"
+    assert STEP.source_paragraphs == ["1300-COMPUTE-INTEREST"]
+    # The step names the callee only, so nothing the generator was given mentions the guard.
+    assert not any("DIS-INT-RATE NOT" in line for line in source[paragraph : paragraph + 12])
