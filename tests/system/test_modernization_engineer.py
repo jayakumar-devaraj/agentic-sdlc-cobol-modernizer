@@ -163,6 +163,23 @@ def test_domain_facts_state_precision_and_scale_so_the_model_never_recomputes_th
     assert "precision 12, scale 2, signed" in facts
 
 
+def test_the_receiving_field_reaches_the_real_prompt_not_just_the_helper(
+    program_entry, entities, resolved
+):
+    """The regression guard for a fix that was never wired in.
+
+    `render_program_field_facts` was added, tested directly, and never called from
+    `build_engineer_prompt` -- a string-replacement patch that silently did not match. The
+    helper-level test below passed the whole time, because it exercised the unit rather than the
+    prompt a model actually receives. This asserts through the real builder, which is the only
+    version that can fail when the wiring is missing.
+    """
+    prompt = build_engineer_prompt(
+        STEP, entities, program_entry, resolved, input_type="A", output_type="B"
+    )
+    assert "WS-MONTHLY-INT -- BigDecimal, precision 11, scale 2, signed" in prompt
+
+
 def test_the_computes_receiving_field_reaches_the_prompt_as_fact_not_prose(resolved):
     """Gap G21, closed. WS-MONTHLY-INT sets the target scale of CBACT04C's interest COMPUTE.
 

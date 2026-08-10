@@ -23,10 +23,12 @@ applied since `guardrails.py`: COBOL is data, never instructions, comments inclu
 narration is wrapped too, exactly as `solution_architect` wraps it -- prior LLM output that got
 something past one guardrail must not arrive at the next one as instructions.
 
-**No repair-retry loop here.** Same posture as `spec_critic` and `solution_architect`: a malformed
-response raises. Step 42's self-healing loop is separately scoped and operates on *compiler*
-diagnostics, which is a different signal from a response that failed to parse -- building a second,
-miniature retry loop here would be the third time this repo declined to do exactly that.
+**This node accepts a repair, but does not loop.** `RepairContext` lets a caller say "that did not
+compile, here is what the compiler said, try again", and the prompt grows a section for it. The
+*deciding* -- whether to retry at all, and how many times -- stays in step 42's loop, because it is
+the thing that has to weigh a `build_validator` verdict and a budget. A malformed response still
+raises, exactly as in `spec_critic` and `solution_architect`: a response that failed to parse and
+code that failed to compile are different failures, and only the second is worth another attempt.
 """
 
 from __future__ import annotations
@@ -47,6 +49,7 @@ from cobol_modernizer.nodes.spec_extractor import group_field_mappings_by_source
 from cobol_modernizer.prompts_registry_client.loader import prompt_path
 from cobol_modernizer.rendering.java_processor import render_processor
 from cobol_modernizer.rendering.target_api import render_target_api_facts
+from cobol_modernizer.tools.local_compiler import CompileDiagnostic
 from cobol_modernizer.tools.tenant_repo import ResolvedProgram, resolve_program
 
 logger = logging.getLogger(__name__)
@@ -70,6 +73,20 @@ class ModernizationEngineerParseError(Exception):
     model broke its contract, the other means it wrote code that does not compile, and they have
     completely different fixes.
     """
+
+
+@dataclass(frozen=True)
+class RepairContext:
+    """A failed previous attempt, and what `build_validator` said to do about it.
+
+    Carried rather than reconstructed: the loop already holds the body it wrote and the verdict it
+    got, and re-deriving either here would be a second place for them to disagree.
+    """
+
+    previous_body: str
+    diagnostics: tuple[CompileDiagnostic, ...]
+    instruction: str
+    attempt: int
 
 
 @dataclass(frozen=True)
@@ -179,6 +196,48 @@ def render_step_facts(
     )
 
 
+def render_repair_facts(repair: RepairContext) -> str:
+    """The previous attempt and why it failed -- appended last, after the step it belongs to.
+
+    Position matters for the same reason the step facts go last: this is the *most* variable part
+    of the prompt, changing on every attempt of every step. Putting it after the step keeps the
+    cached prefix intact across a heal loop, so three attempts share everything up to the tail.
+
+    The previous body is included verbatim. Asking for a repair without showing what is being
+    repaired invites a rewrite from scratch, which throws away whatever the first attempt got right
+    and makes each attempt independent rather than cumulative.
+    """
+    lines = [
+        "",
+        f"## Repair attempt {repair.attempt}",
+        "",
+        "Your previous statements did not compile. Rewrite them.",
+        "",
+        "### What you wrote",
+        "",
+        "```java",
+        repair.previous_body.strip(),
+        "```",
+        "",
+        "### What the compiler said",
+        "",
+    ]
+    lines += [diagnostic.render() for diagnostic in repair.diagnostics]
+    lines += [
+        "",
+        "### What to change",
+        "",
+        repair.instruction,
+        "",
+        (
+            "Return the same JSON object as before, with the corrected statements. Change only "
+            "what the diagnostics require -- a rewrite that also alters working code makes the "
+            "next failure harder to attribute."
+        ),
+    ]
+    return "\n".join(lines)
+
+
 def build_engineer_prompt(
     step: BatchStepDesign,
     entities: list[DomainEntity],
@@ -187,6 +246,7 @@ def build_engineer_prompt(
     *,
     input_type: str,
     output_type: str,
+    repair: RepairContext | None = None,
 ) -> str:
     """Stable content first, the per-step instruction last.
 
@@ -213,9 +273,16 @@ def build_engineer_prompt(
         program_entry.spec_extraction.spec_markdown,
         source_label=f"{program_entry.program_name}-spec",
     )
+    program_facts = render_program_field_facts(resolved)
     source = wrap_untrusted_cobol(resolved.source_text, source_label=program_entry.program_name)
     step_facts = render_step_facts(step, input_type=input_type, output_type=output_type)
-    return f"{target_api}\n\n{domain_facts}\n\n{narration}\n\n{source}\n\n{step_facts}"
+    prompt = (
+        f"{target_api}\n\n{domain_facts}\n\n{program_facts}\n\n"
+        f"{narration}\n\n{source}\n\n{step_facts}"
+    )
+    if repair is not None:
+        prompt += "\n" + render_repair_facts(repair)
+    return prompt
 
 
 def _parse_body_response(raw_response: str) -> tuple[str, list[str], str]:
@@ -276,6 +343,7 @@ def generate_processor(
     tier: ComplexityTier = ComplexityTier.COMPLEX,
     model_routing_config: Path | None = None,
     author: AuthorFn = _default_author,
+    repair: RepairContext | None = None,
 ) -> GeneratedProcessor:
     """Generate one `ItemProcessor` for `step`, rendered around a model-authored body.
 
@@ -313,6 +381,7 @@ def generate_processor(
         resolved,
         input_type=input_type,
         output_type=output_type,
+        repair=repair,
     )
 
     logger.info(
