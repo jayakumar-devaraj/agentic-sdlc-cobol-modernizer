@@ -1,0 +1,119 @@
+{
+  "_comment": [
+    "Hand-computed expected values for CBACT04C's 1300-COMPUTE-INTEREST, for step 45's",
+    "equivalence test. Read interest-oracle.md beside this file before changing anything here:",
+    "it states what these numbers are evidence of and what they are not.",
+    "",
+    "Every `expected` below is a literal derived by hand from the COBOL, not produced by running",
+    "an implementation. `derivation` shows the arithmetic so a reviewer can check a row without",
+    "executing anything. `rejects` records what a named wrong implementation would produce, so",
+    "each row's discriminating power is stated rather than assumed."
+  ],
+  "source": {
+    "program": "CBACT04C.cbl",
+    "paragraph": "1300-COMPUTE-INTEREST",
+    "statement": "COMPUTE WS-MONTHLY-INT = ( TRAN-CAT-BAL * DIS-INT-RATE) / 1200",
+    "guard": "IF DIS-INT-RATE NOT = 0",
+    "fields": {
+      "TRAN-CAT-BAL": {"pic": "PIC S9(09)V99", "precision": 11, "scale": 2, "copybook": "CVTRA01Y"},
+      "DIS-INT-RATE": {"pic": "PIC S9(04)V99", "precision": 6, "scale": 2, "copybook": "CVTRA02Y"},
+      "WS-MONTHLY-INT": {"pic": "PIC S9(09)V99", "precision": 11, "scale": 2, "storage": "WORKING-STORAGE"}
+    },
+    "semantics": "COMPUTE without ROUNDED truncates toward zero to the receiving field's scale."
+  },
+  "rows": [
+    {
+      "id": "R1",
+      "balance": "194.00",
+      "rate": "15.00",
+      "expected": "2.42",
+      "derivation": "194.00 * 15.00 = 2910.0000; 2910 / 1200 = 2.425 exactly; truncate to 2 -> 2.42",
+      "why": "A real ACCT-CURR-BAL from acctdata.txt against a real discgrp rate. The exact quotient ends in a 5, so truncation and rounding disagree.",
+      "rejects": {"HALF_UP": "2.43"}
+    },
+    {
+      "id": "R2",
+      "balance": "-194.00",
+      "rate": "15.00",
+      "expected": "-2.42",
+      "derivation": "-194.00 * 15.00 = -2910.0000; -2910 / 1200 = -2.425 exactly; truncate toward zero -> -2.42",
+      "why": "The single most discriminating row: a negative exact-tie separates all three plausible modes at once.",
+      "rejects": {"HALF_UP": "-2.43", "FLOOR": "-2.43"}
+    },
+    {
+      "id": "R3",
+      "balance": "100.00",
+      "rate": "25.00",
+      "expected": "2.08",
+      "derivation": "100.00 * 25.00 = 2500.0000; 2500 / 1200 = 25/12 = 2.0833... (non-terminating); truncate to 2 -> 2.08",
+      "why": "A non-terminating quotient. BigDecimal.divide without a scale and rounding mode throws ArithmeticException here, so this row catches a division that omits them.",
+      "rejects": {"unscaled_divide": "ArithmeticException"}
+    },
+    {
+      "id": "R4",
+      "balance": "-100.00",
+      "rate": "25.00",
+      "expected": "-2.08",
+      "derivation": "-2500 / 1200 = -25/12 = -2.0833...; truncate toward zero -> -2.08",
+      "why": "Non-terminating and negative: FLOOR keeps going away from zero where COBOL stops.",
+      "rejects": {"FLOOR": "-2.09"}
+    },
+    {
+      "id": "R5",
+      "balance": "0.50",
+      "rate": "15.00",
+      "expected": "0.00",
+      "derivation": "0.50 * 15.00 = 7.5000; 7.5 / 1200 = 0.00625; truncate to 2 -> 0.00",
+      "why": "A result smaller than one cent. COBOL keeps nothing; a rounding implementation invents a cent.",
+      "rejects": {"HALF_UP": "0.01"}
+    },
+    {
+      "id": "R6",
+      "balance": "-0.50",
+      "rate": "15.00",
+      "expected": "0.00",
+      "derivation": "-7.5 / 1200 = -0.00625; truncate toward zero -> -0.00, whose numeric value is 0.00",
+      "why": "The sign-of-zero row. See interest-oracle.md's caveat: the value is zero, but COBOL's signed field can carry a negative zero and Java's BigDecimal cannot.",
+      "rejects": {"HALF_UP": "-0.01", "FLOOR": "-0.01"},
+      "compare": "numeric"
+    },
+    {
+      "id": "R7",
+      "balance": "999.77",
+      "rate": "25.00",
+      "expected": "20.82",
+      "derivation": "999.77 * 25.00 = 24994.2500; 24994.25 / 1200 = 20.8285416... ; truncate to 2 -> 20.82",
+      "why": "dailytran.txt's largest amount, as a balance a single posting could produce. Third decimal is 8, so rounding disagrees.",
+      "rejects": {"HALF_UP": "20.83"}
+    },
+    {
+      "id": "R8",
+      "balance": "-998.33",
+      "rate": "15.00",
+      "expected": "-12.47",
+      "derivation": "-998.33 * 15.00 = -14974.9500; -14974.95 / 1200 = -12.479125; truncate toward zero -> -12.47",
+      "why": "dailytran.txt's smallest amount. Negative and non-tie, so it separates truncation from both alternatives without relying on an exact .5.",
+      "rejects": {"HALF_UP": "-12.48", "FLOOR": "-12.48"}
+    },
+    {
+      "id": "R9",
+      "balance": "0.00",
+      "rate": "15.00",
+      "expected": "0.00",
+      "derivation": "0.00 * 15.00 = 0; 0 / 1200 = 0; truncate to 2 -> 0.00",
+      "why": "A zero balance with a live rate still runs the COMPUTE and still writes a transaction. Distinguishes 'the balance is zero' from R10's 'the rate is zero', which are different control paths.",
+      "rejects": {}
+    }
+  ],
+  "not_computed": [
+    {
+      "id": "R10",
+      "balance": "194.00",
+      "rate": "0.00",
+      "behaviour": "1300-COMPUTE-INTEREST is not performed at all",
+      "derivation": "The guard is `IF DIS-INT-RATE NOT = 0`, so with a zero rate the paragraph never runs: WS-MONTHLY-INT is not assigned, nothing is added to WS-TOTAL-INT, and 1300-B-WRITE-TX writes no transaction record.",
+      "why": "Recorded as behaviour rather than as an expected value because `0.00` is the wrong way to write it. An implementation returning 0.00 agrees numerically and is still wrong: it emits a transaction COBOL does not. A zero rate is real -- discgrp.txt contains 0.00.",
+      "expected": null
+    }
+  ]
+}

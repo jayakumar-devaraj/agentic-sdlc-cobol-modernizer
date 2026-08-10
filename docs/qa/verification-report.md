@@ -1551,10 +1551,62 @@ check that cannot fail, arriving by the route the first four came by.
 
 **What this does and does not unblock.** It supplies step 45's *input* side from real data and
 removes the fabrication question for it. It does not supply an *oracle*: expected outputs for
-`CBACT04C` still have to come from somewhere other than this repo's own implementation, and nothing
-here decides that.
+`CBACT04C` still have to come from somewhere other than this repo's own implementation. *(Decided
+in ADR-0021 — see the next section.)*
 
 6 tests, module still at **100%**.
+
+### The interest oracle — a hand-computed expected table (ADR-0021)
+
+**What was verified, and how.** Nine expected values for `1300-COMPUTE-INTEREST`, each derived by
+hand from `COMPUTE WS-MONTHLY-INT = ( TRAN-CAT-BAL * DIS-INT-RATE) / 1200` and committed as a
+literal with its arithmetic beside it, in `tests/fixtures/golden/CBACT04C/interest-oracle.json`.
+The receiving field `WS-MONTHLY-INT` is `PIC S9(09)V99`, so the target scale is 2 and the rule is
+truncation toward zero.
+
+**The table is built to fail, and that was checked rather than assumed.** Mutating `R2`'s expected
+value from `-2.42` to the rounded answer `-2.43` fails **three** tests: the literal guard, the
+independent recompute, and the teeth check — which noticed that R2's *rejected* value had become
+its expected one, i.e. that the row had stopped discriminating. Command:
+
+```
+python -m pytest tests/system/test_interest_oracle.py -q
+→ 3 failed, 9 passed   (with R2 mutated)
+→ 12 passed            (restored)
+```
+
+**What each row is for.** `R2` (`-194.00` × `15.00`) is the one that earns its place: a negative
+exact tie where truncation gives `-2.42`, rounding gives `-2.43` and floor gives `-2.43`, so one
+input separates all three modes. `R3` is a non-terminating quotient (`25/12`), which is where a
+`BigDecimal.divide` missing its scale and rounding mode throws. `R5`/`R6` are sub-cent results a
+rounding implementation would inflate into a cent.
+
+**`R10` is deliberately not an expected value.** `IF DIS-INT-RATE NOT = 0` skips the paragraph
+entirely, so a zero rate computes no interest, accumulates nothing, and **writes no transaction
+record**. An implementation returning `0.00` agrees numerically and is still wrong. It is held
+outside the `rows` list so a harness reading that list cannot consume it by accident, and a test
+asserts it stays there.
+
+**Provenance is checked, not asserted.** `R1`'s `194.00` is a real `ACCT-CURR-BAL` in
+`acctdata.txt` (added to the fixture here, blob `50f88936…` matching the remote); `R7`/`R8` are
+`dailytran.txt`'s real maximum and minimum; every rate used is one that really occurs in
+`discgrp.txt`. Each is a test, so the table cannot drift away from the data it claims to come from.
+
+**Two divergences recorded rather than asserted**, because asserting either would require the
+oracle we do not have. Overflow is reachable — a maximal balance times a maximal rate over 1200
+exceeds `WS-MONTHLY-INT` — and COBOL discards high-order digits silently where
+`CobolArithmetic.requireFits` throws by deliberate design, so no row can be both faithful and
+desirable and none exists. And `-0.00625` truncates to a negative zero a COBOL signed field can
+carry and `BigDecimal` cannot; confirmed against a real JDK 25 that Java yields `0.00`, so `R6` is
+marked to compare numerically.
+
+**The honest limit, stated here as well as in the ADR.** This covers one `COMPUTE`. It says nothing
+about the rate lookup, the `'DEFAULT'` fallback, the accumulation into `WS-TOTAL-INT`,
+`1050-UPDATE-ACCOUNT`, or the transaction record's contents — and it cannot discover a semantic
+nobody anticipated, which is what a real COBOL runtime would be for. **A green step 45 means the
+interest arithmetic matches, and no more.**
+
+12 tests.
 
 ## Not yet covered (honest gaps, not silently skipped)
 
