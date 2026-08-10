@@ -88,6 +88,20 @@ class BatchStepDesign(BaseModel):
     #: wrong, the one failure mode this repo's whole deterministic core exists to prevent.
     input_type: str
     output_type: str
+    #: The condition under which this step produces output at all, verbatim from the COBOL
+    #: (ADR-0022). `null` states that the step is unconditional -- and it is a **required key** with
+    #: a nullable value for the same reason `modernization_engineer`'s `notes` is mandatory: a
+    #: design with nothing to declare must say so, so that silence is a statement rather than an
+    #: omission. Defaulting it would make "this step is unconditional" and "nobody considered it"
+    #: identical, which is precisely how the defect this field exists for got through.
+    #:
+    #: Found by step 45's first real run (audit G25). `CBACT04C` guards its interest calculation
+    #: with `IF DIS-INT-RATE NOT = 0` -- and that guard is not in `1300-COMPUTE-INTEREST`, it is in
+    #: the **unnamed main body** that performs it. So it could not be added to `source_paragraphs`:
+    #: there is no paragraph to name, and naming `PROCEDURE DIVISION` would scope the step to the
+    #: file opens and the account update too. A model given the paragraph translated it faithfully
+    #: and still produced a processor that emits a transaction record COBOL never writes.
+    guard_condition: str | None
 
 
 class CompositeComponent(BaseModel):
@@ -189,7 +203,7 @@ class UnifiedDesign(BaseModel):
 
 #: design.json's own envelope version -- bump this on any breaking change to DesignDocument's
 #: shape, e.g. once solution_architect gives `unified_design` a real type.
-SCHEMA_VERSION = "2.0.0"
+SCHEMA_VERSION = "3.0.0"
 
 #: A rule_confidence entry scoring below this becomes a `low_confidence_rule` GateItem. See the
 #: module docstring -- a tentative default, not a benchmarked number.

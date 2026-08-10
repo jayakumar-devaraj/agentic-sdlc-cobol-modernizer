@@ -39,7 +39,7 @@ PROCESSOR = BatchStepDesign(
     output_type="TranCatBal",
     role="processor",
     description="Computes monthly interest.",
-)
+        guard_condition=None)
 READER = BatchStepDesign(
     step_name="readBalances",
     source_paragraphs=["1000-TCATBALF-GET-NEXT"],
@@ -47,7 +47,7 @@ READER = BatchStepDesign(
     output_type="TranCatBal",
     role="reader",
     description="Reads balances.",
-)
+        guard_condition=None)
 
 
 def _author(body: str = "return item;"):
@@ -134,7 +134,7 @@ def test_a_step_naming_a_type_that_does_not_exist_is_blocked(tmp_path, entry):
         description="Computes monthly interest.",
         input_type="NoSuchType",
         output_type="TranCatBal",
-    )
+        guard_condition=None)
     design = _design_json(tmp_path, entry, unresolvable)
     outcome = run_generate(design, FIXTURE_ROOT, tmp_path / "target")
 
@@ -205,7 +205,7 @@ def test_generate_emits_one_parseable_json_object_with_real_counts(tmp_path, ent
     unresolvable = BatchStepDesign(
         step_name="computeMonthlyInterest", source_paragraphs=["1300-COMPUTE-INTEREST"],
         role="processor", description="d", input_type="NoSuchType", output_type="TranCatBal",
-    )
+        guard_condition=None)
     design = _design_json(tmp_path, entry, unresolvable, READER)
     exit_code = cli.main([
         "generate", "--design", str(design), "--tenant-repo", str(FIXTURE_ROOT),
@@ -278,7 +278,7 @@ def _design_with_composite(tmp_path: Path, entry: ProgramDesignEntry) -> Path:
         description="Computes interest from a balance and its resolved account.",
         input_type="TranCatBalWithAccount",
         output_type="TranCatBalWithAccount",
-    )
+        guard_condition=None)
     document = build_design_document(
         [entry],
         unified_design=UnifiedDesign(

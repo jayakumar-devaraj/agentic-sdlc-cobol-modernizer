@@ -311,7 +311,7 @@ def _parse_unified_design_response(
                 step,
                 {
                     "step_name", "source_paragraphs", "role", "description",
-                    "input_type", "output_type",
+                    "input_type", "output_type", "guard_condition",
                 },
                 "batch step",
             )
@@ -337,6 +337,7 @@ def _parse_unified_design_response(
                     description=step["description"],
                     input_type=step["input_type"],
                     output_type=step["output_type"],
+                    guard_condition=step["guard_condition"],
                 )
             )
 

@@ -57,7 +57,7 @@ STEP = BatchStepDesign(
     output_type="TranCatBal",
     role="processor",
     description="Computes monthly interest for one transaction-category balance.",
-)
+        guard_condition=None)
 
 GOOD_BODY = (
     'BigDecimal monthlyInterest = CobolArithmetic.divide(\n'
@@ -223,6 +223,37 @@ def test_a_composites_accessors_reach_the_real_prompt(program_entry, entities, r
     assert "no JavaBean getters" in prompt
 
 
+def test_a_declared_guard_reaches_the_real_prompt_with_its_null_instruction(
+    program_entry, entities, resolved
+):
+    """ADR-0022, closing G25 -- asserted through the real builder, per the G21 lesson.
+
+    The guard that decides whether a paragraph runs is usually not *in* that paragraph. A model
+    told only which paragraph to translate translates it unconditionally and faithfully, which is a
+    processor emitting records the COBOL never writes -- a wrong program that compiles and passes
+    every arithmetic check. The prompt must therefore carry both the condition and what to do when
+    it does not hold.
+    """
+    guarded = STEP.model_copy(update={"guard_condition": "IF DIS-INT-RATE NOT = 0"})
+    prompt = build_engineer_prompt(
+        guarded, entities, program_entry, resolved, input_type="A", output_type="B"
+    )
+
+    assert "IF DIS-INT-RATE NOT = 0" in prompt
+    assert "return `null`" in prompt
+
+
+def test_an_unguarded_step_says_so_rather_than_saying_nothing(program_entry, entities, resolved):
+    # `guard_condition=None` is a statement, not an absence -- the same reason `notes` is mandatory.
+    # A prompt silent about the guard makes "unconditional" and "nobody checked" identical, which
+    # is how the defect this field exists for got through in the first place.
+    prompt = build_engineer_prompt(
+        STEP, entities, program_entry, resolved, input_type="A", output_type="B"
+    )
+    assert "This step is unconditional" in prompt
+    assert "return `null`" not in prompt
+
+
 def test_a_prompt_without_composites_is_unchanged(program_entry, entities, resolved):
     # Most steps take a plain entity. The composite section must not appear then, or every prompt
     # pays for a heading that says nothing -- and the shared prefix is the thing caching depends on.
@@ -291,7 +322,7 @@ def test_everything_shared_across_steps_is_a_genuine_prefix(program_entry, entit
         output_type="TranCatBal",
         role="writer",
         description="Writes the computed interest transaction.",
-    )
+        guard_condition=None)
     first = build_engineer_prompt(
         STEP, entities, program_entry, resolved, input_type="A", output_type="B"
     )
@@ -413,8 +444,8 @@ def test_no_notes_is_an_empty_string_not_a_missing_field(program_entry, entities
 )
 def test_class_names_are_derived_mechanically(step_name, expected):
     step = BatchStepDesign(
-        step_name=step_name, source_paragraphs=[], input_type="TranCatBal", output_type="TranCatBal", role="processor", description="d"
-    )
+        step_name=step_name, source_paragraphs=[], input_type="TranCatBal", output_type="TranCatBal", role="processor", description="d",
+        guard_condition=None)
     assert processor_class_name(step) == expected
 
 
@@ -434,7 +465,7 @@ def test_a_step_name_java_cannot_accept_fails_loudly_rather_than_being_mangled(
         output_type="TranCatBal",
         role="processor",
         description="d",
-    )
+        guard_condition=None)
     with pytest.raises(UnrenderableJavaNameError, match="not a legal Java identifier"):
         generate_processor(
             FIXTURE_ROOT,

@@ -243,7 +243,7 @@ def test_design_document_carries_a_real_typed_unified_design(golden_extraction):
                         output_type="TranCatBal",
                         role="reader",
                         description="Reads each transaction category balance record.",
-                    )
+        guard_condition=None)
                 ],
             )
         ],
@@ -363,7 +363,7 @@ def test_unresolvable_names_are_reported_so_a_design_fails_before_the_gate():
                     BatchStepDesign(
                         step_name="s", source_paragraphs=[], role="processor", description="d",
                         input_type="Ghost", output_type="AlsoGhost",
-                    )
+        guard_condition=None)
                 ],
             )
         ],

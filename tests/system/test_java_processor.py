@@ -31,7 +31,7 @@ STEP = BatchStepDesign(
     output_type="TranCatBal",
     role="processor",
     description="Computes monthly interest for one transaction-category balance.",
-)
+        guard_condition=None)
 
 BODY = """
 BigDecimal monthlyInterest = CobolArithmetic.divide(
@@ -109,8 +109,8 @@ def test_the_source_paragraphs_and_model_are_recorded_in_the_file():
 
 def test_a_step_with_no_recorded_paragraphs_says_so_rather_than_rendering_an_empty_list():
     bare = BatchStepDesign(
-        step_name="passThrough", source_paragraphs=[], input_type="TranCatBal", output_type="TranCatBal", role="processor", description="d"
-    )
+        step_name="passThrough", source_paragraphs=[], input_type="TranCatBal", output_type="TranCatBal", role="processor", description="d",
+        guard_condition=None)
     source = render_processor(
         bare,
         package=PACKAGE,

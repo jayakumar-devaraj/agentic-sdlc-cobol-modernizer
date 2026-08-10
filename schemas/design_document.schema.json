@@ -42,6 +42,17 @@
           "title": "Description",
           "type": "string"
         },
+        "guard_condition": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Guard Condition"
+        },
         "input_type": {
           "title": "Input Type",
           "type": "string"
@@ -78,7 +89,8 @@
         "role",
         "description",
         "input_type",
-        "output_type"
+        "output_type",
+        "guard_condition"
       ],
       "title": "BatchStepDesign",
       "type": "object"
@@ -768,7 +780,7 @@
       "type": "array"
     },
     "schema_version": {
-      "default": "2.0.0",
+      "default": "3.0.0",
       "title": "Schema Version",
       "type": "string"
     },

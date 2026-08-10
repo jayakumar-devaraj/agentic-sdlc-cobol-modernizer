@@ -41,7 +41,7 @@ STEP = BatchStepDesign(
     output_type="TranCatBal",
     role="processor",
     description="Returns the input unchanged.",
-)
+        guard_condition=None)
 
 
 def _render(body: str, imports: tuple[str, ...] = ()) -> str:

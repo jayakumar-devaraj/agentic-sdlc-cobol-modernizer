@@ -222,16 +222,32 @@ def render_step_facts(
     step: BatchStepDesign, *, input_type: str, output_type: str
 ) -> str:
     """The one part of the prompt that changes per step -- so it goes last, not first."""
-    return "\n".join(
-        [
-            "## The step you are implementing",
+    lines = [
+        "## The step you are implementing",
+        "",
+        f"- Step: {step.step_name} ({step.role})",
+        f"- Description: {step.description}",
+        f"- Source COBOL paragraph(s): {', '.join(step.source_paragraphs) or '(none recorded)'}",
+        f"- Write the body of: {output_type} process({input_type} item)",
+    ]
+
+    # ADR-0022, gap G25. The guard that decides whether a paragraph runs is often not *in* that
+    # paragraph -- `CBACT04C` performs `1300-COMPUTE-INTEREST` under `IF DIS-INT-RATE NOT = 0` from
+    # its unnamed main body. A model told only which paragraph to translate will translate it
+    # faithfully and unconditionally, which is a processor that emits a record COBOL never writes.
+    # The `null` branch is stated too: a guard nobody mentioned and a step with no guard must not
+    # look the same from inside the prompt.
+    if step.guard_condition:
+        lines += [
             "",
-            f"- Step: {step.step_name} ({step.role})",
-            f"- Description: {step.description}",
-            f"- Source COBOL paragraph(s): {', '.join(step.source_paragraphs) or '(none recorded)'}",
-            f"- Write the body of: {output_type} process({input_type} item)",
+            f"- **This step is guarded**: the COBOL performs it only when `{step.guard_condition}`.",
+            "  Your body must apply that condition itself. When it does not hold, **return `null`**",
+            "  -- an `ItemProcessor` returning null filters the item, which is how Spring Batch says",
+            "  \"no output record\", and is the faithful translation of a paragraph never performed.",
         ]
-    )
+    else:
+        lines += ["", "- This step is unconditional: the COBOL performs it for every input record."]
+    return "\n".join(lines)
 
 
 def render_repair_facts(repair: RepairContext) -> str:
