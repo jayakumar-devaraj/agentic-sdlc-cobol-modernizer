@@ -37,6 +37,16 @@ jobs:
         with:
           python-version: "3.12"
 
+      # `tools/local_compiler.py` drives a real Maven build, and its tests run one. Giving this job
+      # a JDK is what keeps them from skipping here forever -- the same reasoning `template-build`
+      # already applies to Docker: a test that skips in CI is decoration, not a gate. The version
+      # matches the template's pin, since the thing under test is that project's build.
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "25"
+          cache: maven
+
       - name: Install dependencies
         run: pip install -e ".[dev]"
 
