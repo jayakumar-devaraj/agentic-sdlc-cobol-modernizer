@@ -13,8 +13,8 @@ was never treated as proof on its own.
 pytest --cov=cobol_modernizer --cov-report=term-missing --cov-fail-under=90
 ```
 
-As of this report: **478 tests passed (4 skipped — the opt-in live-CLI tests), 99.11% overall
-coverage** (14 of 1,577 statements uncovered). These are **CI's numbers**, from the run on the
+As of this report: **487 tests passed (4 skipped — the opt-in live-CLI tests), 99.13% overall
+coverage** (14 of 1,611 statements uncovered). These are **CI's numbers**, from the run on the
 change that added this line — not a local figure. Locally the Postgres-backed
 `tools/knowledge_store.py` suite skips without a running Docker daemon, which is why the
 authoritative count is taken from CI, where a real service container makes it skip nothing.
