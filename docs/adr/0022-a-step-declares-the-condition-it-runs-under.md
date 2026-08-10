@@ -85,9 +85,16 @@ get right. The guard is LLM-authored like the rest of `batch_jobs` (ADR-0010 dec
 a judgment that can be wrong — but a *stated* judgment a reviewer can check against the COBOL at the
 gate, which is strictly better than an omission nobody can see.
 
-**Not claimed.** This ADR does not make the equivalence test pass. Whether a model, given the guard,
-writes the `null` branch is a question only a real run answers, and it had not been run when this
-was written. The change is that the fact now reaches the generator at all.
+**Verified** (added after the first paragraph above was written, which said this had not been run).
+With the guard declared, `claude-opus-5` compiled on attempt 1 and wrote the branch — commenting it
+*"Guard from the caller of 1300-COMPUTE-INTEREST"* — and the equivalence test passes **10 of 10**,
+R10 included. Stating a guard in the prompt is sufficient; the model did not need the caller's
+source, which it already had, only the declaration that the condition was its responsibility.
+
+**Still not claimed:** that a program round-trips. This verifies one `COMPUTE` and the condition it
+runs under. `CBACT04C` is also a rate lookup, a `'DEFAULT'` fallback, a per-account accumulation, an
+account update and a transaction write, and the same run flagged three of those as work no step
+owns. The round-trip count stays `0 of 4`.
 
 **The pattern worth carrying.** This is the third instance of one defect class — *the generator was
 never shown something this repo knows*. PR #28 was `CobolArithmetic`'s API; PR #33 was
