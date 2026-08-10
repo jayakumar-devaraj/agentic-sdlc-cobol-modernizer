@@ -23,60 +23,16 @@ for now, and this is that level, in the generated file itself rather than only i
 from __future__ import annotations
 
 import logging
-import re
 
 from cobol_modernizer.core.contracts import DomainEntity, DomainField
+from cobol_modernizer.rendering.java_names import (
+    UnrenderableJavaNameError,
+    require_java_identifier,
+)
 
 logger = logging.getLogger(__name__)
 
-#: Every Java reserved word, plus the three literals that are not technically keywords but are
-#: equally illegal as identifiers. `pic_mapper`/`solution_architect` transform a COBOL name
-#: mechanically, and nothing in that transform knows what Java forbids -- a COBOL field named
-#: `CLASS` or `NEW-COUNT`'s sibling `NEW` becomes `class`/`new` and would not compile. Rendering
-#: it anyway would produce a file that fails at `javac` with an error pointing at generated code
-#: rather than at the real cause, so this is checked here and raised with the COBOL name attached.
-_JAVA_RESERVED = frozenset(
-    (
-        "abstract", "assert", "boolean", "break", "byte", "case", "catch", "char", "class",
-        "const", "continue", "default", "do", "double", "else", "enum", "extends", "final",
-        "finally", "float", "for", "goto", "if", "implements", "import", "instanceof", "int",
-        "interface", "long", "native", "new", "package", "private", "protected", "public",
-        "return", "short", "static", "strictfp", "super", "switch", "synchronized", "this",
-        "throw", "throws", "transient", "try", "void", "volatile", "while",
-        # `true`/`false`/`null` are literals rather than keywords in the JLS, but are equally
-        # illegal as identifiers, so they belong in the same check.
-        "true", "false", "null",
-    )
-)
-
-#: A legal Java identifier, restricted to the ASCII subset a mechanical COBOL-name transform can
-#: actually produce. Deliberately narrower than the JLS (which allows most Unicode letters): a name
-#: outside this set did not come from the transform this renderer is fed by, and silently accepting
-#: it would mean rendering something no one checked.
-_JAVA_IDENTIFIER = re.compile(r"^[A-Za-z_$][A-Za-z0-9_$]*$")
-
-
-class UnrenderableJavaNameError(Exception):
-    """A `DomainEntity`/`DomainField` name cannot be rendered as a legal Java identifier.
-
-    Joins the `UnsupportedPicConstructError`/`UnsupportedCopyConstructError` family: an unambiguous
-    case that must fail loudly rather than be guessed at or silently mangled. Renaming the field to
-    dodge the collision (`class` -> `class_`) is exactly the kind of quiet fix that makes generated
-    code stop matching the COBOL it claims to implement, so the caller is told instead.
-    """
-
-
-def _require_java_identifier(name: str, *, cobol_name: str, kind: str) -> str:
-    """Return `name` unchanged, or raise if Java could not accept it as an identifier."""
-    if not _JAVA_IDENTIFIER.match(name):
-        raise UnrenderableJavaNameError(
-            f"{kind} {name!r} (from COBOL {cobol_name!r}) is not a legal Java identifier"
-        )
-    if name in _JAVA_RESERVED:
-        raise UnrenderableJavaNameError(
-            f"{kind} {name!r} (from COBOL {cobol_name!r}) is a Java reserved word"
-        )
-    return name
+__all__ = ["UnrenderableJavaNameError", "render_record"]
 
 
 def _component_doc(field: DomainField) -> str:
@@ -95,12 +51,12 @@ def render_record(entity: DomainEntity, *, package: str) -> str:
     output reviewable once rather than per-run. Raises `UnrenderableJavaNameError` rather than
     emitting a file that will not compile.
     """
-    class_name = _require_java_identifier(
-        entity.name, cobol_name=entity.source_copybook, kind="Entity name"
+    class_name = require_java_identifier(
+        entity.name, source_name=entity.source_copybook, kind="Entity name"
     )
     for field in entity.fields:
-        _require_java_identifier(
-            field.java_field_name, cobol_name=field.cobol_field_name, kind="Field name"
+        require_java_identifier(
+            field.java_field_name, source_name=field.cobol_field_name, kind="Field name"
         )
 
     lines: list[str] = [f"package {package};", ""]
