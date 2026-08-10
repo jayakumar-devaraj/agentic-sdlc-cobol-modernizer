@@ -13,7 +13,7 @@ was never treated as proof on its own.
 pytest --cov=cobol_modernizer --cov-report=term-missing --cov-fail-under=90
 ```
 
-As of this report: **557 tests passed (5 skipped — the opt-in live-CLI tests), 99.03% overall
+As of this report: **581 tests passed (4 skipped — the opt-in live-CLI tests), 99.03% overall
 coverage** (17 of 1,748 statements uncovered). These are **CI's numbers**, from the run on the
 change that added this line — not a local figure. Locally the Postgres-backed
 `tools/knowledge_store.py` suite skips without a running Docker daemon, which is why the
@@ -1441,6 +1441,14 @@ they do not exist as entities. There was nothing to derive from, so composites a
    data loader that it needs.
 3. **The real `solution_architect` output predates this contract**, so a fresh `design` run is
    needed before any real design.json carries step types.
+
+**A coverage regression caught before merge, worth recording as a pattern.** CI's first run on this
+branch reported 96.6% against the usual 99% -- and every uncovered line was ADR-0020's own code:
+`render_composite` at **69%**, plus the resolution helpers and the architect's composite parsing.
+The round-trip test used a plain entity, so **no composite was ever constructed in a test**: the
+feature the ADR exists for was the one part unverified, behind a green suite and a passing
+`--cov-fail-under=90`. Closed with a step whose input type *is* a composite, generated and compiled
+for real. `contracts.py`, `solution_architect.py` and `java_records.py` are now at 100%.
 
 ## Not yet covered (honest gaps, not silently skipped)
 

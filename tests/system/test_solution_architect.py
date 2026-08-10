@@ -358,3 +358,94 @@ def test_derive_entity_name_falls_back_to_the_copybook_name_with_no_01_level_rec
     # Defensive fallback -- every real copybook that contributes a mapped field has an 01-level
     # record by construction (pic_mapper needs a level-numbered field to map anything at all).
     assert _derive_entity_name("CVFAKE01Y", "no record header in this text") == "Cvfake01y"
+
+
+# --- Composites and step types (ADR-0020) ---------------------------------------------------------
+
+
+def _architect_with(composites, steps_extra=None, program="CBACT04C"):
+    """A fake architect emitting one job for `program` with the given composites and step fields."""
+    def architect(routing, system_prompt, user_content):
+        step = {
+            "step_name": "s", "source_paragraphs": [], "role": "processor", "description": "d",
+            "input_type": "Account", "output_type": "Account",
+        }
+        step.update(steps_extra or {})
+        return json.dumps({
+            "composite_types": composites,
+            "batch_jobs": [{
+                "program_name": program, "job_name": "j", "domain_entities": [], "steps": [step],
+            }],
+            "rest_endpoints": [],
+        })
+    return architect
+
+
+def test_a_declared_composite_survives_into_the_unified_design(all_program_entries):
+    entry = next(e for e in all_program_entries if e.program_name == "CBACT04C")
+    composites = [{
+        "name": "AccountWithXref",
+        "components": [{"field_name": "account", "entity_name": "Account"}],
+    }]
+    design = design_solution(FIXTURE_ROOT, [entry], architect=_architect_with(composites))
+
+    assert [c.name for c in design.composite_types] == ["AccountWithXref"]
+    assert design.composite_types[0].components[0].entity_name == "Account"
+
+
+def test_a_step_may_be_typed_by_a_composite(all_program_entries):
+    entry = next(e for e in all_program_entries if e.program_name == "CBACT04C")
+    composites = [{
+        "name": "AccountWithXref",
+        "components": [{"field_name": "account", "entity_name": "Account"}],
+    }]
+    design = design_solution(
+        FIXTURE_ROOT, [entry],
+        architect=_architect_with(composites, {"input_type": "AccountWithXref"}),
+    )
+    assert design.batch_jobs[0].steps[0].input_type == "AccountWithXref"
+
+
+def test_a_composite_referencing_an_unknown_entity_is_rejected(all_program_entries):
+    entry = next(e for e in all_program_entries if e.program_name == "CBACT04C")
+    composites = [{
+        "name": "Bogus", "components": [{"field_name": "x", "entity_name": "NoSuchEntity"}],
+    }]
+    with pytest.raises(SolutionArchitectParseError, match="unknown domain entity"):
+        design_solution(FIXTURE_ROOT, [entry], architect=_architect_with(composites))
+
+
+def test_a_step_type_resolving_to_nothing_is_rejected_before_the_gate(all_program_entries):
+    # ADR-0020 decision 5: a design that cannot be generated from must fail where it is produced,
+    # not three layers down in `generate` after a human has already approved it.
+    entry = next(e for e in all_program_entries if e.program_name == "CBACT04C")
+    with pytest.raises(SolutionArchitectParseError, match="neither a domain entity nor"):
+        design_solution(
+            FIXTURE_ROOT, [entry], architect=_architect_with([], {"output_type": "Ghost"})
+        )
+
+
+def test_a_step_missing_its_types_entirely_is_rejected(all_program_entries):
+    entry = next(e for e in all_program_entries if e.program_name == "CBACT04C")
+
+    def architect(routing, system_prompt, user_content):
+        return json.dumps({
+            "batch_jobs": [{
+                "program_name": "CBACT04C", "job_name": "j", "domain_entities": [],
+                "steps": [{
+                    "step_name": "s", "source_paragraphs": [], "role": "processor",
+                    "description": "d",
+                }],
+            }],
+            "rest_endpoints": [],
+        })
+
+    with pytest.raises(SolutionArchitectParseError, match="missing required fields"):
+        design_solution(FIXTURE_ROOT, [entry], architect=architect)
+
+
+def test_composites_are_optional(all_program_entries):
+    # A design whose steps all operate on plain entities needs none.
+    entry = next(e for e in all_program_entries if e.program_name == "CBACT04C")
+    design = design_solution(FIXTURE_ROOT, [entry], architect=_architect_with([]))
+    assert design.composite_types == []

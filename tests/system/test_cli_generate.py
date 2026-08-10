@@ -17,6 +17,8 @@ from cobol_modernizer import cli
 from cobol_modernizer.core.contracts import (
     BatchJobDesign,
     BatchStepDesign,
+    CompositeComponent,
+    CompositeType,
     GenerateCliResult,
     ProgramDesignEntry,
     UnifiedDesign,
@@ -254,3 +256,73 @@ def test_logging_never_reaches_stdout_on_the_generate_path(tmp_path, entry, caps
     ])
     # Byte for byte, stdout is one JSON object and nothing else.
     json.loads(capsys.readouterr().out)
+
+
+# --- Composites, the case ADR-0020 exists for ------------------------------------------------------
+
+
+def _design_with_composite(tmp_path: Path, entry: ProgramDesignEntry) -> Path:
+    """A step consuming a composite -- the chained-step shape a real architect run produced."""
+    entities = build_domain_entities(FIXTURE_ROOT, [entry])
+    composite = CompositeType(
+        name="TranCatBalWithAccount",
+        components=[
+            CompositeComponent(field_name="balance", entity_name="TranCatBal"),
+            CompositeComponent(field_name="account", entity_name="Account"),
+        ],
+    )
+    step = BatchStepDesign(
+        step_name="computeInterest",
+        source_paragraphs=["1300-COMPUTE-INTEREST"],
+        role="processor",
+        description="Computes interest from a balance and its resolved account.",
+        input_type="TranCatBalWithAccount",
+        output_type="TranCatBalWithAccount",
+    )
+    document = build_design_document(
+        [entry],
+        unified_design=UnifiedDesign(
+            domain_entities=entities,
+            batch_jobs=[
+                BatchJobDesign(
+                    program_name=PROGRAM, job_name="interestJob",
+                    domain_entities=[e.name for e in entities], steps=[step],
+                )
+            ],
+            rest_endpoints=[],
+            composite_types=[composite],
+        ),
+    )
+    path = tmp_path / "design.json"
+    path.write_text(document.model_dump_json(indent=2), encoding="utf-8")
+    return path
+
+
+def test_a_composite_is_rendered_into_the_target(tmp_path, entry):
+    design = _design_with_composite(tmp_path, entry)
+    run_generate(design, FIXTURE_ROOT, tmp_path / "target", author=_author(), advise=_advise())
+
+    composite_file = (
+        tmp_path / "target/src/main/java/com/modernized/batch/domain/TranCatBalWithAccount.java"
+    )
+    assert composite_file.is_file()
+    source = composite_file.read_text(encoding="utf-8")
+    assert "TranCatBal balance," in source
+    assert "Account account" in source
+
+
+def test_a_step_consuming_a_composite_generates_and_compiles(tmp_path, entry):
+    """The chained-step case ADR-0020 was written for, end to end and actually built.
+
+    Every other round-trip test here uses a plain entity, which would pass just as well if
+    composites were never rendered at all.
+    """
+    design = _design_with_composite(tmp_path, entry)
+    outcome = run_generate(
+        design, FIXTURE_ROOT, tmp_path / "target", author=_author(), advise=_advise()
+    )
+
+    assert outcome.succeeded, [o.reason for o in outcome.outcomes]
+    (compiled,) = outcome.compiled
+    processor = (tmp_path / "target" / compiled.relative_path).read_text(encoding="utf-8")
+    assert "com.modernized.batch.domain.TranCatBalWithAccount" in processor
