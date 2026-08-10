@@ -237,6 +237,8 @@ def test_design_document_carries_a_real_typed_unified_design(golden_extraction):
                     BatchStepDesign(
                         step_name="readTransactionCategoryBalances",
                         source_paragraphs=["1000-TCATBALF-GET-NEXT"],
+                        input_type="TranCatBal",
+                        output_type="TranCatBal",
                         role="reader",
                         description="Reads each transaction category balance record.",
                     )

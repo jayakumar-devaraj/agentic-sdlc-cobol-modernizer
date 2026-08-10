@@ -37,6 +37,8 @@ PACKAGE = "com.modernized.batch.processor"
 STEP = BatchStepDesign(
     step_name="passThrough",
     source_paragraphs=["1300-COMPUTE-INTEREST"],
+    input_type="TranCatBal",
+    output_type="TranCatBal",
     role="processor",
     description="Returns the input unchanged.",
 )

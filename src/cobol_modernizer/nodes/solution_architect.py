@@ -48,6 +48,8 @@ from cobol_modernizer.core.complexity import ComplexityTier
 from cobol_modernizer.core.contracts import (
     BatchJobDesign,
     BatchStepDesign,
+    CompositeComponent,
+    CompositeType,
     DomainEntity,
     DomainField,
     ProgramDesignEntry,
@@ -237,7 +239,7 @@ def _parse_unified_design_response(
     raw_response: str,
     domain_entities: list[DomainEntity],
     programs: list[ProgramDesignEntry],
-) -> tuple[list[BatchJobDesign], list[RestEndpointDesign]]:
+) -> tuple[list[BatchJobDesign], list[RestEndpointDesign], list[CompositeType]]:
     """Parse and validate the architect model's JSON response against the real Known Facts.
 
     Raises:
@@ -263,6 +265,32 @@ def _parse_unified_design_response(
             f"rest_endpoints keys: {raw_response!r}"
         )
 
+    # ADR-0020: composites are optional, because a design whose steps all operate on plain entities
+    # needs none. Parsed before the jobs so a step's types can resolve against them.
+    composite_types: list[CompositeType] = []
+    for composite in parsed.get("composite_types", []):
+        composite = _require_keys(composite, {"name", "components"}, "composite_types entry")
+        components: list[CompositeComponent] = []
+        for component in composite["components"]:
+            component = _require_keys(
+                component, {"field_name", "entity_name"}, "composite component"
+            )
+            if component["entity_name"] not in entity_names:
+                raise SolutionArchitectParseError(
+                    f"solution_architect composite {composite['name']!r} references an unknown "
+                    f"domain entity: {component['entity_name']!r}"
+                )
+            components.append(
+                CompositeComponent(
+                    field_name=component["field_name"], entity_name=component["entity_name"]
+                )
+            )
+        composite_types.append(
+            CompositeType(name=composite["name"], components=components)
+        )
+
+    known_type_names = entity_names | {composite.name for composite in composite_types}
+
     batch_jobs: list[BatchJobDesign] = []
     for job in parsed["batch_jobs"]:
         job = _require_keys(job, {"program_name", "job_name", "domain_entities", "steps"}, "batch_jobs entry")
@@ -280,18 +308,35 @@ def _parse_unified_design_response(
         steps: list[BatchStepDesign] = []
         for step in job["steps"]:
             step = _require_keys(
-                step, {"step_name", "source_paragraphs", "role", "description"}, "batch step"
+                step,
+                {
+                    "step_name", "source_paragraphs", "role", "description",
+                    "input_type", "output_type",
+                },
+                "batch step",
             )
             if step["role"] not in _VALID_STEP_ROLES:
                 raise SolutionArchitectParseError(
                     f"solution_architect batch step has an unknown role: {step['role']!r}"
                 )
+            # ADR-0020 decision 5: resolution is checked where the design is *produced*. A design
+            # that cannot be generated from should fail before a human approves it at the gate,
+            # not three layers down in `generate` afterwards.
+            for field_name in ("input_type", "output_type"):
+                if step[field_name] not in known_type_names:
+                    raise SolutionArchitectParseError(
+                        f"solution_architect batch step {step['step_name']!r} has "
+                        f"{field_name}={step[field_name]!r}, which is neither a domain entity nor "
+                        f"a declared composite type"
+                    )
             steps.append(
                 BatchStepDesign(
                     step_name=step["step_name"],
                     source_paragraphs=step["source_paragraphs"],
                     role=step["role"],
                     description=step["description"],
+                    input_type=step["input_type"],
+                    output_type=step["output_type"],
                 )
             )
 
@@ -334,7 +379,7 @@ def _parse_unified_design_response(
             )
         )
 
-    return batch_jobs, rest_endpoints
+    return batch_jobs, rest_endpoints, composite_types
 
 
 #: `(model, system_prompt, user_content) -> raw response text`. Injected so `design_solution`'s
@@ -407,10 +452,13 @@ def design_solution(
         len(programs), routing.tier.value, routing.model, routing.effort,
     )
     raw_response = architect(routing, system_prompt, user_content)
-    batch_jobs, rest_endpoints = _parse_unified_design_response(raw_response, domain_entities, programs)
+    batch_jobs, rest_endpoints, composite_types = _parse_unified_design_response(
+        raw_response, domain_entities, programs
+    )
 
     return UnifiedDesign(
         domain_entities=domain_entities,
         batch_jobs=batch_jobs,
         rest_endpoints=rest_endpoints,
+        composite_types=composite_types,
     )

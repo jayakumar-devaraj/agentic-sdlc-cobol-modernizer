@@ -33,15 +33,35 @@ PROGRAM = "CBACT04C"
 PROCESSOR = BatchStepDesign(
     step_name="computeMonthlyInterest",
     source_paragraphs=["1300-COMPUTE-INTEREST"],
+    input_type="TranCatBal",
+    output_type="TranCatBal",
     role="processor",
     description="Computes monthly interest.",
 )
 READER = BatchStepDesign(
     step_name="readBalances",
     source_paragraphs=["1000-TCATBALF-GET-NEXT"],
+    input_type="TranCatBal",
+    output_type="TranCatBal",
     role="reader",
     description="Reads balances.",
 )
+
+
+def _author(body: str = "return item;"):
+    """A scripted generator: the pass-through body, which compiles against any single type."""
+
+    def author(routing, system_prompt: str, user_content: str) -> str:
+        return json.dumps({"imports": [], "body": body, "notes": ""})
+
+    return author
+
+
+def _advise():
+    def advise(routing, system_prompt: str, user_content: str) -> str:
+        return json.dumps({"repairable": False, "reason": "scripted", "instruction": ""})
+
+    return advise
 
 
 @pytest.fixture(scope="module")
@@ -101,25 +121,58 @@ def test_an_existing_project_is_never_overwritten(tmp_path):
 # --- What the pipeline refuses, and why ------------------------------------------------------------
 
 
-def test_a_processor_step_is_blocked_because_the_design_omits_its_types(tmp_path, entry):
-    # The contract gap building this subcommand exposed: an ItemProcessor is two types, and
-    # BatchStepDesign records neither. Guessing from the job's entity list would be the exact
-    # inference this repo refuses everywhere else.
-    design = _design_json(tmp_path, entry, PROCESSOR)
+def test_a_step_naming_a_type_that_does_not_exist_is_blocked(tmp_path, entry):
+    # ADR-0020 made the types required; they still have to *resolve*. A name matching neither a
+    # domain entity nor a declared composite is a design that cannot be generated from, and saying
+    # so beats rendering Java against a class that will not exist.
+    unresolvable = BatchStepDesign(
+        step_name="computeMonthlyInterest",
+        source_paragraphs=["1300-COMPUTE-INTEREST"],
+        role="processor",
+        description="Computes monthly interest.",
+        input_type="NoSuchType",
+        output_type="TranCatBal",
+    )
+    design = _design_json(tmp_path, entry, unresolvable)
     outcome = run_generate(design, FIXTURE_ROOT, tmp_path / "target")
 
     assert len(outcome.outcomes) == 1
     (blocked,) = outcome.blocked
     assert blocked.status == "blocked"
     assert blocked.attempts == 0, "a design defect must not spend a generation attempt"
-    assert "input and output types" in blocked.reason
+    assert "NoSuchType" in blocked.reason
+
+
+def test_the_domain_records_a_processor_needs_are_rendered_into_the_target(tmp_path, entry):
+    # Processors are generated against these types, so they have to exist before anything compiles.
+    design = _design_json(tmp_path, entry, PROCESSOR)
+    run_generate(design, FIXTURE_ROOT, tmp_path / "target", author=_author(), advise=_advise())
+
+    domain = tmp_path / "target" / "src/main/java/com/modernized/batch/domain"
+    assert (domain / "TranCatBal.java").is_file()
+    assert "public record TranCatBal(" in (domain / "TranCatBal.java").read_text(encoding="utf-8")
+
+
+def test_a_resolvable_step_is_generated_and_compiles(tmp_path, entry):
+    """The round trip, end to end: design.json in, compiling Java in the target repo out."""
+    design = _design_json(tmp_path, entry, PROCESSOR)
+    outcome = run_generate(
+        design, FIXTURE_ROOT, tmp_path / "target", author=_author(), advise=_advise()
+    )
+
+    assert outcome.succeeded, [o.reason for o in outcome.outcomes]
+    (compiled,) = outcome.compiled
+    assert compiled.attempts == 1
+    assert (tmp_path / "target" / compiled.relative_path).is_file()
 
 
 def test_non_processor_steps_are_skipped_rather_than_failed(tmp_path, entry):
     # Readers, writers and tasklets are Spring Batch wiring, not translated business logic. Nothing
     # is wrong with them; they are simply not this renderer's to produce.
     design = _design_json(tmp_path, entry, PROCESSOR, READER)
-    outcome = run_generate(design, FIXTURE_ROOT, tmp_path / "target")
+    outcome = run_generate(
+        design, FIXTURE_ROOT, tmp_path / "target", author=_author(), advise=_advise()
+    )
 
     assert len(outcome.outcomes) == 1
     assert outcome.outcomes[0].step_name == PROCESSOR.step_name
@@ -147,7 +200,11 @@ def test_a_design_without_a_unified_design_is_a_clear_error(tmp_path, entry):
 
 
 def test_generate_emits_one_parseable_json_object_with_real_counts(tmp_path, entry, capsys):
-    design = _design_json(tmp_path, entry, PROCESSOR, READER)
+    unresolvable = BatchStepDesign(
+        step_name="computeMonthlyInterest", source_paragraphs=["1300-COMPUTE-INTEREST"],
+        role="processor", description="d", input_type="NoSuchType", output_type="TranCatBal",
+    )
+    design = _design_json(tmp_path, entry, unresolvable, READER)
     exit_code = cli.main([
         "generate", "--design", str(design), "--tenant-repo", str(FIXTURE_ROOT),
         "--output", str(tmp_path / "target"), "--json",
@@ -163,7 +220,7 @@ def test_generate_emits_one_parseable_json_object_with_real_counts(tmp_path, ent
     assert result.steps_exhausted == 0
     # The reason itself, not just a count -- a count tells a reviewer something is wrong without
     # telling them what, and the reason is the part that cost a model call to produce.
-    assert "input and output types" in result.detail
+    assert "NoSuchType" in result.detail
 
 
 def test_generate_no_longer_reports_not_implemented(tmp_path, entry, capsys):

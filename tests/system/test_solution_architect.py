@@ -148,6 +148,8 @@ def _fake_architect_response(entities, programs) -> str:
                             "source_paragraphs": [entry.spec_extraction.paragraph_names[0]],
                             "role": "reader",
                             "description": "Reads the first record.",
+                            "input_type": entity_name,
+                            "output_type": entity_name,
                         }
                     ],
                 }
@@ -266,6 +268,8 @@ def test_design_solution_rejects_an_unknown_step_role(all_program_entries):
                                 "source_paragraphs": [],
                                 "role": "not_a_real_role",
                                 "description": "x",
+                                "input_type": "Account",
+                                "output_type": "Account",
                             }
                         ],
                     }

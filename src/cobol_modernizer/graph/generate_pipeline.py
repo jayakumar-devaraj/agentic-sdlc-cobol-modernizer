@@ -35,11 +35,11 @@ from pathlib import Path
 
 from cobol_modernizer.core.complexity import ComplexityTier
 from cobol_modernizer.core.contracts import (
-    BatchJobDesign,
     BatchStepDesign,
     DesignDocument,
     DomainEntity,
     ProgramDesignEntry,
+    UnifiedDesign,
 )
 from cobol_modernizer.nodes.build_validator import AdviseFn, ValidationVerdict, validate_build
 from cobol_modernizer.nodes.modernization_engineer import (
@@ -49,6 +49,7 @@ from cobol_modernizer.nodes.modernization_engineer import (
     generate_processor,
 )
 from cobol_modernizer.rendering.java_processor import model_authored_line_range
+from cobol_modernizer.rendering.java_records import render_composite, render_record
 from cobol_modernizer.tools.local_compiler import (
     CompileResult,
     compile_project,
@@ -66,6 +67,11 @@ TEMPLATE_DIR = Path(__file__).resolve().parents[3] / "templates" / "target-sprin
 
 #: Where generated processors are declared. `card-service`'s own package, not this repo's.
 DEFAULT_PACKAGE = "com.modernized.batch.processor"
+
+#: Where rendered domain records and composites are declared. A separate package from the
+#: processors so a reviewer can tell computed data shapes from model-authored logic by path
+#: alone.
+DEFAULT_DOMAIN_PACKAGE = "com.modernized.batch.domain"
 
 
 @dataclass(frozen=True)
@@ -136,25 +142,50 @@ def materialize_target_project(output_dir: Path, template_dir: Path = TEMPLATE_D
     return True
 
 
-def processor_types(step: BatchStepDesign, job: BatchJobDesign) -> tuple[str, str] | None:
-    """The `ItemProcessor<I, O>` type arguments for `step`, or `None` when the design omits them.
+def render_domain_types(design: UnifiedDesign, output_dir: Path, *, package: str) -> list[str]:
+    """Write every domain entity and composite into the target project. Returns the paths written.
 
-    **It always returns `None` today, and that is the finding rather than a stub.** A processor's
-    signature is two types, and `BatchStepDesign` records `step_name`, `source_paragraphs`, `role`
-    and `description` -- none of which is one. `BatchJobDesign.domain_entities` lists what the job
-    touches, but which entity a given step consumes and what it produces is not derivable from a
-    list: a job over `[TranCatBal, DisGroup]` could have a step taking either, returning either,
-    or returning something neither names.
-
-    Guessing would be the exact inference this repo refuses elsewhere -- and the first real
-    generate call already demonstrated the cost, refusing to invent a rate rather than fabricate
-    one. So this names the gap instead of filling it, and `run_generate` turns it into a blocked
-    outcome that says what the design must state.
-
-    Closing it is a contract change to `BatchStepDesign` plus the `solution_architect` prompt that
-    fills it, which is an ADR-shaped decision rather than something to slip in here.
+    **Processors are generated against these types, so they have to exist before anything compiles.**
+    Both are rendered rather than generated -- a record from a `DomainEntity` is a mechanical
+    transform of `pic_mapper` output, and a composite is a mechanical transform of its declaration
+    (ADR-0010's line, ADR-0020's composites).
     """
-    return None
+    written: list[str] = []
+    for entity in design.domain_entities:
+        relative = f"src/main/java/{package.replace('.', '/')}/{entity.name}.java"
+        destination = output_dir / relative
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        destination.write_text(render_record(entity, package=package), encoding="utf-8")
+        written.append(relative)
+
+    for composite in design.composite_types:
+        relative = f"src/main/java/{package.replace('.', '/')}/{composite.name}.java"
+        destination = output_dir / relative
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        destination.write_text(render_composite(composite, package=package), encoding="utf-8")
+        written.append(relative)
+
+    logger.info("generate: rendered %d domain type(s) into %s", len(written), output_dir)
+    return written
+
+
+def processor_types(
+    step: BatchStepDesign, design: UnifiedDesign, *, domain_package: str
+) -> tuple[str, str] | None:
+    """The `ItemProcessor<I, O>` type arguments for `step`, fully qualified, or `None`.
+
+    `None` means a name resolved to neither a domain entity nor a declared composite, which is a
+    design that cannot be generated from (ADR-0020). `run_generate` turns that into a blocked step
+    naming the type rather than rendering Java against a class that will not exist.
+
+    Fully qualified rather than imported: the processor lives in its own package, and a qualified
+    name in the `implements` clause needs no import block to stay in sync with it.
+    """
+    if design.resolve_type(step.input_type) is None:
+        return None
+    if design.resolve_type(step.output_type) is None:
+        return None
+    return (f"{domain_package}.{step.input_type}", f"{domain_package}.{step.output_type}")
 
 
 def heal_step(
@@ -320,6 +351,7 @@ def run_generate(
     output_dir: Path,
     *,
     package: str = DEFAULT_PACKAGE,
+    domain_package: str = DEFAULT_DOMAIN_PACKAGE,
     max_attempts: int = MAX_HEAL_ATTEMPTS,
     author: AuthorFn | None = None,
     advise: AdviseFn | None = None,
@@ -341,9 +373,11 @@ def run_generate(
             f"{design_path} has no unified_design; `design` must run before `generate`"
         )
 
-    entities = document.unified_design.domain_entities
+    design = document.unified_design
+    entities = design.domain_entities
     entries = {entry.program_name: entry for entry in document.programs}
     scaffolded = materialize_target_project(output_dir)
+    render_domain_types(design, output_dir, package=domain_package)
 
     outcomes: list[StepOutcome] = []
     for job in document.unified_design.batch_jobs:
@@ -367,7 +401,7 @@ def run_generate(
                 )
                 continue
 
-            types = processor_types(step, job)
+            types = processor_types(step, design, domain_package=domain_package)
             if types is None:
                 outcomes.append(
                     StepOutcome(
@@ -377,11 +411,11 @@ def run_generate(
                         status="blocked",
                         attempts=0,
                         reason=(
-                            "the design does not state this step's input and output types, and "
-                            "an ItemProcessor cannot be generated without both. BatchStepDesign "
-                            "records step_name, source_paragraphs, role and description only; "
-                            "which entity the step consumes and what it produces is not derivable "
-                            "from the job's entity list. Deriving it would be a guess"
+                            f"input_type {step.input_type!r} or output_type "
+                            f"{step.output_type!r} resolves to neither a domain entity nor a "
+                            "declared composite type, so an ItemProcessor cannot be generated "
+                            "against it (ADR-0020). Rendering Java against a class that will not "
+                            "exist would fail later and less clearly"
                         ),
                     )
                 )

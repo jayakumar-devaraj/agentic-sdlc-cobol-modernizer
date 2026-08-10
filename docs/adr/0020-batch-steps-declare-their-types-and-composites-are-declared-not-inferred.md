@@ -2,9 +2,8 @@
 
 ## Status
 
-Proposed (2026-08-10). Blocks the first end-to-end migration: `generate` is fully wired and
-currently refuses every processor step, because the design does not say what a processor operates
-on.
+Accepted (2026-08-10). Blocked the first end-to-end migration: `generate` was fully wired and
+refused every processor step, because the design did not say what a processor operates on.
 
 Amends [ADR-0008](0008-design-json-schema-and-the-gate-items-contract.md), which froze
 `design.json`'s envelope, and extends [ADR-0010](0010-unified-design-shape-and-the-deterministic-llm-split.md),

@@ -42,6 +42,14 @@
           "title": "Description",
           "type": "string"
         },
+        "input_type": {
+          "title": "Input Type",
+          "type": "string"
+        },
+        "output_type": {
+          "title": "Output Type",
+          "type": "string"
+        },
         "role": {
           "enum": [
             "reader",
@@ -68,7 +76,9 @@
         "step_name",
         "source_paragraphs",
         "role",
-        "description"
+        "description",
+        "input_type",
+        "output_type"
       ],
       "title": "BatchStepDesign",
       "type": "object"
@@ -82,6 +92,47 @@
       ],
       "title": "ComplexityTier",
       "type": "string"
+    },
+    "CompositeComponent": {
+      "description": "One component of a `CompositeType`: a field name, and the entity it holds.",
+      "properties": {
+        "entity_name": {
+          "title": "Entity Name",
+          "type": "string"
+        },
+        "field_name": {
+          "title": "Field Name",
+          "type": "string"
+        }
+      },
+      "required": [
+        "field_name",
+        "entity_name"
+      ],
+      "title": "CompositeComponent",
+      "type": "object"
+    },
+    "CompositeType": {
+      "description": "A record composed of existing domain entities, for a value no single copybook describes.\n\nIntroduced by ADR-0020 because a real `solution_architect` run chains processor steps, and the\nvalues flowing between them are not entities: \"a `TranCatBal` with its `Account` and `CardXref`\nresolved\" is a type the target genuinely needs and no copybook declares.\n\n**Every component references an entity that already exists.** A composite never introduces a\nfield a copybook did not produce, so `pic_mapper`'s computed precision and scale still reach the\ngenerated code unchanged -- the composite only says which records travel together.\n\nRendered deterministically rather than generated (ADR-0010's line, unmoved): the *shape* is a\nmechanical transform of this declaration, and only the *name* is judgment.",
+      "properties": {
+        "components": {
+          "items": {
+            "$ref": "#/$defs/CompositeComponent"
+          },
+          "title": "Components",
+          "type": "array"
+        },
+        "name": {
+          "title": "Name",
+          "type": "string"
+        }
+      },
+      "required": [
+        "name",
+        "components"
+      ],
+      "title": "CompositeType",
+      "type": "object"
     },
     "DomainEntity": {
       "description": "One unified domain entity -- every program that `COPY`s the same copybook shares one.\n\n`source_copybook` is the exact copybook name that produced this entity; two different\ncopybook names are never merged into one entity, even when structurally similar (ADR-0010\ndecision 1) -- `source_copybook` is what makes that traceable and checkable.",
@@ -604,6 +655,13 @@
           "title": "Batch Jobs",
           "type": "array"
         },
+        "composite_types": {
+          "items": {
+            "$ref": "#/$defs/CompositeType"
+          },
+          "title": "Composite Types",
+          "type": "array"
+        },
         "domain_entities": {
           "items": {
             "$ref": "#/$defs/DomainEntity"
@@ -710,7 +768,7 @@
       "type": "array"
     },
     "schema_version": {
-      "default": "1.0.0",
+      "default": "2.0.0",
       "title": "Schema Version",
       "type": "string"
     },

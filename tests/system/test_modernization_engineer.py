@@ -48,6 +48,8 @@ PACKAGE = "com.modernized.batch.processor"
 STEP = BatchStepDesign(
     step_name="computeMonthlyInterest",
     source_paragraphs=["1300-COMPUTE-INTEREST", "1400-COMPUTE-FEES"],
+    input_type="TranCatBal",
+    output_type="TranCatBal",
     role="processor",
     description="Computes monthly interest for one transaction-category balance.",
 )
@@ -235,6 +237,8 @@ def test_everything_shared_across_steps_is_a_genuine_prefix(program_entry, entit
     other = BatchStepDesign(
         step_name="postInterestTransaction",
         source_paragraphs=["1300-B-WRITE-TX"],
+        input_type="TranCatBal",
+        output_type="TranCatBal",
         role="writer",
         description="Writes the computed interest transaction.",
     )
@@ -359,7 +363,7 @@ def test_no_notes_is_an_empty_string_not_a_missing_field(program_entry, entities
 )
 def test_class_names_are_derived_mechanically(step_name, expected):
     step = BatchStepDesign(
-        step_name=step_name, source_paragraphs=[], role="processor", description="d"
+        step_name=step_name, source_paragraphs=[], input_type="TranCatBal", output_type="TranCatBal", role="processor", description="d"
     )
     assert processor_class_name(step) == expected
 
@@ -376,6 +380,8 @@ def test_a_step_name_java_cannot_accept_fails_loudly_rather_than_being_mangled(
     step = BatchStepDesign(
         step_name="1300-COMPUTE-INTEREST",
         source_paragraphs=["1300-COMPUTE-INTEREST"],
+        input_type="TranCatBal",
+        output_type="TranCatBal",
         role="processor",
         description="d",
     )

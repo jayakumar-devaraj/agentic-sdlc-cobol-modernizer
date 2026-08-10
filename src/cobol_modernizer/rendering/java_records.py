@@ -24,7 +24,7 @@ from __future__ import annotations
 
 import logging
 
-from cobol_modernizer.core.contracts import DomainEntity, DomainField
+from cobol_modernizer.core.contracts import CompositeType, DomainEntity, DomainField
 from cobol_modernizer.rendering.java_names import (
     UnrenderableJavaNameError,
     require_java_identifier,
@@ -32,7 +32,64 @@ from cobol_modernizer.rendering.java_names import (
 
 logger = logging.getLogger(__name__)
 
-__all__ = ["UnrenderableJavaNameError", "render_record"]
+__all__ = ["UnrenderableJavaNameError", "render_composite", "render_record"]
+
+
+def render_composite(composite: CompositeType, *, package: str) -> str:
+    """Render a `CompositeType` as a Java record whose components are other records (ADR-0020).
+
+    **Its provenance names the entities it composes, never a source copybook.** A composite is a
+    target-side invention -- "a `TranCatBal` with its `Account` resolved" corresponds to no copybook
+    -- so claiming one would satisfy `CLAUDE.md`'s trace-to-source requirement by pointing at
+    something that does not exist. Naming the composed entities keeps the trace real: each of them
+    carries its own copybook, one hop away.
+
+    Deterministic for the same reason `render_record` is: this is a mechanical transform of a
+    declaration, and a model asked to perform it would vary between runs for no gain.
+    """
+    class_name = require_java_identifier(
+        composite.name, source_name="(composite)", kind="Composite name"
+    )
+    for component in composite.components:
+        require_java_identifier(
+            component.field_name, source_name=component.entity_name, kind="Component name"
+        )
+
+    composed = ", ".join(component.entity_name for component in composite.components)
+    lines = [
+        f"package {package};",
+        "",
+        "/**",
+        f" * {class_name} -- a composite of {composed}.",
+        " *",
+        " * <p>Target-side only: this type composes records that travel together through a batch",
+        " * step chain, and corresponds to no single COBOL copybook. Each component below carries",
+        " * its own copybook provenance; this record does not claim one of its own.",
+        " *",
+    ]
+    lines += [
+        f" * @param {component.field_name} the {component.entity_name} record"
+        for component in composite.components
+    ]
+    lines += [" */"]
+
+    if not composite.components:
+        lines += [f"public record {class_name}() {{}}", ""]
+        return "\n".join(lines)
+
+    lines += [f"public record {class_name}("]
+    lines += [
+        ",\n".join(
+            f"        {component.entity_name} {component.field_name}"
+            for component in composite.components
+        )
+    ]
+    lines += [") {}", ""]
+
+    logger.debug(
+        "rendered composite %s from %d entity component(s)", class_name, len(composite.components)
+    )
+    return "\n".join(lines)
 
 
 def _component_doc(field: DomainField) -> str:
