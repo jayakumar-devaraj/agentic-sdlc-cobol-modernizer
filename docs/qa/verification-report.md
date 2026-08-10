@@ -13,8 +13,11 @@ was never treated as proof on its own.
 pytest --cov=cobol_modernizer --cov-report=term-missing --cov-fail-under=90
 ```
 
-As of this report: **386 tests passed (4 skipped — the opt-in live-CLI tests), 99.06% overall
-coverage.**
+As of this report: **466 tests passed (4 skipped — the opt-in live-CLI tests)**, measured with the
+Postgres-backed `tools/knowledge_store.py` suite excluded, because Docker's daemon was not running
+on the machine that produced this figure. CI runs that suite against a real service container, and
+**CI's totals are the authoritative ones** — see the step 39 entry below for why this is stated
+rather than rounded over.
 
 `templates/target-spring-boot-baseline/` is Java and is not in that figure. It has its own suite —
 13 tests, 0 skipped — run by CI on the JDK it pins; see the entry below.
@@ -1025,6 +1028,79 @@ asserted to have applied before the result was believed.
 **Command**: `mvn -B -ntp verify` (CI job `template-build`, `temurin` 25) and
 `pytest tests/system/test_target_template.py -v`
 **Result**: `Tests run: 13, Failures: 0, Errors: 0, Skipped: 0` / `BUILD SUCCESS`; 6/6 passed.
+
+### `nodes/modernization_engineer.py` + `rendering/` — the generate split, against real Track C data (step 39)
+
+**What was verified, and what deliberately was not.** The node's whole design is that a model
+writes one method body and everything around it is rendered. Both halves are exercised against the
+real four-program corpus with the model call injected. **The live call has not run** — no real model
+has yet written a line of this Java, and nothing below claims otherwise.
+
+```
+.venv/Scripts/python.exe -m pytest tests/ -q --ignore=tests/system/test_knowledge_store.py \
+  --cov=cobol_modernizer --cov-report=term
+```
+
+Real result: **466 passed, 4 skipped in 21.33s.** The container suite is excluded above only
+because Docker's daemon is not running on this machine; CI runs it with a real service container,
+and CI's totals are the authoritative ones for this PR.
+
+Per-module, on the modules this work added:
+
+| Module | Coverage | The uncovered part |
+|---|---|---|
+| `rendering/java_names.py` | 100% | — |
+| `rendering/java_records.py` | 100% | — |
+| `rendering/java_processor.py` | 100% | — |
+| `nodes/modernization_engineer.py` | 99% | `_default_author`'s body — the live model call, the same honest gap every other node carries and the reason it is injectable |
+
+**Rendered against real copybooks, not hand-built entities.** `build_domain_entities` over the real
+`CBACT04C`/`CBCUS01C`/`CBACT01C`/`CBTRN02C` fixtures produces seven entities; all seven render.
+`Account` (from the real `CVACT01Y`, used by three real programs) renders twelve components with
+`pic_mapper`'s computed shapes carried as documented fact — `acctCurrBal` as
+`BigDecimal ... precision 12, scale 2, signed`. **`ACCT-EXPIRAION-DATE` renders as
+`acctExpiraionDate`**: the typo is upstream in the real copybook, and a mechanical transform that
+silently corrected it would break the trace back to source.
+
+**The review boundary is real and is checked.** Everything outside the `BEGIN/END model-authored
+logic` markers is a pure function of `design.json`; a test asserts no `@Override`, `@Component`,
+`public class`, `package` or `import` ever appears inside the region. A body containing either
+marker is refused (`GeneratedBodyForgeryError`) rather than escaped — the mirror of
+`DelimiterForgeryError`, which refuses forged delimiters on the way *in*.
+
+**Prompt ordering, measured rather than asserted.** Two steps of `CBACT04C` produce prompts sharing
+**70,547 of 70,688 characters (99.8%) as a genuine common prefix**, leaving a 141-character
+per-step tail. This was wrong when first written — the step facts led, making the ~68k shared span
+a suffix behind a variable prefix, which is exactly the shape ADR-0017 corrected in `spec_critic`
+after G13 measured it at ~26% of a run. The test asserts the shared span *is* a prefix, so
+reordering the sections fails it.
+
+**Falsifiability confirmed by breaking things on purpose**, not by reading the assertions:
+
+- Renaming `generate`'s `--run-id` to `--corr-id` fails the parser-parity test with exactly
+  `generate is missing ['--run-id']`.
+- A step named `1300-COMPUTE-INTEREST` yields the class `1300ComputeInterestProcessor` and raises
+  `UnrenderableJavaNameError: ... is not a legal Java identifier`, naming the COBOL source.
+- Per-line `strip()` on the body flattens a wrapped expression's continuations onto their
+  statement's column. It still compiles, so an explicit indentation assertion catches it where a
+  build would not.
+
+**The run budget, under real concurrency.** Eight threads racing a ceiling of four: every trial
+gives exactly eight recorded calls and exactly four `RunBudgetExceededError`s, with no run of 500
+producing any other outcome. Enforcement lives inside `UsageAccumulator`'s existing lock — outside
+it, several branches would read the same pre-increment total and all pass, which is the
+lost-update race the lock exists for, reintroduced in the check rather than the counter.
+
+**What this does not establish**, stated plainly so a green suite does not imply it:
+
+1. **No Java produced here has ever been compiled.** There is no JDK on this machine and Docker's
+   daemon is not running, so `javac` has not seen any of it. `templates/`'s own suite compiles on
+   CI's JDK 25; this generated output does not yet reach a build at all — that is step 40.
+2. **No real model has written a body.** Every test injects `author`. Whether a real model
+   produces correct, faithful Java from this prompt is unmeasured, and is the single largest open
+   question in Milestone C4.
+3. **Nothing is written to `card-service`**, which still holds 0 Java files. The node has no
+   caller: `cli.py`'s `generate` subcommand still returns `"Not implemented"`.
 
 ## Not yet covered (honest gaps, not silently skipped)
 
