@@ -21,6 +21,21 @@
     },
     "semantics": "COMPUTE without ROUNDED truncates toward zero to the receiving field's scale."
   },
+  "java_binding": {
+    "_comment": [
+      "Which generated record component carries each value. Declared rather than inferred, for the",
+      "reason ADR-0020 gives: when the target needs a fact the source does not supply, declare it.",
+      "A renderer guessing that `tranAmt` is 'probably the amount' is the hallucination surface this",
+      "repo removes everywhere else, and a wrong guess here silently checks the wrong column.",
+      "",
+      "`result_field` is where WS-MONTHLY-INT lands: 1300-B-WRITE-TX does",
+      "`MOVE WS-MONTHLY-INT TO TRAN-AMT`, so the transaction's amount is the monthly interest."
+    ],
+    "balance_field": {"entity": "TranCatBal", "field": "tranCatBal", "cobol": "TRAN-CAT-BAL"},
+    "rate_field": {"entity": "DisGroup", "field": "disIntRate", "cobol": "DIS-INT-RATE"},
+    "result_field": {"entity": "Tran", "field": "tranAmt", "cobol": "TRAN-AMT"},
+    "absent_output_means": "COBOL writes no transaction record; an ItemProcessor returns null to filter the item"
+  },
   "rows": [
     {
       "id": "R1",
