@@ -13,7 +13,7 @@ was never treated as proof on its own.
 pytest --cov=cobol_modernizer --cov-report=term-missing --cov-fail-under=90
 ```
 
-As of this report: **581 tests passed (4 skipped — the opt-in live-CLI tests), 99.03% overall
+As of this report: **622 tests passed (4 skipped — the opt-in live-CLI tests), 99.03% overall
 coverage** (17 of 1,748 statements uncovered). These are **CI's numbers**, from the run on the
 change that added this line — not a local figure. Locally the Postgres-backed
 `tools/knowledge_store.py` suite skips without a running Docker daemon, which is why the
@@ -1449,6 +1449,67 @@ The round-trip test used a plain entity, so **no composite was ever constructed 
 feature the ADR exists for was the one part unverified, behind a green suite and a passing
 `--cov-fail-under=90`. Closed with a step whose input type *is* a composite, generated and compiled
 for real. `contracts.py`, `solution_architect.py` and `java_records.py` are now at 100%.
+
+### `tools/data_loader.py` — CardDemo's real data, into a real PostgreSQL (step 40a)
+
+Step 45's equivalence test compares generated Java against the COBOL it came from **on the same
+inputs**, so reading those inputs correctly is a precondition. PR #26 recorded three things a naive
+reader gets wrong; all three are now verified against real bytes and pinned by tests rather than
+restated in prose.
+
+**The fixture is byte-verified.** Each file's git blob SHA was checked against
+`carddemo-tenant-service` before committing, the way PR #10 verified the copybooks — and it matters
+more here, because two of the three defects *are properties of the bytes*. A fixture git had
+silently normalised would make every test below vacuous. `.gitattributes`' `-text` rule already
+covered the path.
+
+| Finding | How it is now checked |
+|---|---|
+| `CVACT03Y` declares `RECLN 50`; `cardxref.txt` is **36 bytes/record** | Copybook-derived width vs measured width — **disagree** for `cardxref`, **agree** for `tcatbal` and `discgrp`. The contrast is what makes it a finding rather than an inability to derive widths |
+| Signed numerics carry a **zoned-decimal sign overpunch** | `00000001940{` → `Decimal("194.00")`, not `19.40`. All twenty forms decode; an unrecognised one raises |
+| `tcatbal.txt` mixes line endings | Asserted on raw bytes: **49 `CR`, 50 `LF`**, and all 50 records still read |
+
+The overpunch is where money is lost: stripping the `{` costs a factor of ten **and** the sign,
+silently, in the direction that makes a balance look smaller.
+
+**Offsets are computed** from the copybook's declaration order via `pic_mapper`'s own
+`precision`/`string_length`. A hand-written offset table drifts silently, and every field past the
+drift reads one column off — plausible wrong numbers rather than an error.
+
+**Schema and load, against a real container** (`docker compose up postgres`, the same instance
+`knowledge_store`'s tests use):
+
+- `NUMERIC(p, s)` is derived from the same `pic_mapper` numbers the generated Java carries.
+  PostgreSQL rounds into a narrower `NUMERIC` **silently rather than raising**, so a separately
+  written schema would corrupt balances with no error anywhere.
+- 50 real `tcatbal` records load; `information_schema` confirms the column really is
+  `NUMERIC(11, 2)`.
+- `cardxref` is **refused, not partly loaded** — its leading fields would read correctly, so a
+  partial load looks like success while dropping whatever follows. A refused load leaves no table.
+- Spring Batch's six metadata tables are created from DDL **read out of the jar on the classpath**.
+  This step owns that at all because PR #27 found Spring Boot 4 removed `spring.batch.jdbc.*`, so
+  `initialize-schema=always` is accepted and ignored.
+
+**Two behaviours found by running it against a real database**, both now documented and pinned:
+`apply_spring_batch_schema` is **not idempotent** (Spring Batch's DDL uses bare `CREATE`, and
+creates *sequences* as well as tables — a cleanup dropping only tables leaves
+`BATCH_STEP_EXECUTION_SEQ` behind); and a test asserting on a raising statement leaves the
+transaction aborted, so cleanup must roll back first.
+
+**The finding that matters most, and it is about step 45 rather than this module.** Every
+`TRAN-CAT-BAL` in the shipped CardDemo data is **zero**. `CBACT04C` computes
+`(TRAN-CAT-BAL * DIS-INT-RATE) / 1200`, so every interest it computes on this data is zero — and an
+equivalence test run against these files alone **would pass for any implementation that returns
+zero**, including a badly wrong one. It would be a test that cannot fail. Step 45 needs non-zero
+balances: fabricated input, or a second dataset. Pinned by a test that fails the moment this stops
+being true. `discgrp.txt` is genuinely varied by contrast (rates `0.00`, `15.00`, `25.00`), so the
+reader is not merely returning zero for everything.
+
+Also recorded: **every signed field in the shipped files ends `{`** (+0), so the other nineteen
+overpunch forms are covered by construction only. A real file containing one would be new
+information.
+
+41 tests, **100%** on the module.
 
 ## Not yet covered (honest gaps, not silently skipped)
 
