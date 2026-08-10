@@ -1167,6 +1167,71 @@ be compared against rather than replacing evidence with a single point.
 so the CLI backend did write a cache entry for this prefix. Whether a second call against the same
 99.8% prefix reads it is the obvious next measurement and has not been made.
 
+### The second real call — the same step with the design fixed, and correct arithmetic out (step 39)
+
+Run 1's refusal named two ways to make the step implementable. Option (a) — an input record
+carrying both the category balance and the resolved rate — is the one the processor renderer can
+currently express, so that is what this run supplied. **`TranCatBalWithRate` was hand-constructed**,
+standing in for a corrected `solution_architect` design; its component names and numeric shapes are
+copied verbatim from the real entities, but the joining is a human's, not a model's. The step
+description explicitly scoped out the accumulate-and-write that run 1 flagged, so this call tests
+one thing: **given an adequate design, is the COBOL arithmetic translated correctly?**
+
+**It is.** The generated body:
+
+```java
+BigDecimal quotient = categoryBalance.multiply(annualRatePercent)
+        .divide(new BigDecimal("1200"), MathContext.DECIMAL128);
+return CobolArithmetic.truncate(quotient, 2);
+```
+
+Checked against the three rules a literal translation gets wrong: truncation not rounding
+(`CobolArithmetic.truncate`, not `setScale`), toward zero not `FLOOR`, and `BigDecimal` constructed
+from a **string literal**, never a `double`. All three correct, on a `COMPUTE` with no `ROUNDED`
+whose receiving field is `S9(09)V99`.
+
+**The model flagged an assumption, and the assumption was right.** Note 1 said the Known Facts did
+not give it `CobolArithmetic`'s signatures, so it had called `truncate(BigDecimal, int)` and a
+reviewer should substitute the real name if different. That method exists with exactly that
+signature (`CobolArithmetic.java:45`). Guessing correctly is not the point — **saying it was
+guessing is**.
+
+**Two real gaps that same honesty exposed, both in this repo's prompt rather than in the model:**
+
+1. **`CobolArithmetic.divide(dividend, divisor, scale)` already exists** (`:68`) and does the
+   direct truncating divide in one step. The model described exactly that as the formulation it
+   would prefer *"for a reviewer who wants zero intermediate rounding at all"* — and could not use
+   it, because nothing told it the method was there. The prompt made the model write a
+   second-choice implementation it had itself identified as second-choice.
+2. **`CobolArithmetic.requireFits(value, precision, scale)` exists** (`:101`) and is precisely the
+   size-guard note 3 asked for: *"If CobolArithmetic has a checked MOVE/store helper for a declared
+   precision/scale, the return should go through it so an oversized interest amount throws rather
+   than being written 10x too small."* It does. The model could not know.
+
+**Fix implied and not yet made**: the Known Facts must carry the target's own helper API. This is
+a cheap, well-evidenced prompt change, and it is exactly the kind of finding a single real call
+buys that no amount of injected-fake testing can.
+
+**Measured, run 2:**
+
+| | Run 1 | Run 2 |
+|---|---:|---:|
+| Input tokens (fresh) | 39,860 cache-creation | 31,833 cache-creation |
+| **Cache read** | **0** | **49,290** |
+| Output tokens | 2,894 | 4,682 |
+| Notional cost | $0.302311 | $0.295966 |
+
+**Cross-invocation prompt caching is confirmed working on the `claude_cli` backend** — 49,290
+tokens served from cache on the second call. This is the first direct evidence that the
+stable-prefix-first ordering pays off in `generate`, and it corroborates the R1.5 probe's finding
+from the other direction. Cost barely moved only because run 2's output was 62% larger (six
+substantive notes rather than one).
+
+**What is still not established**: none of this Java has been compiled. `TranCatBalWithRate` does
+not exist as a type, `card-service` still holds zero files, and no test has executed the arithmetic
+against real CardDemo data. Correct-looking arithmetic reviewed by a human is not a passing
+differential test, and the distinction is the whole reason Phase 1 exists.
+
 ## Not yet covered (honest gaps, not silently skipped)
 
 - *(corrected 2026-08-08 — this entry was stale, not merely incomplete)* This previously read
