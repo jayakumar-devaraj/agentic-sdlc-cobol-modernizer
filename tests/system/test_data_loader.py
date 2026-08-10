@@ -44,6 +44,12 @@ def groups():
     return group_field_mappings_by_source(resolve_program(FIXTURE_ROOT, "CBACT04C"))
 
 
+@pytest.fixture(scope="module")
+def trn_groups():
+    """`CBTRN02C`'s copybooks -- which is where `dailytran.txt`'s layout (`CVTRA06Y`) comes from."""
+    return group_field_mappings_by_source(resolve_program(FIXTURE_ROOT, "CBTRN02C"))
+
+
 # --- The sign overpunch, which is where money is lost ---------------------------------------------
 
 
@@ -238,9 +244,12 @@ def test_every_real_balance_is_zero_which_step_45_must_not_ignore():
     equivalence test run against these files alone would pass for *any* implementation that returns
     zero, including a badly wrong one. It would be a test that cannot fail.
 
-    Step 45 therefore needs non-zero balances, which means either fabricated input or a second
-    dataset. Recorded here rather than in prose because this test fails the moment that stops being
-    true, which is exactly when the assumption should be revisited.
+    What this does **not** mean, and did until `dailytran.txt` was read: that the zero is arbitrary,
+    or that step 45's inputs have to be fabricated. `CBTRN02C` is the program that writes this file
+    -- `ADD DALYTRAN-AMT TO TRAN-CAT-BAL`, at its `2700-A`/`2700-B` paragraphs -- so what ships here
+    is the state **before posting has run**. The balances step 45 needs are stage one of CardDemo's
+    own pipeline over `dailytran.txt`, not invented input. See
+    `test_the_shipped_balances_are_the_pre_posting_state` below.
     """
     groups = group_field_mappings_by_source(resolve_program(FIXTURE_ROOT, "CBACT04C"))
     layout = derive_layout(groups["CVTRA01Y"][0])
@@ -263,11 +272,16 @@ def test_the_real_rates_do_decode_to_plausible_values():
     assert rates == {Decimal("0.00"), Decimal("15.00"), Decimal("25.00")}
 
 
-def test_only_the_zero_overpunch_appears_in_real_signed_fields():
-    # Stated so the synthetic overpunch tests above are not mistaken for real-data coverage: every
-    # signed numeric in the shipped files ends `{` (+0). The other nineteen forms are exercised by
-    # construction only, and a real file containing one would be new information.
-    groups = group_field_mappings_by_source(resolve_program(FIXTURE_ROOT, "CBACT04C"))
+def test_cbact04cs_own_two_files_only_ever_carry_the_zero_overpunch(groups):
+    """Scoped to the two files, because stated of *the shipped data* it was false.
+
+    Until `dailytran.txt` was read, this test asserted `seen == {"{"}` under the name
+    `test_only_the_zero_overpunch_appears_in_real_signed_fields`, and the QA report drew the
+    conclusion that the other nineteen forms were "covered by construction only". Both were
+    generalisations from the only two files step 40a happened to load -- `tcatbal` and `discgrp`,
+    which are `CBACT04C`'s, and which really do only ever carry `{`. See
+    `test_the_real_data_exercises_every_overpunch_form` for what a third file contains.
+    """
     seen = set()
     for copybook, datafile in (("CVTRA01Y", "tcatbal"), ("CVTRA02Y", "discgrp")):
         layout = derive_layout(groups[copybook][0])
@@ -276,6 +290,75 @@ def test_only_the_zero_overpunch_appears_in_real_signed_fields():
             for field in signed:
                 seen.add(record[field.start + field.length - 1])
     assert seen == {"{"}
+
+
+# --- `dailytran.txt`, the third real file, and what it overturns -----------------------------------
+
+
+def _dailytran_amounts(trn_groups) -> list[Decimal]:
+    layout = derive_layout(trn_groups["CVTRA06Y"][0])
+    return [
+        parse_record(record, layout)["DALYTRAN-AMT"]
+        for record in read_records(DATA / "dailytran.txt")
+    ]
+
+
+def test_dailytrans_copybook_agrees_with_its_file(trn_groups):
+    # Unlike `cardxref`, this one has no width discrepancy -- worth pinning, because the value of
+    # this file rests on `CVTRA06Y` describing it correctly.
+    derived = sum(f.length for f in derive_layout(trn_groups["CVTRA06Y"][0]))
+    assert derived == 350
+    assert measure_record_length((DATA / "dailytran.txt").read_bytes()) == 350
+
+
+def test_the_real_data_exercises_every_overpunch_form(trn_groups):
+    """The correction. All twenty forms appear in one real, shipped CardDemo file.
+
+    `DALYTRAN-AMT` is `PIC S9(09)V99`, and `dailytran.txt`'s 300 records carry every positive form
+    (`{ABCDEFGHI`) and every negative one (`}JKLMNOPQR`). The nineteen forms recorded as reachable
+    "by construction only" were reachable by real data the whole time, in a file two directories
+    away from the two that were loaded.
+    """
+    layout = derive_layout(trn_groups["CVTRA06Y"][0])
+    amount = next(f for f in layout if f.name == "DALYTRAN-AMT")
+    assert amount.signed is True and amount.scale == 2
+
+    final_bytes = {
+        record[amount.start + amount.length - 1] for record in read_records(DATA / "dailytran.txt")
+    }
+    assert final_bytes == set("{ABCDEFGHI") | set("}JKLMNOPQR")
+
+
+def test_real_negative_amounts_decode_through_the_negative_overpunch(trn_groups):
+    # The half of `decode_zoned_decimal` that no real byte had ever reached: a sign that is not
+    # positive, read at a real offset out of a real record rather than out of a literal in a test.
+    amounts = _dailytran_amounts(trn_groups)
+    assert len(amounts) == 300
+    assert min(amounts) == Decimal("-998.33")
+    assert max(amounts) == Decimal("999.77")
+    assert sum(1 for a in amounts if a < 0) == 50
+
+
+def test_the_amounts_are_varied_enough_to_distinguish_implementations(trn_groups):
+    # The property that makes this file worth having at all, and the one `tcatbal` lacks: 299
+    # distinct values across 300 records. Arithmetic over these cannot pass by returning a constant.
+    amounts = _dailytran_amounts(trn_groups)
+    assert len(set(amounts)) == 299
+    assert sum(amounts) == Decimal("104801.54")
+
+
+def test_the_shipped_balances_are_the_pre_posting_state():
+    """Why every `TRAN-CAT-BAL` is zero -- asserted against the COBOL, not against a re-implementation.
+
+    Deliberately *not* done by computing the posted balances in Python and comparing: that oracle
+    would be this session's reading of `CBTRN02C`, and step 45 comparing generated Java against it
+    would be comparing two renderings of the same interpretation. What is checkable here without
+    inventing an oracle is the causal claim itself -- that the program which writes `tcatbal` adds
+    `DALYTRAN-AMT` into the balance, so a zero file is one that has not been posted to yet.
+    """
+    source = (FIXTURE_ROOT / "app" / "cbl" / "CBTRN02C.cbl").read_text()
+    assert source.count("ADD DALYTRAN-AMT TO TRAN-CAT-BAL") == 2  # the create and the update paths
+    assert "REWRITE FD-TRAN-CAT-BAL-RECORD FROM TRAN-CAT-BAL-RECORD" in source
 
 
 # --- Schema derivation ------------------------------------------------------------------------------
