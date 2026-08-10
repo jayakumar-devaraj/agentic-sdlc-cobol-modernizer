@@ -338,6 +338,13 @@ class GenerateCliResult(BaseModel):
     steps_blocked: int = 0
     #: Steps that spent every heal attempt and still did not compile.
     steps_exhausted: int = 0
+    #: Steps present in the design that this pipeline does not render at all -- readers, writers
+    #: and tasklets (G27). **Not a failure, and not nothing.** A writer is usually Spring Batch
+    #: wiring; `CBACT04C`'s `1050-UPDATE-ACCOUNT` is a control-break balance update that cannot be
+    #: an ItemProcessor. Both arrive here as `role != "processor"`, so the count is surfaced and a
+    #: human at the gate decides which this was. Until this field existed the step reached no
+    #: outcome and no count, and a job of one processor plus one writer reported a clean success.
+    steps_not_generated: int = 0
 
 
 def build_gate_items(programs: list[ProgramDesignEntry]) -> list[GateItem]:

@@ -168,16 +168,23 @@ def test_a_resolvable_step_is_generated_and_compiles(tmp_path, entry):
     assert (tmp_path / "target" / compiled.relative_path).is_file()
 
 
-def test_non_processor_steps_are_skipped_rather_than_failed(tmp_path, entry):
-    # Readers, writers and tasklets are Spring Batch wiring, not translated business logic. Nothing
-    # is wrong with them; they are simply not this renderer's to produce.
+def test_non_processor_steps_are_reported_rather_than_failed_or_dropped(tmp_path, entry):
+    """A reader must not fail the run -- and must not vanish from it either (G27).
+
+    This test used to assert `len(outcome.outcomes) == 1`, which was the defect written down as an
+    expectation: the reader produced no outcome at all, so a design of one processor plus one
+    non-processor was indistinguishable from a design with nothing else in it. What it was really
+    protecting -- that wiring does not fail a run -- is asserted below and still holds.
+    """
     design = _design_json(tmp_path, entry, PROCESSOR, READER)
     outcome = run_generate(
         design, FIXTURE_ROOT, tmp_path / "target", author=_author(), advise=_advise()
     )
 
-    assert len(outcome.outcomes) == 1
-    assert outcome.outcomes[0].step_name == PROCESSOR.step_name
+    assert [o.step_name for o in outcome.generable] == [PROCESSOR.step_name]
+    assert [o.step_name for o in outcome.not_generated] == [READER.step_name]
+    # The original point: a reader is not a failure.
+    assert outcome.succeeded
 
 
 def test_a_run_that_generated_nothing_is_not_a_success(tmp_path, entry):
@@ -185,8 +192,11 @@ def test_a_run_that_generated_nothing_is_not_a_success(tmp_path, entry):
     design = _design_json(tmp_path, entry, READER)
     outcome = run_generate(design, FIXTURE_ROOT, tmp_path / "target")
 
-    assert outcome.outcomes == ()
+    assert outcome.generable == ()
     assert not outcome.succeeded
+    # Strictly better than the old `outcomes == ()`: the run still fails, *and* the reader that
+    # accounts for the emptiness is now named rather than being an absence a reader has to infer.
+    assert [o.step_name for o in outcome.not_generated] == [READER.step_name]
 
 
 def test_a_design_without_a_unified_design_is_a_clear_error(tmp_path, entry):
@@ -326,3 +336,46 @@ def test_a_step_consuming_a_composite_generates_and_compiles(tmp_path, entry):
     (compiled,) = outcome.compiled
     processor = (tmp_path / "target" / compiled.relative_path).read_text(encoding="utf-8")
     assert "com.modernized.batch.domain.TranCatBalWithAccount" in processor
+
+
+# --- G27: a step whose logic is real and is not a processor ---------------------------------------
+
+
+def test_a_non_processor_step_is_reported_rather_than_silently_dropped(tmp_path, entry):
+    """Gap G27. `1050-UPDATE-ACCOUNT` is business logic, and it is not an `ItemProcessor`.
+
+    It does `ADD WS-TOTAL-INT TO ACCT-CURR-BAL` -- a control-break accumulation that mutates a
+    balance. Any design giving it an owning step must give it a non-processor role, because a
+    stateless per-item processor cannot hold state across items. This pipeline renders processors
+    only, which is correct. What was not correct is that it `continue`d past everything else
+    without recording anything, so such a step reached no outcome, no count, and no gate.
+
+    The failure that produced: one processor plus this writer reported
+    `steps_total: 1, steps_compiled: 1, status: ok` -- indistinguishable from a design containing
+    nothing else. A human approving that saw complete success over a job whose account update was
+    never generated. The model that flagged it named the cost: the balance is wrong *silently, and
+    by the full interest amount*.
+    """
+    updater = BatchStepDesign(
+        step_name="updateAccount",
+        source_paragraphs=["1050-UPDATE-ACCOUNT"],
+        role="writer",
+        description="Adds accumulated interest to the account balance on each account break.",
+        input_type="TranCatBal",
+        output_type="TranCatBal",
+        guard_condition=None,
+    )
+    design_path = _design_json(tmp_path, entry, PROCESSOR, updater)
+    outcome = run_generate(
+        design_path, FIXTURE_ROOT, tmp_path / "proj", author=_author(), advise=_advise()
+    )
+
+    not_generated = [o for o in outcome.outcomes if o.status == "not_generated"]
+    assert [o.step_name for o in not_generated] == ["updateAccount"]
+    # The reason must name the paragraphs, or a reviewer cannot tell wiring from lost logic.
+    assert "1050-UPDATE-ACCOUNT" in not_generated[0].reason
+    assert "writer" in not_generated[0].reason
+
+    # Reported, not failed: the pipeline is right not to render it, and right not to hide it.
+    assert outcome.succeeded
+    assert len(outcome.compiled) == 1

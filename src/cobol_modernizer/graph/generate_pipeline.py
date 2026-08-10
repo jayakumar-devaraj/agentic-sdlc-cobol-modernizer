@@ -85,6 +85,10 @@ class StepOutcome:
     #: `compiled` -- the project built with this step's file in it.
     #: `blocked` -- something no rewrite reaches; `reason` says what.
     #: `exhausted` -- every heal attempt was spent and it still does not compile.
+    #: `not_generated` -- a non-processor step this pipeline does not render (G27). Reported
+    #: rather than dropped: a reader or writer really is Spring Batch wiring, but
+    #: `1050-UPDATE-ACCOUNT` is a balance mutation that cannot be an ItemProcessor, and the two
+    #: are indistinguishable from a role alone.
     status: str
     attempts: int
     reason: str
@@ -338,14 +342,29 @@ class GenerateOutcome:
         return tuple(o for o in self.outcomes if o.status == "exhausted")
 
     @property
+    def not_generated(self) -> tuple[StepOutcome, ...]:
+        """Steps this pipeline does not render, reported so a gate can see them (G27)."""
+        return tuple(o for o in self.outcomes if o.status == "not_generated")
+
+    @property
+    def generable(self) -> tuple[StepOutcome, ...]:
+        """The steps this pipeline was ever going to produce: the processors."""
+        return tuple(o for o in self.outcomes if o.status != "not_generated")
+
+    @property
     def succeeded(self) -> bool:
         """Every processor step compiled, and there was at least one to compile.
 
         An empty run is not a success: a design that yielded no generable step means the pipeline
         produced nothing, and reporting that as `ok` would tell control-plane's gate that a
         migration happened when none did.
+
+        Measured over **generable** steps only. A declared writer is not a failed processor, and
+        counting it as one would make every realistic design report an error; it is surfaced
+        separately instead (`not_generated`), because the honest answer to "did this succeed" is
+        "every processor compiled, and here is what was never generated" -- not one number.
         """
-        return bool(self.outcomes) and len(self.compiled) == len(self.outcomes)
+        return bool(self.generable) and len(self.compiled) == len(self.generable)
 
 
 def run_generate(
@@ -394,13 +413,43 @@ def run_generate(
 
         for step in job.steps:
             if step.role != "processor":
-                # Readers, writers and tasklets are Spring Batch wiring rather than translated
-                # business logic, and `rendering/java_processor.py` renders an ItemProcessor only.
-                # Skipped rather than failed: nothing is wrong, this step is simply not this
-                # renderer's to produce.
-                logger.info(
-                    "generate: skipping %s/%s (role=%s, not a processor)",
-                    job.program_name, step.step_name, step.role,
+                # `rendering/java_processor.py` renders an `ItemProcessor` and nothing else, so a
+                # reader, writer or tasklet is genuinely not this renderer's to produce. That much
+                # was always right. The `continue` was not: the step reached no outcome, no count
+                # and no gate, so one processor plus one writer reported `steps_total: 1,
+                # status: ok` and looked identical to a job with nothing else in it (gap G27).
+                #
+                # **Not every non-processor is wiring.** `CBACT04C`'s `1050-UPDATE-ACCOUNT` does
+                # `ADD WS-TOTAL-INT TO ACCT-CURR-BAL` -- a control-break accumulation that mutates
+                # a balance, and it cannot be an `ItemProcessor`, because a stateless per-item
+                # processor holds nothing across items. Dropping it silently loses money in the
+                # one direction nothing downstream can detect: the arithmetic that *is* generated
+                # stays correct, and only the total is wrong.
+                #
+                # Recorded rather than skipped, with the role and the paragraphs in the reason,
+                # because that is what lets a reviewer tell wiring from lost business logic.
+                reason = (
+                    f"not generated: role is {step.role!r}, and this pipeline renders "
+                    f"ItemProcessors only. Its COBOL is "
+                    f"{', '.join(step.source_paragraphs) or '(none recorded)'} -- if that carries "
+                    f"business logic, it is absent from the generated project and needs an owner."
+                )
+                logger.warning(
+                    "generate: %s/%s not generated (role=%s, paragraphs=%s)",
+                    job.program_name,
+                    step.step_name,
+                    step.role,
+                    ", ".join(step.source_paragraphs) or "(none)",
+                )
+                outcomes.append(
+                    StepOutcome(
+                        program_name=job.program_name,
+                        step_name=step.step_name,
+                        class_name="",
+                        status="not_generated",
+                        attempts=0,
+                        reason=reason,
+                    )
                 )
                 continue
 
