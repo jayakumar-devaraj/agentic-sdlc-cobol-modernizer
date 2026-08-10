@@ -48,6 +48,8 @@ PACKAGE = "com.modernized.batch.processor"
 STEP = BatchStepDesign(
     step_name="computeMonthlyInterest",
     source_paragraphs=["1300-COMPUTE-INTEREST", "1400-COMPUTE-FEES"],
+    input_type="TranCatBal",
+    output_type="TranCatBal",
     role="processor",
     description="Computes monthly interest for one transaction-category balance.",
 )
@@ -163,6 +165,23 @@ def test_domain_facts_state_precision_and_scale_so_the_model_never_recomputes_th
     assert "precision 12, scale 2, signed" in facts
 
 
+def test_the_receiving_field_reaches_the_real_prompt_not_just_the_helper(
+    program_entry, entities, resolved
+):
+    """The regression guard for a fix that was never wired in.
+
+    `render_program_field_facts` was added, tested directly, and never called from
+    `build_engineer_prompt` -- a string-replacement patch that silently did not match. The
+    helper-level test below passed the whole time, because it exercised the unit rather than the
+    prompt a model actually receives. This asserts through the real builder, which is the only
+    version that can fail when the wiring is missing.
+    """
+    prompt = build_engineer_prompt(
+        STEP, entities, program_entry, resolved, input_type="A", output_type="B"
+    )
+    assert "WS-MONTHLY-INT -- BigDecimal, precision 11, scale 2, signed" in prompt
+
+
 def test_the_computes_receiving_field_reaches_the_prompt_as_fact_not_prose(resolved):
     """Gap G21, closed. WS-MONTHLY-INT sets the target scale of CBACT04C's interest COMPUTE.
 
@@ -218,6 +237,8 @@ def test_everything_shared_across_steps_is_a_genuine_prefix(program_entry, entit
     other = BatchStepDesign(
         step_name="postInterestTransaction",
         source_paragraphs=["1300-B-WRITE-TX"],
+        input_type="TranCatBal",
+        output_type="TranCatBal",
         role="writer",
         description="Writes the computed interest transaction.",
     )
@@ -342,7 +363,7 @@ def test_no_notes_is_an_empty_string_not_a_missing_field(program_entry, entities
 )
 def test_class_names_are_derived_mechanically(step_name, expected):
     step = BatchStepDesign(
-        step_name=step_name, source_paragraphs=[], role="processor", description="d"
+        step_name=step_name, source_paragraphs=[], input_type="TranCatBal", output_type="TranCatBal", role="processor", description="d"
     )
     assert processor_class_name(step) == expected
 
@@ -359,6 +380,8 @@ def test_a_step_name_java_cannot_accept_fails_loudly_rather_than_being_mangled(
     step = BatchStepDesign(
         step_name="1300-COMPUTE-INTEREST",
         source_paragraphs=["1300-COMPUTE-INTEREST"],
+        input_type="TranCatBal",
+        output_type="TranCatBal",
         role="processor",
         description="d",
     )

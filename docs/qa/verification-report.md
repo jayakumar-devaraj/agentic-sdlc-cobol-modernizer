@@ -13,7 +13,7 @@ was never treated as proof on its own.
 pytest --cov=cobol_modernizer --cov-report=term-missing --cov-fail-under=90
 ```
 
-As of this report: **513 tests passed (4 skipped — the opt-in live-CLI tests), 99.03% overall
+As of this report: **581 tests passed (4 skipped — the opt-in live-CLI tests), 99.03% overall
 coverage** (17 of 1,748 statements uncovered). These are **CI's numbers**, from the run on the
 change that added this line — not a local figure. Locally the Postgres-backed
 `tools/knowledge_store.py` suite skips without a running Docker daemon, which is why the
@@ -1391,6 +1391,64 @@ and the offline flag.
 the template, and the template with a deliberate typo. **No model-generated file has been compiled**,
 because nothing yet writes one to a project: `generate` still has no caller and `card-service` still
 holds zero files. Wiring that is steps 41 and 42, and until then the round-trip count stays 0 of 4.
+
+### The self-healing loop, the `generate` subcommand, and the round trip (step 42, ADR-0020)
+
+**A `design.json` now produces a target project that compiles.** One design document yields five
+domain records and a processor in `card-service`'s package layout, and `mvn compile` is green:
+
+```
+src/main/java/com/modernized/batch/domain/{Account,CardXref,DisGroup,Tran,TranCatBal}.java
+src/main/java/com/modernized/batch/processor/ComputeMonthlyInterestProcessor.java
+```
+
+**The loop heals a real compile error, against real Maven.** Attempt 1 calls a method that does not
+exist, javac says so, attempt 2 compiles — no human, two attempts, verified in
+`test_generate_pipeline.py` rather than against a mocked compiler. A mock would let the loop
+"recover" from failures a compiler would never report, and would have hidden the Spring Batch 6
+package rename that step 41 caught.
+
+**Refusing to retry is tested as carefully as retrying.** A `blocked` verdict produces exactly
+**one** generation call: retrying a design defect burns the whole budget and yields three worse
+versions of the same code. `MAX_HEAL_ATTEMPTS` (3) is asserted to differ from
+`MAX_TRANSPORT_ATTEMPTS` (5) — they bound unrelated things and multiply if confused, which is
+ADR-0013's stacking failure.
+
+**Two defects found, both of the same silent shape:**
+
+1. **G21 was reported closed and was not.** `render_program_field_facts` was added, tested, and
+   **never called** — `build_engineer_prompt` kept its old return because a string-replacement patch
+   did not match and nothing failed. The test written for it exercised the helper directly, so it
+   passed against unwired code the whole time. Now wired, with a guard asserting through the *real*
+   prompt builder: `WS-MONTHLY-INT -- BigDecimal, precision 11, scale 2, signed` reaches the prompt
+   a model actually receives.
+2. **`run_generate` never rendered the domain records.** Processors are generated *against* those
+   types, so nothing would have compiled regardless of ADR-0020. Found by running the pipeline, not
+   by reading it.
+
+**The contract gap ADR-0020 closes was found by building the subcommand.** An `ItemProcessor` is two
+types and `BatchStepDesign` named neither. A real `solution_architect` run is what settled the fix:
+it chains three processor steps (`resolveAccountContext` → `resolveInterestRate` →
+`computeInterest`), and the values flowing between them are **not** in `domain_entities` because
+they do not exist as entities. There was nothing to derive from, so composites are declared.
+
+**What this does NOT establish**, stated plainly against a green suite:
+
+1. **The compiling processor body is `return item;`** — a scripted pass-through, not translated
+   business logic. No real model has written a body through this path.
+2. **`0 of 4 programs round-trip` is unchanged.** That metric means COBOL → compiling Java →
+   **passing differential test**, and step 45's equivalence test does not exist, nor does step 40a's
+   data loader that it needs.
+3. **The real `solution_architect` output predates this contract**, so a fresh `design` run is
+   needed before any real design.json carries step types.
+
+**A coverage regression caught before merge, worth recording as a pattern.** CI's first run on this
+branch reported 96.6% against the usual 99% -- and every uncovered line was ADR-0020's own code:
+`render_composite` at **69%**, plus the resolution helpers and the architect's composite parsing.
+The round-trip test used a plain entity, so **no composite was ever constructed in a test**: the
+feature the ADR exists for was the one part unverified, behind a green suite and a passing
+`--cov-fail-under=90`. Closed with a step whose input type *is* a composite, generated and compiled
+for real. `contracts.py`, `solution_architect.py` and `java_records.py` are now at 100%.
 
 ## Not yet covered (honest gaps, not silently skipped)
 

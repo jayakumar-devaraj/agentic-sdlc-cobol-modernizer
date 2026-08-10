@@ -20,6 +20,8 @@ from cobol_modernizer.core.contracts import (
     SCHEMA_VERSION,
     BatchJobDesign,
     BatchStepDesign,
+    CompositeComponent,
+    CompositeType,
     DesignCliResult,
     DesignDocument,
     DomainEntity,
@@ -237,6 +239,8 @@ def test_design_document_carries_a_real_typed_unified_design(golden_extraction):
                     BatchStepDesign(
                         step_name="readTransactionCategoryBalances",
                         source_paragraphs=["1000-TCATBALF-GET-NEXT"],
+                        input_type="TranCatBal",
+                        output_type="TranCatBal",
                         role="reader",
                         description="Reads each transaction category balance record.",
                     )
@@ -315,3 +319,70 @@ def test_gate_item_requires_a_known_category():
             summary="x",
             detail="y",
         )
+
+
+# --- Type resolution (ADR-0020) ------------------------------------------------------------------
+
+
+def _design_with_composite() -> UnifiedDesign:
+    entity = DomainEntity(
+        name="TranCatBal", source_copybook="CVTRA01Y", used_by_programs=["CBACT04C"], fields=[]
+    )
+    return UnifiedDesign(
+        domain_entities=[entity],
+        batch_jobs=[],
+        rest_endpoints=[],
+        composite_types=[
+            CompositeType(
+                name="TranCatBalWithAccount",
+                components=[CompositeComponent(field_name="balance", entity_name="TranCatBal")],
+            )
+        ],
+    )
+
+
+def test_a_type_name_resolves_against_entities_and_composites_alike():
+    design = _design_with_composite()
+    assert design.resolve_type("TranCatBal") is not None
+    assert design.resolve_type("TranCatBalWithAccount") is not None
+
+
+def test_an_unknown_type_name_resolves_to_nothing_rather_than_raising():
+    # `generate` turns None into a blocked step naming the type. Raising here would make the
+    # caller's error message worse, not better.
+    assert _design_with_composite().resolve_type("NoSuchType") is None
+
+
+def test_unresolvable_names_are_reported_so_a_design_fails_before_the_gate():
+    design = UnifiedDesign(
+        domain_entities=[],
+        batch_jobs=[
+            BatchJobDesign(
+                program_name="CBACT04C", job_name="j", domain_entities=[],
+                steps=[
+                    BatchStepDesign(
+                        step_name="s", source_paragraphs=[], role="processor", description="d",
+                        input_type="Ghost", output_type="AlsoGhost",
+                    )
+                ],
+            )
+        ],
+        rest_endpoints=[],
+    )
+    assert design.unresolvable_type_names() == ["Ghost", "AlsoGhost"]
+
+
+def test_a_composite_component_naming_an_unknown_entity_is_reported_too():
+    design = UnifiedDesign(
+        domain_entities=[], batch_jobs=[], rest_endpoints=[],
+        composite_types=[
+            CompositeType(
+                name="C", components=[CompositeComponent(field_name="x", entity_name="Ghost")]
+            )
+        ],
+    )
+    assert design.unresolvable_type_names() == ["Ghost"]
+
+
+def test_a_fully_resolvable_design_reports_nothing():
+    assert _design_with_composite().unresolvable_type_names() == []

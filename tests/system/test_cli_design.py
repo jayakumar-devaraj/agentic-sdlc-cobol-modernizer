@@ -326,11 +326,17 @@ def test_a_failed_run_writes_no_partial_design_json(tmp_path, fake_anthropic):
     assert not (tmp_path / "design.json").exists()
 
 
-def test_generate_still_reports_not_implemented(tmp_path, capsys):
-    argv = ["generate", "--design", "x.json", "--tenant-repo", str(FIXTURE_ROOT),
-            "--output", str(tmp_path), "--json"]
+def test_generate_is_implemented_and_reports_structured_counts(tmp_path, capsys):
+    """Was `test_generate_still_reports_not_implemented`. Step 42 made that false.
+
+    Kept in this file rather than deleted: it guards the same boundary from the `design` side, that
+    a `generate` invocation always yields a parseable envelope.
+    """
+    argv = ["generate", "--design", str(tmp_path / "absent.json"), "--tenant-repo", str(FIXTURE_ROOT),
+            "--output", str(tmp_path / "target"), "--json"]
     assert cli.main(argv) == 1
     payload = json.loads(capsys.readouterr().out)
     assert payload["status"] == "error"
     assert payload["phase"] == "generate"
-    assert "Milestone C4" in payload["detail"]
+    assert payload["steps_total"] == 0
+    assert "Not implemented" not in payload["detail"]

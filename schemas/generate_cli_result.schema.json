@@ -26,6 +26,26 @@
       ],
       "title": "Status",
       "type": "string"
+    },
+    "steps_blocked": {
+      "default": 0,
+      "title": "Steps Blocked",
+      "type": "integer"
+    },
+    "steps_compiled": {
+      "default": 0,
+      "title": "Steps Compiled",
+      "type": "integer"
+    },
+    "steps_exhausted": {
+      "default": 0,
+      "title": "Steps Exhausted",
+      "type": "integer"
+    },
+    "steps_total": {
+      "default": 0,
+      "title": "Steps Total",
+      "type": "integer"
     }
   },
   "required": [

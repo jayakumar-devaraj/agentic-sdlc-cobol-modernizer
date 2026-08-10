@@ -28,7 +28,7 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from typing import Literal
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from cobol_modernizer.nodes.spec_critic import SpecCritiqueResult
 from cobol_modernizer.nodes.spec_extractor import SpecExtractionResult
@@ -81,6 +81,39 @@ class BatchStepDesign(BaseModel):
     source_paragraphs: list[str]
     role: BatchStepRole
     description: str
+    #: The `ItemProcessor<I, O>` type arguments, by name (ADR-0020). Each resolves against a
+    #: `DomainEntity` or a `CompositeType` declared on the same `UnifiedDesign`. Required, and
+    #: required to resolve: a processor is parameterised by two types, and generating one from a
+    #: design that names neither means guessing them -- which produces Java that compiles and is
+    #: wrong, the one failure mode this repo's whole deterministic core exists to prevent.
+    input_type: str
+    output_type: str
+
+
+class CompositeComponent(BaseModel):
+    """One component of a `CompositeType`: a field name, and the entity it holds."""
+
+    field_name: str
+    entity_name: str
+
+
+class CompositeType(BaseModel):
+    """A record composed of existing domain entities, for a value no single copybook describes.
+
+    Introduced by ADR-0020 because a real `solution_architect` run chains processor steps, and the
+    values flowing between them are not entities: "a `TranCatBal` with its `Account` and `CardXref`
+    resolved" is a type the target genuinely needs and no copybook declares.
+
+    **Every component references an entity that already exists.** A composite never introduces a
+    field a copybook did not produce, so `pic_mapper`'s computed precision and scale still reach the
+    generated code unchanged -- the composite only says which records travel together.
+
+    Rendered deterministically rather than generated (ADR-0010's line, unmoved): the *shape* is a
+    mechanical transform of this declaration, and only the *name* is judgment.
+    """
+
+    name: str
+    components: list[CompositeComponent]
 
 
 class BatchJobDesign(BaseModel):
@@ -116,10 +149,47 @@ class UnifiedDesign(BaseModel):
     domain_entities: list[DomainEntity]
     batch_jobs: list[BatchJobDesign]
     rest_endpoints: list[RestEndpointDesign]
+    #: Target-side types composed of domain entities (ADR-0020). Defaults to empty because a design
+    #: whose steps all operate on plain entities needs none.
+    composite_types: list[CompositeType] = Field(default_factory=list)
+
+    def resolve_type(self, name: str) -> DomainEntity | CompositeType | None:
+        """The entity or composite `name` refers to, or `None` when it refers to neither.
+
+        `None` is what `generate` turns into a blocked step. A type name that resolves to nothing is
+        a design that cannot be generated from, and saying so is more useful than rendering Java
+        against a class that will not exist.
+        """
+        for entity in self.domain_entities:
+            if entity.name == name:
+                return entity
+        for composite in self.composite_types:
+            if composite.name == name:
+                return composite
+        return None
+
+    def unresolvable_type_names(self) -> list[str]:
+        """Every type name in this design that resolves to nothing, in declaration order.
+
+        Checked where the design is *produced* as well as where it is consumed (ADR-0020 decision 5):
+        a design that cannot be generated from should fail before a human approves it at the gate,
+        not after.
+        """
+        missing: list[str] = []
+        for composite in self.composite_types:
+            for component in composite.components:
+                if self.resolve_type(component.entity_name) is None:
+                    missing.append(component.entity_name)
+        for job in self.batch_jobs:
+            for step in job.steps:
+                for name in (step.input_type, step.output_type):
+                    if self.resolve_type(name) is None:
+                        missing.append(name)
+        return missing
 
 #: design.json's own envelope version -- bump this on any breaking change to DesignDocument's
 #: shape, e.g. once solution_architect gives `unified_design` a real type.
-SCHEMA_VERSION = "1.0.0"
+SCHEMA_VERSION = "2.0.0"
 
 #: A rule_confidence entry scoring below this becomes a `low_confidence_rule` GateItem. See the
 #: module docstring -- a tentative default, not a benchmarked number.
@@ -242,6 +312,18 @@ class GenerateCliResult(BaseModel):
     run_id: str
     output_path: str
     detail: str
+    #: Processor steps this run attempted. Zero means the design yielded nothing generable, which
+    #: is reported as an error rather than a vacuous success -- see `GenerateOutcome.succeeded`.
+    steps_total: int = 0
+    #: Steps whose file compiled as part of the target project.
+    steps_compiled: int = 0
+    #: Steps stopped without spending the attempt budget: a design defect, an error in rendered
+    #: scaffolding, or a build failure with no located diagnostic. **Not** the same as exhausted:
+    #: these were never worth retrying, and conflating them would hide the difference between "the
+    #: model could not fix it" and "no model could".
+    steps_blocked: int = 0
+    #: Steps that spent every heal attempt and still did not compile.
+    steps_exhausted: int = 0
 
 
 def build_gate_items(programs: list[ProgramDesignEntry]) -> list[GateItem]:

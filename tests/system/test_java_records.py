@@ -16,12 +16,19 @@ from pathlib import Path
 
 import pytest
 
-from cobol_modernizer.core.contracts import DomainEntity, DomainField, ProgramDesignEntry
+from cobol_modernizer.core.contracts import (
+    CompositeComponent,
+    CompositeType,
+    DomainEntity,
+    DomainField,
+    ProgramDesignEntry,
+)
 from cobol_modernizer.nodes.solution_architect import build_domain_entities
 from cobol_modernizer.nodes.spec_critic import critique_spec
 from cobol_modernizer.nodes.spec_extractor import extract_spec
 from cobol_modernizer.rendering.java_records import (
     UnrenderableJavaNameError,
+    render_composite,
     render_record,
 )
 
@@ -198,3 +205,72 @@ def test_no_jpa_identity_is_invented(real_entities):
         source = render_record(entity, package=PACKAGE)
         for annotation in ("@Id", "@Entity", "@Table", "@Column", "jakarta.persistence"):
             assert annotation not in source
+
+
+# --- Composites (ADR-0020) -----------------------------------------------------------------------
+
+
+def _composite(*pairs: tuple[str, str]) -> CompositeType:
+    return CompositeType(
+        name="TranCatBalWithAccount",
+        components=[
+            CompositeComponent(field_name=field, entity_name=entity) for field, entity in pairs
+        ],
+    )
+
+
+def test_a_composite_renders_as_a_record_of_records():
+    source = render_composite(
+        _composite(("balance", "TranCatBal"), ("account", "Account")), package=PACKAGE
+    )
+    assert "public record TranCatBalWithAccount(" in source
+    assert "        TranCatBal balance," in source
+    assert "        Account account" in source
+
+
+def test_a_composite_claims_no_source_copybook():
+    # ADR-0020: a composite is a target-side invention with no COBOL counterpart. Naming a copybook
+    # would satisfy CLAUDE.md's trace-to-source rule by pointing at something that does not exist.
+    source = render_composite(_composite(("balance", "TranCatBal")), package=PACKAGE)
+    assert "generated from copybook" not in source
+    assert "corresponds to no single COBOL copybook" in source
+
+
+def test_a_composite_names_the_entities_it_composes():
+    # The trace stays real one hop away: each component carries its own copybook provenance.
+    source = render_composite(
+        _composite(("balance", "TranCatBal"), ("account", "Account")), package=PACKAGE
+    )
+    assert "a composite of TranCatBal, Account" in source
+    assert "@param balance the TranCatBal record" in source
+
+
+def test_composite_rendering_is_deterministic():
+    composite = _composite(("balance", "TranCatBal"), ("account", "Account"))
+    assert render_composite(composite, package=PACKAGE) == render_composite(
+        composite, package=PACKAGE
+    )
+
+
+def test_a_composite_imports_nothing_because_its_components_are_records():
+    source = render_composite(_composite(("balance", "TranCatBal")), package=PACKAGE)
+    assert "import " not in source
+
+
+@pytest.mark.parametrize("illegal", ["class", "2nd", "has space"])
+def test_an_illegal_composite_component_name_raises(illegal):
+    with pytest.raises(UnrenderableJavaNameError, match="Component name"):
+        render_composite(_composite((illegal, "TranCatBal")), package=PACKAGE)
+
+
+def test_an_illegal_composite_name_raises():
+    composite = CompositeType(
+        name="new", components=[CompositeComponent(field_name="x", entity_name="TranCatBal")]
+    )
+    with pytest.raises(UnrenderableJavaNameError, match="Composite name"):
+        render_composite(composite, package=PACKAGE)
+
+
+def test_a_composite_with_no_components_renders_an_empty_record():
+    composite = CompositeType(name="Empty", components=[])
+    assert "public record Empty() {}" in render_composite(composite, package=PACKAGE)

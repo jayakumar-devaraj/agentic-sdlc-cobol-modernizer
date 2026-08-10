@@ -2,9 +2,8 @@
 
 Was `test_cli_skeleton.py`. The name stopped being true once `design` became a real pipeline
 (ADR-0012) -- what is left here is the part that is genuinely about the CLI surface: argument
-parsing, the two-subcommand split (ADR-0003), the stdout/stderr separation, and `generate`'s
-still-honest not-implemented report. `design`'s real end-to-end behavior lives in
-`test_cli_design.py`.
+parsing, the two-subcommand split (ADR-0003), and the stdout/stderr separation. Each subcommand's
+real end-to-end behavior lives in `test_cli_design.py` and `test_cli_generate.py`.
 
 Two subcommands, not one -- see
 docs/adr/0003-two-phase-invocation-split-at-the-human-gate.md for why a single `run` command would
@@ -73,14 +72,19 @@ def test_generate_requires_a_design_file():
         parser.parse_args(["generate", "--tenant-repo", "/tmp/tenant", "--output", "/tmp/out"])
 
 
-# --- generate is still honest about not existing ----------------------------------------------
+# --- The failure path still yields a parseable envelope ---------------------------------------
 
 
-def test_generate_reports_not_implemented_honestly(capsys):
+def test_generate_fails_cleanly_when_the_design_file_is_missing(capsys):
+    """Was `test_generate_reports_not_implemented_honestly`, until step 42 implemented it.
+
+    The invocation is unchanged and so is the property worth holding: whatever goes wrong, a caller
+    parsing stdout gets one structured object rather than a traceback.
+    """
     exit_code = main(
         [
             "generate",
-            "--design", "/tmp/design.json",
+            "--design", "/tmp/does-not-exist.json",
             "--tenant-repo", "/tmp/tenant",
             "--output", "/tmp/out",
             "--json",
@@ -91,7 +95,8 @@ def test_generate_reports_not_implemented_honestly(capsys):
     assert exit_code == 1
     assert payload["status"] == "error"
     assert payload["phase"] == "generate"
-    assert "Milestone C4" in payload["detail"]
+    assert "FileNotFoundError" in payload["detail"]
+    assert "Not implemented" not in payload["detail"]
 
 
 # --- Both phases join the audit chain, not just `design` --------------------------------------

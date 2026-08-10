@@ -27,6 +27,8 @@ PACKAGE = "com.modernized.batch.processor"
 STEP = BatchStepDesign(
     step_name="computeMonthlyInterest",
     source_paragraphs=["1300-COMPUTE-INTEREST", "1400-COMPUTE-FEES"],
+    input_type="TranCatBal",
+    output_type="TranCatBal",
     role="processor",
     description="Computes monthly interest for one transaction-category balance.",
 )
@@ -107,7 +109,7 @@ def test_the_source_paragraphs_and_model_are_recorded_in_the_file():
 
 def test_a_step_with_no_recorded_paragraphs_says_so_rather_than_rendering_an_empty_list():
     bare = BatchStepDesign(
-        step_name="passThrough", source_paragraphs=[], role="processor", description="d"
+        step_name="passThrough", source_paragraphs=[], input_type="TranCatBal", output_type="TranCatBal", role="processor", description="d"
     )
     source = render_processor(
         bare,
