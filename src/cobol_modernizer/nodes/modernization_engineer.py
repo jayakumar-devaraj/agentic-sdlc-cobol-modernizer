@@ -40,7 +40,12 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from cobol_modernizer.core.complexity import ComplexityTier
-from cobol_modernizer.core.contracts import BatchStepDesign, DomainEntity, ProgramDesignEntry
+from cobol_modernizer.core.contracts import (
+    BatchStepDesign,
+    CompositeType,
+    DomainEntity,
+    ProgramDesignEntry,
+)
 from cobol_modernizer.core.guardrails import wrap_untrusted_cobol
 from cobol_modernizer.core.model_client import call_model
 from cobol_modernizer.core.model_routing import RoutingDecision, resolve_routing
@@ -118,11 +123,25 @@ def processor_class_name(step: BatchStepDesign) -> str:
     return base if base.endswith("Processor") else f"{base}Processor"
 
 
-def render_domain_facts(entities: list[DomainEntity]) -> str:
-    """The domain records -- identical for every step of a run, so this heads the prompt.
+def render_domain_facts(
+    entities: list[DomainEntity], composites: list[CompositeType] | None = None
+) -> str:
+    """The domain records and composites -- identical for every step of a run, so this heads the prompt.
 
     Field precision and scale are stated because `pic_mapper` computed them. The system prompt
     forbids recomputing them; this is what it is pointing at.
+
+    **Why composites are here** (gap G24). ADR-0020 made a step's input and output declared types,
+    and a composite is a type *this repo renders* -- so its components and their accessors are as
+    deterministic as any `pic_mapper` number. They reached the prompt as a bare type name anyway.
+    A real run on 2026-08-10 asked a model to compute interest from a `TranCatBalWithRate` whose
+    declaration appeared nowhere in its prompt: it wrote correct arithmetic twice and guessed the
+    accessors twice, first flattening the composite (`item.tranCatBal()`) and then reaching for
+    JavaBean getters (`item.getTranCatBal()`), and said in its notes that it was guessing and that
+    *"the next attempt should be given the class declaration rather than another guess"*. It was
+    right. This is PR #28's `CobolArithmetic` finding exactly -- a class the generator writes
+    against, whose shape it was never shown -- reappearing for the type ADR-0020 introduced after
+    that fix landed.
     """
     lines = ["## Known Facts (deterministic, do not recompute)", "", "### Domain records", ""]
     for entity in entities:
@@ -134,6 +153,25 @@ def render_domain_facts(entities: list[DomainEntity]) -> str:
                 shape += f"  // precision {field.precision}, scale {field.scale}, {sign}"
             lines.append(f"- {shape}")
         lines.append("")
+
+    if composites:
+        lines += [
+            "### Composite types",
+            "",
+            "Target-side records that compose the above. They correspond to no copybook, so their",
+            "components are declared in design.json rather than derived from COBOL. **These are",
+            "Java records: reach a component with `item.componentName()`, then the record's own",
+            "accessor.** There are no JavaBean getters on any generated type.",
+            "",
+        ]
+        for composite in composites:
+            lines.append(f"#### {composite.name}")
+            for component in composite.components:
+                lines.append(
+                    f"- {component.entity_name} {component.field_name}()"
+                    f"  // e.g. item.{component.field_name}().someField()"
+                )
+            lines.append("")
     return "\n".join(lines)
 
 
@@ -246,6 +284,7 @@ def build_engineer_prompt(
     *,
     input_type: str,
     output_type: str,
+    composites: list[CompositeType] | None = None,
     repair: RepairContext | None = None,
 ) -> str:
     """Stable content first, the per-step instruction last.
@@ -268,7 +307,7 @@ def build_engineer_prompt(
     # reached for `CobolArithmetic` without having been told what was in it, and run 2 wrote a
     # second-choice implementation it had itself named as second-choice for exactly that reason.
     target_api = render_target_api_facts()
-    domain_facts = render_domain_facts(entities)
+    domain_facts = render_domain_facts(entities, composites)
     narration = wrap_untrusted_cobol(
         program_entry.spec_extraction.spec_markdown,
         source_label=f"{program_entry.program_name}-spec",
@@ -338,6 +377,7 @@ def generate_processor(
     entities: list[DomainEntity],
     *,
     package: str,
+    composites: list[CompositeType] | None = None,
     input_type: str,
     output_type: str,
     tier: ComplexityTier = ComplexityTier.COMPLEX,
@@ -381,6 +421,7 @@ def generate_processor(
         resolved,
         input_type=input_type,
         output_type=output_type,
+        composites=composites,
         repair=repair,
     )
 

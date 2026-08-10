@@ -36,6 +36,7 @@ from pathlib import Path
 from cobol_modernizer.core.complexity import ComplexityTier
 from cobol_modernizer.core.contracts import (
     BatchStepDesign,
+    CompositeType,
     DesignDocument,
     DomainEntity,
     ProgramDesignEntry,
@@ -196,6 +197,7 @@ def heal_step(
     entities: list[DomainEntity],
     *,
     package: str,
+    composites: list[CompositeType] | None = None,
     input_type: str,
     output_type: str,
     tier: ComplexityTier = ComplexityTier.COMPLEX,
@@ -235,6 +237,7 @@ def heal_step(
             step,
             entities,
             package=package,
+            composites=composites,
             input_type=input_type,
             output_type=output_type,
             tier=tier,
@@ -429,6 +432,7 @@ def run_generate(
                     step,
                     entities,
                     package=package,
+                    composites=list(design.composite_types),
                     input_type=types[0],
                     output_type=types[1],
                     max_attempts=max_attempts,

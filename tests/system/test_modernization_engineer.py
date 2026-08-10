@@ -17,7 +17,12 @@ from pathlib import Path
 import pytest
 
 from cobol_modernizer.core.complexity import ComplexityTier
-from cobol_modernizer.core.contracts import BatchStepDesign, ProgramDesignEntry
+from cobol_modernizer.core.contracts import (
+    BatchStepDesign,
+    CompositeComponent,
+    CompositeType,
+    ProgramDesignEntry,
+)
 from cobol_modernizer.nodes.modernization_engineer import (
     GeneratedProcessor,
     ModernizationEngineerParseError,
@@ -180,6 +185,51 @@ def test_the_receiving_field_reaches_the_real_prompt_not_just_the_helper(
         STEP, entities, program_entry, resolved, input_type="A", output_type="B"
     )
     assert "WS-MONTHLY-INT -- BigDecimal, precision 11, scale 2, signed" in prompt
+
+
+def test_a_composites_accessors_reach_the_real_prompt(program_entry, entities, resolved):
+    """Gap G24, and asserted through the real builder for the reason the test above exists.
+
+    A real run on 2026-08-10 asked a model to compute interest from a `TranCatBalWithRate` whose
+    declaration was nowhere in its prompt. It wrote correct arithmetic twice and guessed the
+    accessors twice -- `item.tranCatBal()`, flattening the composite, then `item.getTranCatBal()`,
+    reaching for JavaBean getters that no Java record has -- and said in its notes that it was
+    guessing. `build_validator` then correctly refused to call it repairable, because from the
+    diagnostics alone a misspelling and a missing field look identical.
+
+    Nothing about a composite is uncertain: this repo renders the record. It was simply never told.
+    """
+    composite = CompositeType(
+        name="TranCatBalWithRate",
+        components=[
+            CompositeComponent(field_name="balance", entity_name="TranCatBal"),
+            CompositeComponent(field_name="disclosureGroup", entity_name="DisGroup"),
+        ],
+    )
+    prompt = build_engineer_prompt(
+        STEP,
+        entities,
+        program_entry,
+        resolved,
+        input_type="TranCatBalWithRate",
+        output_type="Tran",
+        composites=[composite],
+    )
+
+    assert "TranCatBal balance()" in prompt
+    assert "DisGroup disclosureGroup()" in prompt
+    # The two things the real run got wrong, stated rather than left to be inferred again.
+    assert "item.balance().someField()" in prompt
+    assert "no JavaBean getters" in prompt
+
+
+def test_a_prompt_without_composites_is_unchanged(program_entry, entities, resolved):
+    # Most steps take a plain entity. The composite section must not appear then, or every prompt
+    # pays for a heading that says nothing -- and the shared prefix is the thing caching depends on.
+    prompt = build_engineer_prompt(
+        STEP, entities, program_entry, resolved, input_type="A", output_type="B"
+    )
+    assert "### Composite types" not in prompt
 
 
 def test_the_computes_receiving_field_reaches_the_prompt_as_fact_not_prose(resolved):

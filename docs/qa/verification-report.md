@@ -1608,6 +1608,81 @@ interest arithmetic matches, and no more.**
 
 12 tests.
 
+### Step 45 — the equivalence test, and the first real model-authored business logic
+
+**The harness.** `rendering/java_equivalence_test.py` renders a JUnit test *into the generated
+project*, from the oracle plus a declared `java_binding`. It has to be rendered rather than
+hand-written in the template: the processor class, the composite it consumes and the record it
+returns all come from `design.json`. A test written against `CobolArithmetic` instead would pass no
+matter what the model wrote, which is the one thing step 45 exists to check.
+
+**Demonstrated to discriminate, against real Maven** — three scripted bodies through `author=`:
+
+| Body | Result |
+|---|---|
+| Faithful (`divide`, truncating) | **passes** |
+| `divideRounded` — one token different | **fails on exactly R1, R2, R5, R6, R7, R8** |
+| Correct arithmetic, always emits a transaction | passes every numeric row, **caught only by R10** |
+
+The failing set for the rounding body is asserted against the oracle's own `rejects` metadata, not
+eyeballed — so the prediction `test_interest_oracle.py` checks against Python's `Decimal` is now
+also checked against real Java in a real JVM. R6 failed it with *"expected 0.00 but was -0.01"*, so
+the negative-zero row earns its place outside theory.
+
+#### The first real model call to write business logic through this pipeline
+
+Two runs, both `claude-opus-5` through `modernization_engineer`.
+
+**Run 1 — blocked, and it found a real gap.** The model wrote **correct arithmetic twice** and
+guessed the composite's accessors twice: `item.tranCatBal()` (flattening it), then
+`item.getTranCatBal()` (JavaBean getters, which no Java record has). Its own notes:
+
+> ACCESSOR NAMES ON TranCatBalWithRate ARE UNVERIFIED … If this fails again, the next attempt
+> should be given the class declaration rather than another guess — I have no further evidence to
+> narrow it.
+
+It was right. `TranCatBalWithRate` is a record **this repo renders**, and its declaration appeared
+nowhere in the prompt — PR #28's `CobolArithmetic` finding exactly, reappearing for the type
+ADR-0020 introduced after that fix landed. `build_validator` then did its hard job correctly and
+refused to call it repairable, because from the diagnostics a misspelling and a missing field are
+the same message. **4 calls, $0.79 notional** — above the ~$0.30 a single call was estimated at,
+because the heal loop ran.
+
+**The fix**: composites now reach `render_domain_facts`, guarded by a test asserting through the
+real `build_engineer_prompt` rather than the helper (the G21 lesson).
+
+**Run 2 — compiled on attempt 1, capped at one attempt.** Accessors correct
+(`item.balance().tranCatBal()`), arithmetic correct, and its notes state the truncation reasoning
+unprompted: *"the division is truncated once, directly at the receiving field's scale 2, because
+the COMPUTE has no ROUNDED."* It also used `requireFits` for the receiving field's precision.
+
+**Equivalence result: 9 of 10 — all nine arithmetic rows pass, R10 fails.**
+
+```
+ComputeInterestEquivalenceTest.writesNoTransactionWhenTheRateIsZero
+AssertionFailedError: R10: a zero rate must produce no transaction at all
+  ==> expected: <null> but was: <Tran[... tranAmt=0.00 ...]>
+```
+
+**This is a design finding, not a model error, and the distinction is the point.**
+`STEP.source_paragraphs` is `1300-COMPUTE-INTEREST`, and the guard is *not in it*:
+`IF DIS-INT-RATE NOT = 0` is at `CBACT04C.cbl:214`, in the main `PROCEDURE DIVISION` loop that
+calls the paragraph, which begins at line 462. The model was shown one paragraph and translated
+exactly that paragraph, faithfully. What the equivalence test caught is that **the step design
+hands the generator the callee while the oracle describes behaviour spanning the caller.**
+
+Pinned by `test_the_zero_rate_guard_is_not_in_the_paragraph_the_step_names` rather than fixed by
+widening `source_paragraphs`, because whether the step should name the loop or R10 belongs to a
+different step is a `solution_architect` question, and settling it inside a test would make a design
+decision by accident.
+
+**What this does and does not establish.** The arithmetic half of the translation is now verified
+against COBOL's own answers by a test that has been shown to fail. **The round-trip count stays
+`0 of 4`**: R10 fails, so no program yet passes a full differential test — and the reason it fails
+is worth more than a green run would have been.
+
+18 tests across the two modules.
+
 ## Not yet covered (honest gaps, not silently skipped)
 
 - *(corrected 2026-08-08 — this entry was stale, not merely incomplete)* This previously read
