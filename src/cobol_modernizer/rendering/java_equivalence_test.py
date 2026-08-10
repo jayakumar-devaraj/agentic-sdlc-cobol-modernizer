@@ -93,12 +93,16 @@ def _require_reachable(composite: CompositeType, entity_name: str) -> None:
         )
 
 
-def _construct(entity: DomainEntity, bound_field: str, bound_expression: str) -> str:
+def _construct(entity: DomainEntity, bound_field: str | None, bound_expression: str) -> str:
     """A `new Entity(...)` call with every component supplied positionally, in declaration order.
 
     Positional and in order because these are Java records: a component list that drifts from the
     record's own order compiles whenever the types happen to line up, and then puts the balance in
     the category-code column. Rendering from `entity.fields` is what keeps the two in step.
+
+    `bound_field=None` builds the record entirely from placeholders — for a composite component the
+    oracle does not bind, which is a real case since G26 widened the composite beyond what the
+    interest arithmetic reads.
     """
     arguments = []
     for field in entity.fields:
@@ -159,16 +163,20 @@ def render_equivalence_test(
         ),
         rate_entity.name: _construct(rate_entity, binding["rate_field"]["field"], "new BigDecimal(rate)"),
     }
+    # A component the oracle does not bind is constructed from placeholders rather than refused.
+    # This used to raise, which was right while the composite was exactly balance-plus-rate and
+    # anything else meant a mismatch. It stopped being right when the composite gained `Account`
+    # and `CardXref` (G26): those exist so the step can populate the `Tran` it returns, and the
+    # interest *amount* -- the only thing this oracle has expected values for -- does not read
+    # them. Refusing them would force the test's composite to differ from the design's, which is
+    # the one thing a test rendered from the design must never do.
     composite_arguments = []
     for component in composite.components:
         if component.entity_name in by_entity:
             composite_arguments.append(by_entity[component.entity_name])
-        else:
-            raise UnrenderableOracleError(
-                f"{composite.name!r} carries a {component.entity_name!r} component that the oracle "
-                f"does not bind, so this renderer cannot construct it; bind it or narrow the "
-                f"composite"
-            )
+            continue
+        unbound = _entity(entities, component.entity_name)
+        composite_arguments.append(_construct(unbound, bound_field=None, bound_expression=""))
 
     rows = oracle["rows"]
     csv_lines = ",\n".join(
@@ -182,10 +190,14 @@ def render_equivalence_test(
 
     # The test sits in the processor's package and the types it builds live in the domain package,
     # so they are imported. Sorted and de-duplicated so one design renders one byte-identical file.
-    domain_imports = "\n".join(
-        f"import {domain_package}.{name};"
-        for name in sorted({composite.name, output_entity, balance_entity.name, rate_entity.name})
-    )
+    #
+    # **Every composite component, not just the bound ones.** The construction below instantiates
+    # each component by simple name, so an import set built from the bound entities alone renders a
+    # file that does not compile the moment a composite carries anything else -- which is exactly
+    # what happened when G26 added `Account` and `CardXref`: `cannot find symbol`, twice.
+    imported = {composite.name, output_entity, balance_entity.name, rate_entity.name}
+    imported.update(component.entity_name for component in composite.components)
+    domain_imports = "\n".join(f"import {domain_package}.{name};" for name in sorted(imported))
 
     rendered = f"""\
 package {package};
