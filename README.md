@@ -19,7 +19,7 @@ for why.
 
 ## Architecture
 
-**The `design` half of the diagram below is real and runs end to end today.**
+**Both halves of the diagram below run today.**
 `cobol-modernizer design` executes a compiled LangGraph (ADR-0012): one concurrent branch per
 requested program running `spec_extractor` then `spec_critic`, joining into a single
 `solution_architect` pass that unifies every program's shared copybooks (`Account`/`CVACT01Y` alone
@@ -52,13 +52,17 @@ selected on price, because a benchmark showed it catches planted defects as well
 The decision, its estimated cost, and what it beat all ride into `design.json`, so a reviewer at
 the gate can see which model produced a spec and why.
 
-Three honest limits. **The `generate` half is half-built** (Milestone C4). `modernization_engineer`
-is real: it asks a model for one `process(...)` method body and renders everything structural around
-it from `design.json` (`rendering/`), with the model-authored region marked in the generated file so
-a reviewer can see which lines a model wrote. What is still target design, not built code, is
-`build_validator`, the self-healing compile loop, and the wiring — **the `generate` subcommand
-itself still reports "not implemented", nothing is written to `card-service`, and no generated Java
-has been compiled.** **Retrieval is not wired**: `tools/knowledge_store.py` is a real,
+Three honest limits. **The `generate` half runs, and what it has produced is narrow.**
+`cobol-modernizer generate` reads an approved `design.json`, scaffolds the target project, renders
+the domain records, asks a model for one `process(...)` method body per step, compiles the project,
+and — while `build_validator` judges that a rewrite could help — asks for one, at most three times
+(ADR-0020). The model-authored region is marked in every generated file so a reviewer can see which
+lines a model wrote, and a compile error outside that region blocks rather than being handed back to
+a model. What that does **not** yet amount to: the only body compiled so far is a scripted
+pass-through, **no real model has written business logic through this path**, nothing has been
+written to the real `card-service` repository, and **no generated program has been checked against
+its COBOL for equivalence** — that is step 45, and it needs step 40a's data loader first.
+**Retrieval is not wired**: `tools/knowledge_store.py` is a real,
 tested pgvector storage layer with no production caller, because embeddings need a second vendor
 this environment has no credential for — and because nobody has shown retrieval would help a
 four-program corpus (`docs/adr/0016` decides both halves of that). And **output quality is only
@@ -99,10 +103,9 @@ talks to Kafka, or either repo's git remote, directly — control-plane owns bot
 this repo worktree paths (`docs/adr/0001`).
 [`card-service`](https://github.com/jayakumar-devaraj/card-service) (ADR-0009) is the `generate`
 phase's write target — not this repo's own output, and not `carddemo-tenant-service`'s, which
-stays read-only source of truth throughout. The repo itself exists but is still an empty scaffold —
-**no generated Java has been written to it.** Milestone C4 has started (the target template builds
-on JDK 25, and `modernization_engineer` generates real Java from real COBOL), but `generate` writing
-into `card-service` is still real work ahead. What that target looks like is decided: Java 25 on Spring Batch over **PostgreSQL**,
+stays read-only source of truth throughout. **The repository itself is still an empty scaffold** —
+`generate` can now write a compiling project into a target directory, but nothing has been committed
+to `card-service` itself, and doing that is control-plane's job through its own clone (ADR-0001). What that target looks like is decided: Java 25 on Spring Batch over **PostgreSQL**,
 with CardDemo's data files as a one-time migration source rather than the runtime store, and
 `CBACT01C`'s fixed-`OCCURS` demo outputs scoped out of generation entirely (`docs/adr/0019`). This repo has **no Postgres edge in the diagram on purpose**: `tools/
 knowledge_store.py` can talk to Postgres for the knowledge store's own schema, but nothing in the
@@ -256,7 +259,7 @@ Milestone C4.
 ./.venv/Scripts/python -m pytest --cov=cobol_modernizer --cov-report=term-missing --cov-fail-under=90
 ```
 
-513 tests passing (4 skipped — the opt-in live-CLI tests), 99.03% coverage — CI's own numbers from
+557 tests passing (5 skipped — the opt-in live-CLI tests), 99.03% coverage — CI's own numbers from
 the run on this change, not a local approximation of them. The Postgres-backed
 `tools/knowledge_store.py` suite is included and skips nothing there, because CI provides a real
 service container. The target template's own 13 Java tests are not in that
