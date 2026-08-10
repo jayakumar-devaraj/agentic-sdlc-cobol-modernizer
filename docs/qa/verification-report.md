@@ -13,11 +13,11 @@ was never treated as proof on its own.
 pytest --cov=cobol_modernizer --cov-report=term-missing --cov-fail-under=90
 ```
 
-As of this report: **466 tests passed (4 skipped — the opt-in live-CLI tests)**, measured with the
-Postgres-backed `tools/knowledge_store.py` suite excluded, because Docker's daemon was not running
-on the machine that produced this figure. CI runs that suite against a real service container, and
-**CI's totals are the authoritative ones** — see the step 39 entry below for why this is stated
-rather than rounded over.
+As of this report: **478 tests passed (4 skipped — the opt-in live-CLI tests), 99.11% overall
+coverage** (14 of 1,577 statements uncovered). These are **CI's numbers**, from the run on the
+change that added this line — not a local figure. Locally the Postgres-backed
+`tools/knowledge_store.py` suite skips without a running Docker daemon, which is why the
+authoritative count is taken from CI, where a real service container makes it skip nothing.
 
 `templates/target-spring-boot-baseline/` is Java and is not in that figure. It has its own suite —
 13 tests, 0 skipped — run by CI on the JDK it pins; see the entry below.
@@ -1041,9 +1041,14 @@ has yet written a line of this Java, and nothing below claims otherwise.
   --cov=cobol_modernizer --cov-report=term
 ```
 
-Real result: **466 passed, 4 skipped in 21.33s.** The container suite is excluded above only
-because Docker's daemon is not running on this machine; CI runs it with a real service container,
-and CI's totals are the authoritative ones for this PR.
+Real result locally: **466 passed, 4 skipped in 21.33s**, with the container suite excluded because
+Docker's daemon is not running on this machine.
+
+**CI ran the same suite with a real Postgres service container and reported 478 passed, 4 skipped,
+99.11% coverage** (run `31346976317`, both `test` and `template-build` green). The twelve-test
+difference is exactly `tools/knowledge_store.py`'s suite, which skips nothing there — worth stating
+because a local run of this repo is *structurally* weaker than CI, not merely slower, and a number
+quoted from the wrong one would understate coverage while sounding more careful.
 
 Per-module, on the modules this work added:
 

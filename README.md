@@ -251,10 +251,10 @@ Milestone C4.
 ./.venv/Scripts/python -m pytest --cov=cobol_modernizer --cov-report=term-missing --cov-fail-under=90
 ```
 
-466 tests passing (4 skipped — the opt-in live-CLI tests), measured with the Postgres-backed
-`tools/knowledge_store.py` suite excluded because Docker was not running on the machine that ran
-it; CI runs those against a real service container and its totals are the authoritative ones. The
-numbers a real run produces, not a claim. The target template's own 13 Java tests are not in that
+478 tests passing (4 skipped — the opt-in live-CLI tests), 99.11% coverage — CI's own numbers from
+the run on this change, not a local approximation of them. The Postgres-backed
+`tools/knowledge_store.py` suite is included and skips nothing there, because CI provides a real
+service container. The target template's own 13 Java tests are not in that
 figure; CI runs them separately on JDK 25 (`mvn -B verify`, job `template-build`). Some tests (`tools/knowledge_store.py`'s) need the local
 Postgres+pgvector instance above; they skip with a clear reason rather than failing if it isn't
 running, and CI runs them for real against its own service container rather than letting them skip
