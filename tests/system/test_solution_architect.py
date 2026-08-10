@@ -150,6 +150,7 @@ def _fake_architect_response(entities, programs) -> str:
                             "description": "Reads the first record.",
                             "input_type": entity_name,
                             "output_type": entity_name,
+                            "guard_condition": None,
                         }
                     ],
                 }
@@ -270,6 +271,7 @@ def test_design_solution_rejects_an_unknown_step_role(all_program_entries):
                                 "description": "x",
                                 "input_type": "Account",
                                 "output_type": "Account",
+                                "guard_condition": None,
                             }
                         ],
                     }
@@ -369,6 +371,7 @@ def _architect_with(composites, steps_extra=None, program="CBACT04C"):
         step = {
             "step_name": "s", "source_paragraphs": [], "role": "processor", "description": "d",
             "input_type": "Account", "output_type": "Account",
+            "guard_condition": None,
         }
         step.update(steps_extra or {})
         return json.dumps({

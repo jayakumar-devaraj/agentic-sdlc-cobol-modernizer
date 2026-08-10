@@ -41,7 +41,7 @@ STEP = BatchStepDesign(
     output_type="TranCatBal",
     role="processor",
     description="Returns the input unchanged.",
-)
+        guard_condition=None)
 
 GOOD = "return item;"
 BROKEN = "return CobolArithmetic.truncateTypo(item, 2);"

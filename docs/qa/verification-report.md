@@ -1683,6 +1683,64 @@ is worth more than a green run would have been.
 
 18 tests across the two modules.
 
+### G25 closed — 10 of 10, and the first paragraph-level round trip
+
+**The fix could not be what the gap said it was.** G25 read *"add the guard paragraph to the step"*,
+and there is no such paragraph: `CBACT04C`'s first **named** paragraph is `0000-TCATBALF-OPEN.` at
+line 234, and the guard is at line 214, in the unnamed main body. `source_paragraphs` could only
+have carried `PROCEDURE DIVISION`, scoping the interest step to the file opens, the read loop and
+the account update too. A guard answers *when a step runs*; `source_paragraphs` answers *what code
+it came from*. ADR-0022 adds `guard_condition` rather than overloading the latter.
+
+**Verified against a real model, capped at one attempt.** With the guard declared, `claude-opus-5`
+compiled on attempt 1 and wrote the branch:
+
+```java
+// Guard from the caller of 1300-COMPUTE-INTEREST: IF DIS-INT-RATE NOT = 0
+BigDecimal disIntRate = item.disclosureGroup().disIntRate();
+if (disIntRate == null || disIntRate.compareTo(BigDecimal.ZERO) == 0) {
+    return null;
+}
+```
+
+```
+Tests run: 10, Failures: 0, Errors: 0, Skipped: 0
+  -- in com.modernized.batch.processor.ComputeInterestEquivalenceTest
+```
+
+**All ten rows pass, including R10.** That is COBOL → compiling Java → **passing differential
+test**, and it is the first time this platform has closed that loop on anything.
+
+**It is a paragraph-level round trip, not a program-level one, and the metric stays `0 of 4`.**
+`CBACT04C` is also a rate lookup, a `'DEFAULT'` group fallback, a per-account accumulation, an
+account update and a transaction write. What is verified is `1300-COMPUTE-INTEREST`'s arithmetic and
+the condition it runs under. Reporting this as a migrated program would be exactly the overclaim
+ADR-0021 was written to prevent.
+
+#### Four design gaps the model raised unprompted, none of them guessed at
+
+The `notes` field earned its keep again. Recorded here because each is a real finding about **this
+repo's design**, not about the model:
+
+1. **The step's output type is unreachable from its input.** `Tran` stands in for `1300-B-WRITE-TX`,
+   but `tranId` needs `PARM-DATE` and a per-run counter (neither reachable from a stateless
+   processor — and, it noted, not reproducible under restart or partitioning), `tranCardNum` needs
+   `CardXref`, and `tranOrigTs`/`tranProcTs` come from a paragraph whose target fields are
+   `REDEFINES`, which the construct matrix routes to a human gate. It left them `null` deliberately
+   and said so. Either the composite gains `Account` and `CardXref`, or `1300-B-WRITE-TX` becomes
+   its own downstream step.
+2. **`ADD WS-MONTHLY-INT TO WS-TOTAL-INT` is cross-item state** and does not belong in a stateless
+   processor. Its warning is the sharp one: whichever step owns `1050-UPDATE-ACCOUNT` must
+   accumulate these amounts, *"or the account balance update will be wrong (silently, and by the
+   full interest amount)."*
+3. **`MOVE SPACES` is not `""`.** An empty string and 50 blanks are not the same record on disk if
+   the writer emits fixed width.
+4. It confirmed the interest computation itself is complete and faithful, and said which parts it
+   was confirming rather than asserting completeness in general.
+
+Three of these describe work no step currently owns. They are the natural input to whatever revisits
+`solution_architect`'s step decomposition.
+
 ## Not yet covered (honest gaps, not silently skipped)
 
 - *(corrected 2026-08-08 — this entry was stale, not merely incomplete)* This previously read

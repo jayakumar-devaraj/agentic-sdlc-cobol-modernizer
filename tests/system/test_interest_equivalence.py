@@ -70,6 +70,9 @@ STEP = BatchStepDesign(
     description="Computes monthly interest from a balance and its disclosure-group rate.",
     input_type="TranCatBalWithRate",
     output_type="Tran",
+    # ADR-0022, closing G25. Verbatim from `CBACT04C.cbl:214` -- and note it is *not* in
+    # `1300-COMPUTE-INTEREST`, which is why `source_paragraphs` could never have carried it.
+    guard_condition="IF DIS-INT-RATE NOT = 0",
 )
 
 #: `Tran`'s components in declaration order, with the amount left as a `{}` slot. Written out rather
@@ -343,9 +346,18 @@ def test_the_zero_rate_guard_is_not_in_the_paragraph_the_step_names():
 
     So the finding is about scope: the oracle's R10 describes behaviour spanning the caller, while
     the step design hands the generator only the callee. Either the step must name the guard's
-    paragraph or R10 belongs to whichever step owns the loop. Pinned rather than fixed by widening
-    `source_paragraphs` here, because which one is right is a `solution_architect` question and
-    inventing an answer in a test is how a design decision gets made by accident.
+    paragraph or R10 belongs to whichever step owns the loop.
+
+    **Closed by ADR-0022, and not the way "add the guard paragraph to the step" assumed** -- that
+    turned out to be impossible, because there is no such paragraph. `CBACT04C`'s first *named*
+    paragraph is `0000-TCATBALF-OPEN.` at line 234; the guard is at 214, in the unnamed main body
+    under `PROCEDURE DIVISION`. Naming `PROCEDURE DIVISION` would have scoped the step to the file
+    opens and the account update as well.
+
+    The fix is a declared `guard_condition`, which is where a condition belongs anyway:
+    `source_paragraphs` answers *what code this came from*, a guard answers *when it runs*. This
+    test keeps asserting the source relationship that made the point, so the reason the field
+    exists cannot quietly stop being true.
     """
     source = (FIXTURE_ROOT / "app" / "cbl" / "CBACT04C.cbl").read_text().splitlines()
     guard = next(i for i, line in enumerate(source) if "IF DIS-INT-RATE NOT = 0" in line)
