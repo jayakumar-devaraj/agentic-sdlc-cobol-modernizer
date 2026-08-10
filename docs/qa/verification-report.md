@@ -1101,11 +1101,71 @@ lost-update race the lock exists for, reintroduced in the check rather than the 
 1. **No Java produced here has ever been compiled.** There is no JDK on this machine and Docker's
    daemon is not running, so `javac` has not seen any of it. `templates/`'s own suite compiles on
    CI's JDK 25; this generated output does not yet reach a build at all — that is step 40.
-2. **No real model has written a body.** Every test injects `author`. Whether a real model
-   produces correct, faithful Java from this prompt is unmeasured, and is the single largest open
-   question in Milestone C4.
+2. ~~**No real model has written a body.**~~ **Superseded the same day — one real call has now run.
+   See the entry below.** What remains true is narrower: no real model has yet produced a *working*
+   implementation, and quality across programs is unmeasured.
 3. **Nothing is written to `card-service`**, which still holds 0 Java files. The node has no
    caller: `cli.py`'s `generate` subcommand still returns `"Not implemented"`.
+
+### The first real `modernization_engineer` call — and the design defect it found (step 39)
+
+**One live model call**, `claude-opus-5` via the `claude_cli` backend, 2026-08-09. Real COBOL
+source, real copybooks, real `pic_mapper` output, real routing, real prompt. The narration was the
+hand-verified golden `spec.md` (step 32) rather than a fresh extraction, so the call measured the
+new node instead of re-proving nodes that already have measurements. The `BatchStepDesign` was
+**constructed by hand** from real `CBACT04C` paragraph names — `solution_architect`'s batch design
+is LLM-authored and running it would have been a second call. That hand-construction is what this
+run turned out to be a test of.
+
+**The model refused to implement the step.** Asked for
+`BigDecimal process(TranCatBal item)` from `1300-COMPUTE-INTEREST`, it threw
+`IllegalStateException` with a diagnostic instead of returning a number, on the grounds that the
+paragraph needs `DIS-INT-RATE` and nothing reachable from a `TranCatBal` supplies it.
+
+**Every factual claim in its response was checked against the real source. All of them hold:**
+
+| Claim | Verified against |
+|---|---|
+| `COMPUTE WS-MONTHLY-INT = ( TRAN-CAT-BAL * DIS-INT-RATE) / 1200`, no `ROUNDED` | `CBACT04C.cbl:464-465` — verbatim |
+| `WS-MONTHLY-INT` is `PIC S9(09)V99` | `CBACT04C.cbl:168` — exact |
+| The paragraph also does `ADD WS-MONTHLY-INT TO WS-TOTAL-INT` and `PERFORM 1300-B-WRITE-TX` | `CBACT04C.cbl:467-468` |
+| `DISCGRP-STATUS` `'23'` triggers a `'DEFAULT'` group re-read | Golden fixture's hand-verified business rules |
+| `DIS-INT-RATE` is not reachable from `TranCatBal` | `TranCatBal` really has exactly four components |
+
+**Zero invented identifiers.** The four accessors it emitted — `trancatAcctId()`,
+`trancatTypeCd()`, `trancatCd()`, `tranCatBal()` — are all four real components of the real
+`TranCatBal` entity, spelled correctly. This is the specific failure mode the Known Facts section
+exists to prevent, and on this call it did.
+
+**It also flagged two behaviours that would otherwise be silently lost**: the caller only performs
+the paragraph when `DIS-INT-RATE` is non-zero, and the paragraph accumulates into `WS-TOTAL-INT`
+and writes a transaction — neither expressible in a step whose signature returns one `BigDecimal`.
+
+**The defect is in the design, not the model.** A step design of
+`TranCatBal -> BigDecimal` for this paragraph is genuinely insufficient, and the hand-constructed
+input was wrong in exactly the way the feasibility assessment's § 3.3 predicted in the abstract:
+*"`design.json` is too thin to generate from... the generator will infer most of the architecture
+from prose."* **That prediction is now measured rather than argued** — and the failure mode was the
+good one: refusal with a diagnostic, not a confident invention.
+
+**Measured cost and token profile — the first real numbers for this node:**
+
+| | Placeholder in `model_routing.yaml` | Measured |
+|---|---:|---:|
+| Input tokens | 50,000 | **39,862** (39,860 cache-creation + 2) |
+| Output tokens | 30,000 | **2,894** |
+| Notional cost | — | **$0.302311** |
+| Duration | — | 40.9s |
+
+**Output came in at roughly a tenth of the placeholder**, which is the render-don't-generate split
+showing up in the measurement: the model writes a method body, not a file. The profile is
+deliberately **not** updated from this single call — it is one sample and an atypical one, since a
+refusal is not a representative implementation. It is recorded so the next call has something to
+be compared against rather than replacing evidence with a single point.
+
+**Note for the caching work**: `cache_creation_input_tokens` was 39,860 against `cache_read` of 0,
+so the CLI backend did write a cache entry for this prefix. Whether a second call against the same
+99.8% prefix reads it is the obvious next measurement and has not been made.
 
 ## Not yet covered (honest gaps, not silently skipped)
 
