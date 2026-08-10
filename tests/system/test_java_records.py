@@ -167,6 +167,18 @@ def test_the_error_names_the_cobol_field_so_the_report_points_at_the_source():
         render_record(_entity_with_field("class"), package=PACKAGE)
 
 
+def test_an_entity_with_no_fields_renders_an_empty_record_rather_than_invalid_java():
+    # solution_architect drops these before they reach the renderer (ADR-0010: a copybook that
+    # maps zero fields produces no entity), so this is the defensive branch. It is covered rather
+    # than excused, because "unreachable today" and "unreachable" differ by one refactor.
+    empty = DomainEntity(
+        name="Placeholder", source_copybook="CVEMPTY", used_by_programs=["CBACT04C"], fields=[]
+    )
+    source = render_record(empty, package=PACKAGE)
+    assert "public record Placeholder() {}" in source
+    assert "import java.math.BigDecimal;" not in source
+
+
 def test_a_reserved_entity_name_raises_too():
     entity = DomainEntity(
         name="class", source_copybook="CVACT01Y", used_by_programs=["CBACT01C"], fields=[]
