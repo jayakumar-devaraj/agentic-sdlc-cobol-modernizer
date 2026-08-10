@@ -1741,6 +1741,45 @@ repo's design**, not about the model:
 Three of these describe work no step currently owns. They are the natural input to whatever revisits
 `solution_architect`'s step decomposition.
 
+### G27 — the accumulator's owning step, and what giving it one exposed
+
+**The gap said the accumulator needs an owning step. Giving it one showed the owning step would have
+been invisible.**
+
+`1050-UPDATE-ACCOUNT` does `ADD WS-TOTAL-INT TO ACCT-CURR-BAL`. It cannot be an `ItemProcessor` — a
+stateless per-item processor holds nothing across items — so any step owning it must carry a
+non-processor role. And `generate` skipped every non-processor with a bare `continue`, appending no
+outcome at all.
+
+**Measured, not inferred.** A design of one processor plus one writer reported:
+
+```json
+{"status": "ok", "steps_total": 1, "steps_compiled": 1}
+```
+
+byte-identical to a design containing nothing else. A human approving that at control-plane's gate
+saw a complete success over a job whose account update had never been generated.
+
+**The test was written to fail first**, and it did, for the right reason — `Right contains one more
+item: 'updateAccount'` — before any fix existed.
+
+**What changed** (ADR-0023): a non-processor step now produces a `StepOutcome` with status
+`not_generated`, carrying its role and its `source_paragraphs`, and `GenerateCliResult` gains
+`steps_not_generated`. `succeeded` is measured over *generable* steps, so a declared writer does not
+flip a run to failure — most non-processors really are wiring, and failing on them would train a
+reviewer to ignore the signal.
+
+**An old test had encoded the defect as a requirement.** `test_non_processor_steps_are_skipped_rather_than_failed`
+asserted `len(outcome.outcomes) == 1` — i.e. that the reader vanished. It now asserts the reader is
+**both present and non-fatal**, which is what it was actually protecting.
+
+**G27 is closed for reporting and open for generation, and that split is deliberate.** Rendering a
+stateful control-break writer is a design question before a code one — Spring Batch's chunk
+boundaries do not align with COBOL's account breaks — and ADR-0019 scopes this pipeline to
+processors. The gap is now **visible at the gate** rather than invisible everywhere, which is the
+difference between a known limitation and a defect. The balance arithmetic itself is still not
+generated, and nothing here claims otherwise.
+
 ## Not yet covered (honest gaps, not silently skipped)
 
 - *(corrected 2026-08-08 — this entry was stale, not merely incomplete)* This previously read

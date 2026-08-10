@@ -42,6 +42,11 @@
       "title": "Steps Exhausted",
       "type": "integer"
     },
+    "steps_not_generated": {
+      "default": 0,
+      "title": "Steps Not Generated",
+      "type": "integer"
+    },
     "steps_total": {
       "default": 0,
       "title": "Steps Total",
