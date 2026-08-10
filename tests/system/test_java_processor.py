@@ -85,8 +85,13 @@ def test_duplicate_imports_collapse():
 
 
 def test_the_framework_imports_are_always_present_even_with_no_body_imports():
+    # `...batch.infrastructure.item...`, not `...batch.item...`. This assertion carried the pre-6
+    # package and so codified the bug: Spring Batch 6 moved it, and every processor rendered until
+    # then had an import that does not resolve. A string assertion cannot catch that on its own --
+    # `test_build_validator.py::test_a_rendered_processor_actually_compiles` is what pins it, by
+    # compiling one. This test only guards against the imports going missing entirely.
     source = _render(body_imports=[])
-    assert "import org.springframework.batch.item.ItemProcessor;" in source
+    assert "import org.springframework.batch.infrastructure.item.ItemProcessor;" in source
     assert "import org.springframework.stereotype.Component;" in source
 
 
