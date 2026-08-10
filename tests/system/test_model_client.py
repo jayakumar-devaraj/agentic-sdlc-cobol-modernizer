@@ -24,7 +24,7 @@ import pytest
 from cobol_modernizer.core import model_client
 from cobol_modernizer.core.model_client import (
     BACKEND_ENV_VAR,
-    MAX_ATTEMPTS,
+    MAX_TRANSPORT_ATTEMPTS,
     ModelCallError,
     call_model,
     resolve_backend,
@@ -186,7 +186,7 @@ def test_cli_gives_up_after_max_attempts(cli_backend, monkeypatch, no_backoff):
     with pytest.raises(ModelCallError, match="after retries"):
         call_model("spec_extractor", "claude-opus-5", "SYSTEM", "USER")
 
-    assert calls["n"] == MAX_ATTEMPTS  # bounded, not infinite
+    assert calls["n"] == MAX_TRANSPORT_ATTEMPTS  # bounded, not infinite
 
 
 def test_cli_does_not_retry_a_non_retryable_error(cli_backend, monkeypatch, no_backoff):

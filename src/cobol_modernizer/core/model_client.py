@@ -65,7 +65,15 @@ BACKEND_ENV_VAR = "COBOL_MODERNIZER_MODEL_BACKEND"
 DEFAULT_BACKEND: Backend = "claude_cli"
 
 REQUEST_TIMEOUT_SECONDS = float(os.getenv("COBOL_MODERNIZER_LLM_TIMEOUT", "300"))
-MAX_ATTEMPTS = int(os.getenv("COBOL_MODERNIZER_LLM_MAX_ATTEMPTS", "5"))
+
+#: How many times one HTTP call is retried against a *transport* failure -- a 429, a 5xx, a dropped
+#: connection. Named for what it bounds, because step 42's self-healing loop introduces a second,
+#: unrelated attempt cap (how many times a model may be asked to repair code that does not compile)
+#: and the two multiply if they are ever confused for each other. That is the same failure ADR-0013
+#: describes for SDK-level retry stacking on top of this module's own loop: invisible in both
+#: layers' logs, and quadratic in cost. The previous name, a bare `MAX_ATTEMPTS`, was one careless
+#: import away from becoming the heal cap as well.
+MAX_TRANSPORT_ATTEMPTS = int(os.getenv("COBOL_MODERNIZER_LLM_MAX_ATTEMPTS", "5"))
 MAX_BACKOFF_SECONDS = 30.0
 
 #: Ceiling used only when a caller supplies none. Deliberately generous rather than the previous
@@ -473,7 +481,7 @@ def call_model(
     """
     chosen = resolve_backend(backend)
 
-    for attempt in range(1, MAX_ATTEMPTS + 1):
+    for attempt in range(1, MAX_TRANSPORT_ATTEMPTS + 1):
         retryable_status: int | None = None
         try:
             if chosen == "claude_cli":
@@ -496,14 +504,14 @@ def call_model(
             if retryable_status is None:
                 raise ModelCallError(chosen, attempt, f"{type(exc).__name__}: {exc}") from exc
 
-        if attempt == MAX_ATTEMPTS:
+        if attempt == MAX_TRANSPORT_ATTEMPTS:
             raise ModelCallError(
                 chosen, attempt, f"still failing with status {retryable_status} after retries"
             )
         delay = _sleep_for_attempt(attempt)
         logger.warning(
             "model call retry node=%s backend=%s status=%s attempt=%d/%d backoff=%.1fs",
-            node, chosen, retryable_status, attempt, MAX_ATTEMPTS, delay,
+            node, chosen, retryable_status, attempt, MAX_TRANSPORT_ATTEMPTS, delay,
         )
 
     raise AssertionError("unreachable: the loop either returns or raises")
