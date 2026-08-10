@@ -22,12 +22,16 @@ from cobol_modernizer.nodes.spec_extractor import group_field_mappings_by_source
 from cobol_modernizer.tools.data_loader import (
     DataFormatError,
     FixedWidthField,
+    apply_spring_batch_schema,
     decode_zoned_decimal,
     derive_layout,
+    derive_table_ddl,
     field_byte_width,
+    load_file,
     measure_record_length,
     parse_record,
     read_records,
+    spring_batch_schema_sql,
 )
 from cobol_modernizer.tools.tenant_repo import resolve_program
 
@@ -221,3 +225,225 @@ def test_a_short_record_is_named_in_the_error(tmp_path):
     path.write_bytes(b"1234567890\n12345\n")
     with pytest.raises(DataFormatError, match="not a uniform width"):
         read_records(path)
+
+
+# --- What the real data does and does not exercise ------------------------------------------------
+
+
+def test_every_real_balance_is_zero_which_step_45_must_not_ignore():
+    """A finding, pinned so it cannot be forgotten between here and the equivalence test.
+
+    `CBACT04C` computes `(TRAN-CAT-BAL * DIS-INT-RATE) / 1200`, and **every `TRAN-CAT-BAL` in the
+    shipped CardDemo data is zero**. So every interest it computes on that data is zero -- and an
+    equivalence test run against these files alone would pass for *any* implementation that returns
+    zero, including a badly wrong one. It would be a test that cannot fail.
+
+    Step 45 therefore needs non-zero balances, which means either fabricated input or a second
+    dataset. Recorded here rather than in prose because this test fails the moment that stops being
+    true, which is exactly when the assumption should be revisited.
+    """
+    groups = group_field_mappings_by_source(resolve_program(FIXTURE_ROOT, "CBACT04C"))
+    layout = derive_layout(groups["CVTRA01Y"][0])
+    balances = {
+        parse_record(record, layout)["TRAN-CAT-BAL"]
+        for record in read_records(DATA / "tcatbal.txt")
+    }
+    assert balances == {Decimal("0.00")}
+
+
+def test_the_real_rates_do_decode_to_plausible_values():
+    # The other side of the finding: `discgrp.txt` is real, varied data, so the reader is not
+    # merely returning zero for everything.
+    groups = group_field_mappings_by_source(resolve_program(FIXTURE_ROOT, "CBACT04C"))
+    layout = derive_layout(groups["CVTRA02Y"][0])
+    rates = {
+        parse_record(record, layout)["DIS-INT-RATE"]
+        for record in read_records(DATA / "discgrp.txt")
+    }
+    assert rates == {Decimal("0.00"), Decimal("15.00"), Decimal("25.00")}
+
+
+def test_only_the_zero_overpunch_appears_in_real_signed_fields():
+    # Stated so the synthetic overpunch tests above are not mistaken for real-data coverage: every
+    # signed numeric in the shipped files ends `{` (+0). The other nineteen forms are exercised by
+    # construction only, and a real file containing one would be new information.
+    groups = group_field_mappings_by_source(resolve_program(FIXTURE_ROOT, "CBACT04C"))
+    seen = set()
+    for copybook, datafile in (("CVTRA01Y", "tcatbal"), ("CVTRA02Y", "discgrp")):
+        layout = derive_layout(groups[copybook][0])
+        signed = [f for f in layout if f.signed]
+        for record in read_records(DATA / f"{datafile}.txt"):
+            for field in signed:
+                seen.add(record[field.start + field.length - 1])
+    assert seen == {"{"}
+
+
+# --- Schema derivation ------------------------------------------------------------------------------
+
+
+def test_numeric_columns_carry_pic_mappers_precision_and_scale(groups):
+    # A hand-written schema is a third place the decimal point can be wrong, and the only one where
+    # being wrong is silent: PostgreSQL rounds into a narrower NUMERIC rather than raising.
+    ddl = derive_table_ddl("tran_cat_bal", groups["CVTRA01Y"][0])
+    assert "tran_cat_bal NUMERIC(11, 2)" in ddl
+    assert "trancat_type_cd VARCHAR(2)" in ddl
+
+
+def test_filler_becomes_no_column(groups):
+    # FILLER names padding, not data, and pic_mapper gives every FILLER the same name -- keeping
+    # them would collide.
+    assert "filler" not in derive_table_ddl("tran_cat_bal", groups["CVTRA01Y"][0]).lower()
+
+
+def test_a_record_of_only_filler_has_no_table_to_make():
+    with pytest.raises(DataFormatError, match="no non-FILLER fields"):
+        derive_table_ddl("empty", [])
+
+
+# --- The load itself, against a real PostgreSQL instance -------------------------------------------
+#
+# Same posture as `test_knowledge_store.py`: these need a real database and skip with a clear
+# reason rather than weakening into an in-memory equivalent. CI provides the service container, so
+# they run there for real rather than skipping forever.
+
+_CREDENTIALS_FILE = FIXTURE_ROOT.parent / "db_credentials_sample" / "local.conn"
+_SKIP_REASON = (
+    "Could not reach the local Postgres instance via the credentials at "
+    f"{_CREDENTIALS_FILE} (see docker-compose.yml's `postgres` service, localhost:5434). "
+    "This system test requires a real running instance."
+)
+
+
+def _connect_or_none():
+    from cobol_modernizer.tools import knowledge_store
+    from cobol_modernizer.tools.knowledge_store import KnowledgeStoreCredentialsError
+
+    try:
+        return knowledge_store.connect(_CREDENTIALS_FILE)
+    except (KnowledgeStoreCredentialsError, knowledge_store.psycopg.Error):
+        return None
+
+
+_BATCH_TABLES = (
+    "BATCH_STEP_EXECUTION_CONTEXT, BATCH_JOB_EXECUTION_CONTEXT, BATCH_STEP_EXECUTION, "
+    "BATCH_JOB_EXECUTION_PARAMS, BATCH_JOB_EXECUTION, BATCH_JOB_INSTANCE"
+)
+#: Spring Batch creates sequences as well as tables. A cleanup that drops only the tables leaves
+#: `BATCH_STEP_EXECUTION_SEQ` behind, and the next `apply_spring_batch_schema` fails on it -- which
+#: is how these tests first failed, and why the names are listed rather than assumed.
+_BATCH_SEQUENCES = "BATCH_STEP_EXECUTION_SEQ, BATCH_JOB_EXECUTION_SEQ, BATCH_JOB_INSTANCE_SEQ"
+
+
+def _clean(connection) -> None:
+    # Roll back first: a test that asserted on a raising statement leaves the transaction aborted,
+    # and every later command in it is refused until it ends.
+    connection.rollback()
+    with connection.cursor() as cursor:
+        cursor.execute("DROP TABLE IF EXISTS systest_tran_cat_bal, systest_card_xref")
+        cursor.execute(f"DROP TABLE IF EXISTS {_BATCH_TABLES} CASCADE")
+        cursor.execute(f"DROP SEQUENCE IF EXISTS {_BATCH_SEQUENCES} CASCADE")
+    connection.commit()
+
+
+@pytest.fixture
+def db():
+    connection = _connect_or_none()
+    if connection is None:
+        pytest.skip(_SKIP_REASON)
+    try:
+        _clean(connection)
+        yield connection
+    finally:
+        _clean(connection)
+        connection.close()
+
+
+def test_every_real_record_lands_in_postgres_with_its_computed_types(db, groups):
+    loaded = load_file(
+        db,
+        table_name="systest_tran_cat_bal",
+        data_path=DATA / "tcatbal.txt",
+        mappings=groups["CVTRA01Y"][0],
+    )
+    assert loaded == 50
+
+    with db.cursor() as cursor:
+        cursor.execute("SELECT count(*) FROM systest_tran_cat_bal")
+        assert cursor.fetchone()[0] == 50
+        # The column really is NUMERIC(11, 2), so the value comes back as a Decimal at that scale
+        # rather than as a float that has already lost the cents.
+        cursor.execute(
+            "SELECT numeric_precision, numeric_scale FROM information_schema.columns "
+            "WHERE table_name = 'systest_tran_cat_bal' AND column_name = 'tran_cat_bal'"
+        )
+        assert cursor.fetchone() == (11, 2)
+
+
+def test_a_file_that_contradicts_its_copybook_is_refused_rather_than_partly_loaded(db, groups):
+    # `cardxref.txt` is 36 bytes against `CVACT03Y`'s 50. The leading fields would read correctly,
+    # so a partial load would look like success while silently dropping whatever follows.
+    with pytest.raises(DataFormatError, match="would misread or silently drop"):
+        load_file(
+            db,
+            table_name="systest_card_xref",
+            data_path=DATA / "cardxref.txt",
+            mappings=groups["CVACT03Y"][0],
+        )
+
+    with db.cursor() as cursor:
+        cursor.execute(
+            "SELECT count(*) FROM information_schema.tables WHERE table_name = 'systest_card_xref'"
+        )
+        assert cursor.fetchone()[0] == 0, "a refused load must not leave a table behind"
+
+
+# --- Spring Batch's own metadata schema, which nothing else creates ---------------------------------
+
+
+def _spring_batch_jar() -> Path | None:
+    """The `spring-batch-core` jar the target project resolves, from the local Maven repository."""
+    root = Path.home() / ".m2" / "repository" / "org" / "springframework" / "batch" / "spring-batch-core"
+    if not root.is_dir():
+        return None
+    jars = sorted(root.rglob("spring-batch-core-*.jar"))
+    return jars[-1] if jars else None
+
+
+def test_the_metadata_ddl_is_read_out_of_the_jar_on_the_classpath():
+    """PR #27 found that Spring Boot 4 removed `spring.batch.jdbc.*`, so nothing creates these.
+
+    Read from the jar rather than copied into this repo: a copy is a second source of truth that
+    goes stale on the next version bump, silently, in a file nobody re-reads.
+    """
+    jar = _spring_batch_jar()
+    if jar is None:
+        pytest.skip("spring-batch-core is not in the local Maven repository; run a template build")
+    sql = spring_batch_schema_sql(jar)
+    assert "BATCH_JOB_INSTANCE" in sql.upper()
+    assert sql.upper().count("CREATE TABLE") == 6
+
+
+def test_a_jar_without_the_resource_raises_rather_than_returning_nothing(tmp_path):
+    # Returning empty SQL would apply cleanly and create no tables -- exactly PR #27's failure,
+    # where `initialize-schema=always` was accepted and counted zero tables.
+    import zipfile
+
+    jar = tmp_path / "empty.jar"
+    with zipfile.ZipFile(jar, "w") as archive:
+        archive.writestr("unrelated.txt", "x")
+    with pytest.raises(DataFormatError, match="does not contain"):
+        spring_batch_schema_sql(jar)
+
+
+def test_the_metadata_tables_really_are_created(db):
+    jar = _spring_batch_jar()
+    if jar is None:
+        pytest.skip("spring-batch-core is not in the local Maven repository; run a template build")
+
+    assert apply_spring_batch_schema(db, jar) == 6
+
+    with db.cursor() as cursor:
+        cursor.execute(
+            "SELECT count(*) FROM information_schema.tables WHERE table_name LIKE 'batch%'"
+        )
+        assert cursor.fetchone()[0] == 6

@@ -25,9 +25,11 @@ and a reader that quietly repairs its input makes that test meaningless.
 from __future__ import annotations
 
 import logging
+import zipfile
 from dataclasses import dataclass
 from decimal import Decimal
 from pathlib import Path
+from typing import Any
 
 from cobol_modernizer.tools.pic_mapper import PicMapping
 
@@ -198,3 +200,138 @@ def parse_record(record: str, fields: list[FixedWidthField]) -> dict[str, str | 
                 chunk, scale=field.scale, signed=field.signed
             )
     return values
+
+
+#: Where Spring Batch keeps its own DDL inside `spring-batch-core`.
+SPRING_BATCH_SCHEMA_RESOURCE = "org/springframework/batch/core/schema-postgresql.sql"
+
+
+def derive_table_ddl(table_name: str, mappings: list[PicMapping]) -> str:
+    """`CREATE TABLE` for one copybook's record, with column types computed by `pic_mapper`.
+
+    **`NUMERIC(p, s)` comes from the same precision and scale the generated Java carries.** A
+    hand-written schema is a third place the decimal point can be wrong -- after the copybook and
+    the Java -- and the one place where being wrong is silent, because a narrower column rounds on
+    insert rather than raising. Deriving it means the column, the record and the code cannot
+    disagree.
+
+    `FILLER` is skipped: it names padding, not data, and `pic_mapper` gives every `FILLER` the same
+    name, so keeping them would collide.
+    """
+    columns: list[str] = []
+    for mapping in mappings:
+        if mapping.field_name.upper() == "FILLER":
+            continue
+        column = _column_name(mapping.field_name)
+        if mapping.precision is not None:
+            columns.append(f"    {column} NUMERIC({mapping.precision}, {mapping.scale or 0})")
+        else:
+            columns.append(f"    {column} VARCHAR({mapping.string_length})")
+
+    if not columns:
+        raise DataFormatError(f"{table_name} has no non-FILLER fields to make columns from")
+
+    body = ",\n".join(columns)
+    return f"CREATE TABLE IF NOT EXISTS {table_name} (\n{body}\n);"
+
+
+def _column_name(cobol_field_name: str) -> str:
+    """`TRAN-CAT-BAL` -> `tran_cat_bal`. Mechanical, like every other name transform here."""
+    return cobol_field_name.lower().replace("-", "_")
+
+
+def spring_batch_schema_sql(jar_path: Path) -> str:
+    """Spring Batch's own metadata DDL, read out of the jar actually on the classpath.
+
+    **Extracted rather than copied into this repo, and this step owns applying it at all.** PR #27
+    found that Spring Boot 4 removed `spring.batch.jdbc.*` from `BatchProperties` entirely, so
+    `initialize-schema=always` is silently ignored and *nothing* creates `BATCH_JOB_INSTANCE` and
+    friends -- the first CI run set it and counted zero tables. ADR-0019 was amended to move schema
+    ownership here as a result.
+
+    Reading it from the jar keeps it pinned to the Spring Batch version the target project resolves.
+    A copy in this repo would be a second source of truth that goes stale on the next version bump,
+    silently, in a file nobody re-reads.
+    """
+    with zipfile.ZipFile(jar_path) as jar:
+        try:
+            return jar.read(SPRING_BATCH_SCHEMA_RESOURCE).decode("utf-8")
+        except KeyError:
+            raise DataFormatError(
+                f"{jar_path.name} does not contain {SPRING_BATCH_SCHEMA_RESOURCE}; the Spring "
+                "Batch version may have moved it, and the metadata tables would then never be "
+                "created (PR #27)"
+            ) from None
+
+
+def load_file(
+    connection: Any,
+    *,
+    table_name: str,
+    data_path: Path,
+    mappings: list[PicMapping],
+) -> int:
+    """Create `table_name` from the copybook and insert every record of `data_path`. Returns the count.
+
+    One migration concern, not two (ADR-0019's amendment): the table's shape and the data that goes
+    into it both come from the same `pic_mapper` output, so a column cannot be narrower than the
+    value it will hold. That is not a theoretical tidiness -- PostgreSQL rounds a value into a
+    narrower `NUMERIC` silently rather than raising, so a schema derived separately from the reader
+    would corrupt balances with no error anywhere.
+
+    Idempotent on the table (`CREATE TABLE IF NOT EXISTS`) and **not** on the rows: a caller that
+    wants a clean load truncates first. Hiding a `DELETE` inside a function called `load` is the
+    kind of surprise that costs someone a dataset.
+    """
+    layout = derive_layout(mappings)
+    file_width = measure_record_length(data_path.read_bytes())
+    copybook_width = sum(field.length for field in layout)
+    if file_width != copybook_width:
+        # `cardxref.txt` against `CVACT03Y` is the known case. Refuse rather than truncate: the
+        # fields that *are* present would still be read correctly, and loading them would look like
+        # success while silently dropping whatever the copybook says comes after.
+        raise DataFormatError(
+            f"{data_path.name} records are {file_width} bytes but {table_name}'s copybook layout "
+            f"is {copybook_width}; loading would misread or silently drop fields"
+        )
+
+    insertable = [field for field in layout if field.name.upper() != "FILLER"]
+    columns = ", ".join(_column_name(field.name) for field in insertable)
+    placeholders = ", ".join(["%s"] * len(insertable))
+    statement = f"INSERT INTO {table_name} ({columns}) VALUES ({placeholders})"
+
+    with connection.cursor() as cursor:
+        cursor.execute(derive_table_ddl(table_name, mappings))
+        rows = [
+            tuple(parse_record(record, layout)[field.name] for field in insertable)
+            for record in read_records(data_path)
+        ]
+        cursor.executemany(statement, rows)
+    connection.commit()
+
+    logger.info("data_loader: loaded %d row(s) into %s from %s", len(rows), table_name, data_path.name)
+    return len(rows)
+
+
+def apply_spring_batch_schema(connection: Any, jar_path: Path) -> int:
+    """Create Spring Batch's metadata tables. Returns how many `CREATE TABLE` statements ran.
+
+    **Nothing else creates these.** Spring Boot 4 removed `spring.batch.jdbc.*`, so
+    `initialize-schema=always` is accepted and ignored -- PR #27's first CI run set it and counted
+    zero tables. A job repository without them fails at runtime, not at startup.
+
+    **Not idempotent, unlike `load_file`'s `CREATE TABLE IF NOT EXISTS`.** Spring Batch's own DDL
+    uses bare `CREATE TABLE` and `CREATE SEQUENCE`, so a second application raises
+    `DuplicateTable` -- and it creates *sequences* as well as tables, which a cleanup that drops
+    only tables will miss. That asymmetry is deliberate rather than smoothed over: this is Spring
+    Batch's schema, and rewriting their DDL to add `IF NOT EXISTS` would mean maintaining a
+    divergent copy of it, which is the drift this function reads from the jar to avoid. A caller
+    that needs to re-run drops first.
+    """
+    sql = spring_batch_schema_sql(jar_path)
+    with connection.cursor() as cursor:
+        cursor.execute(sql)
+    connection.commit()
+    created = sql.upper().count("CREATE TABLE")
+    logger.info("data_loader: applied Spring Batch schema (%d table(s)) from %s", created, jar_path.name)
+    return created
