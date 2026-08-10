@@ -1505,11 +1505,56 @@ balances: fabricated input, or a second dataset. Pinned by a test that fails the
 being true. `discgrp.txt` is genuinely varied by contrast (rates `0.00`, `15.00`, `25.00`), so the
 reader is not merely returning zero for everything.
 
-Also recorded: **every signed field in the shipped files ends `{`** (+0), so the other nineteen
+Also recorded: ~~**every signed field in the shipped files ends `{`** (+0), so the other nineteen
 overpunch forms are covered by construction only. A real file containing one would be new
-information.
+information.~~
+
+> **Superseded 2026-08-10 — this was false, and it was false when written.** It generalised from
+> the only two data files this step loaded. See the next section: a third real file contains all
+> twenty forms.
 
 41 tests, **100%** on the module.
+
+### `dailytran.txt` — the third real file, and the claim above being wrong
+
+**The check.** The sentence struck through above said a real file carrying a non-`{` overpunch
+"would be new information". One exists, and it had been in the corpus the whole time.
+`app/data/ASCII/` holds nine files; step 40a loaded three, and the two it drew that conclusion from
+(`tcatbal`, `discgrp`) are both `CBACT04C`'s. Both really do only ever carry `{`, so nothing in the
+suite was wrong — the *scope* of the conclusion was.
+
+**What `dailytran.txt` contains**, measured through the real code path (`derive_layout` over
+`CVTRA06Y`, not a hand-written offset table):
+
+| | |
+|---|---|
+| Records / width | 300 · derived 350 = measured 350, so **no width discrepancy** here, unlike `cardxref` |
+| `DALYTRAN-AMT` final byte | **all twenty forms** — `{ABCDEFGHI` positive, `}JKLMNOPQR` negative |
+| Values | 299 distinct across 300 records, **−998.33 to +999.77**, 50 negative, sum `104801.54` |
+| Fixture | byte-verified — staged blob SHA `848919fe…` matches the remote |
+
+The negative half of `decode_zoned_decimal` had never been reached by a real byte: every negative
+test was a literal written in this repo. It is now exercised at real offsets in real records, and
+the values survive a load into the derived `NUMERIC(11, 2)` and a read back — asserted on
+PostgreSQL's own `min`/`max`/`sum` rather than on a row count, because a column narrower than the
+copybook rounds cents away **silently**.
+
+**Why the balances are zero, which turns out not to be arbitrary.** `CBTRN02C` is the program that
+writes `tcatbal` — `ADD DALYTRAN-AMT TO TRAN-CAT-BAL`, on both its create and update paths. The
+shipped file is therefore the state **before posting has run**, and the non-zero balances step 45
+needs are stage one of CardDemo's own pipeline over `dailytran.txt`, not fabricated input.
+
+That claim is pinned against the COBOL source, deliberately **not** by computing the posted balances
+in Python and comparing. Such an oracle would be one reading of `CBTRN02C`, and step 45 checking
+generated Java against it would be comparing two renderings of the same interpretation — a fifth
+check that cannot fail, arriving by the route the first four came by.
+
+**What this does and does not unblock.** It supplies step 45's *input* side from real data and
+removes the fabrication question for it. It does not supply an *oracle*: expected outputs for
+`CBACT04C` still have to come from somewhere other than this repo's own implementation, and nothing
+here decides that.
+
+6 tests, module still at **100%**.
 
 ## Not yet covered (honest gaps, not silently skipped)
 
