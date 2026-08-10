@@ -43,10 +43,11 @@ from cobol_modernizer.core.guardrails import wrap_untrusted_cobol
 from cobol_modernizer.core.model_client import call_model
 from cobol_modernizer.core.model_routing import RoutingDecision, resolve_routing
 from cobol_modernizer.core.structured_output import strip_code_fence
+from cobol_modernizer.nodes.spec_extractor import group_field_mappings_by_source
 from cobol_modernizer.prompts_registry_client.loader import prompt_path
 from cobol_modernizer.rendering.java_processor import render_processor
 from cobol_modernizer.rendering.target_api import render_target_api_facts
-from cobol_modernizer.tools.tenant_repo import resolve_program
+from cobol_modernizer.tools.tenant_repo import ResolvedProgram, resolve_program
 
 logger = logging.getLogger(__name__)
 
@@ -119,6 +120,49 @@ def render_domain_facts(entities: list[DomainEntity]) -> str:
     return "\n".join(lines)
 
 
+def render_program_field_facts(resolved: ResolvedProgram) -> str:
+    """The program's own declared fields, with `pic_mapper`'s computed precision and scale.
+
+    **Why this exists** (gap G21). `build_domain_entities` merges **copybook-sourced fields only**
+    (ADR-0010), so a program's `WORKING-STORAGE` never reached this prompt -- including
+    `WS-MONTHLY-INT`, which is the *receiving* field of `CBACT04C`'s interest `COMPUTE` and
+    therefore what sets the result's target precision and scale. A real model call inferred it as
+    `precision 11, scale 2`, was right, and said plainly that it was inferring and would rather be
+    told. It is right: a target scale is exactly the kind of number this repo does not let a model
+    decide, for the same reason `pic_mapper` may not call one -- a wrong scale on a currency field
+    looks exactly like a right one.
+
+    **Rendered as COBOL declarations, not as Java accessors, on purpose.** These are program-local
+    variables, not components of any domain record. Rendering them in the accessor shape the domain
+    records use would invite calls to methods that do not exist -- trading a narrated scale for a
+    hallucinated getter, which is a worse bargain than the one being fixed.
+
+    Resolves ADR-0010's invariant rather than weakening it: entities are still merged by copybook
+    name only, and this is a separate, per-program section beside them.
+    """
+    by_source = group_field_mappings_by_source(resolved)
+    mapped, _unsupported = by_source.get(resolved.program_name, ([], []))
+    if not mapped:
+        return ""
+
+    lines = [
+        f"### Program-local fields declared in {resolved.program_name}",
+        "",
+        "Computed by pic_mapper from the real PIC clauses, exactly like the domain records above.",
+        "**These are the program's own variables -- they are not components of any record and have",
+        "no accessor.** They are listed so that a COMPUTE's receiving field has a stated precision",
+        "and scale rather than one read off a PIC clause in the untrusted narration.",
+        "",
+    ]
+    for field_mapping in mapped:
+        shape = f"- {field_mapping.field_name} -- {field_mapping.java_type}"
+        if field_mapping.precision is not None:
+            sign = "signed" if field_mapping.signed else "unsigned"
+            shape += f", precision {field_mapping.precision}, scale {field_mapping.scale}, {sign}"
+        lines.append(shape)
+    return "\n".join(lines)
+
+
 def render_step_facts(
     step: BatchStepDesign, *, input_type: str, output_type: str
 ) -> str:
@@ -139,7 +183,7 @@ def build_engineer_prompt(
     step: BatchStepDesign,
     entities: list[DomainEntity],
     program_entry: ProgramDesignEntry,
-    cobol_source: str,
+    resolved: ResolvedProgram,
     *,
     input_type: str,
     output_type: str,
@@ -169,7 +213,7 @@ def build_engineer_prompt(
         program_entry.spec_extraction.spec_markdown,
         source_label=f"{program_entry.program_name}-spec",
     )
-    source = wrap_untrusted_cobol(cobol_source, source_label=program_entry.program_name)
+    source = wrap_untrusted_cobol(resolved.source_text, source_label=program_entry.program_name)
     step_facts = render_step_facts(step, input_type=input_type, output_type=output_type)
     return f"{target_api}\n\n{domain_facts}\n\n{narration}\n\n{source}\n\n{step_facts}"
 
@@ -258,7 +302,7 @@ def generate_processor(
         rendering.java_processor.UnrenderableImportError: an import is not a qualified name.
         rendering.java_names.UnrenderableJavaNameError: the class name is not legal Java.
     """
-    program_source = resolve_program(worktree_root, program_entry.program_name).source_text
+    resolved = resolve_program(worktree_root, program_entry.program_name)
     routing_kwargs = {"config_path": model_routing_config} if model_routing_config else {}
     routing = resolve_routing(_NODE_NAME, tier, **routing_kwargs)
 
@@ -266,7 +310,7 @@ def generate_processor(
         step,
         entities,
         program_entry,
-        program_source,
+        resolved,
         input_type=input_type,
         output_type=output_type,
     )

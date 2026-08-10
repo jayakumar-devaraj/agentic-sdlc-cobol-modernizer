@@ -706,7 +706,7 @@ from `ModelCallResult` (instrumentation ADR-0013 already provides).
 
 **Retry policy verified by call count, not by hope**: retryable statuses (429/500/503), timeouts,
 and SDK connection failures each retry and then succeed; a 4xx is attempted exactly once; the loop
-stops at `MAX_ATTEMPTS` rather than running forever. Backoff is confirmed bounded by the cap and
+stops at `MAX_TRANSPORT_ATTEMPTS` rather than running forever. Backoff is confirmed bounded by the cap and
 actually jittered (30 samples, all distinct values, each equal to what was really slept).
 
 **A real accident, recorded rather than quietly fixed.** Changing the default backend to

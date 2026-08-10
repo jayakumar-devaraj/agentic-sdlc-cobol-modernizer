@@ -25,6 +25,7 @@ from cobol_modernizer.nodes.modernization_engineer import (
     generate_processor,
     processor_class_name,
     render_domain_facts,
+    render_program_field_facts,
 )
 from cobol_modernizer.nodes.solution_architect import build_domain_entities
 from cobol_modernizer.nodes.spec_critic import critique_spec
@@ -36,6 +37,7 @@ from cobol_modernizer.rendering.java_processor import (
     GeneratedBodyForgeryError,
     UnrenderableImportError,
 )
+from cobol_modernizer.tools.tenant_repo import resolve_program
 
 FIXTURE_ROOT = Path(__file__).parent.parent / "fixtures" / "tenant_repo_sample"
 PROGRAM = "CBACT04C"
@@ -75,6 +77,12 @@ def program_entry() -> ProgramDesignEntry:
     return ProgramDesignEntry(
         program_name=PROGRAM, spec_extraction=extraction, critique=critique
     )
+
+
+@pytest.fixture(scope="module")
+def resolved():
+    """The real resolved program -- source plus every copybook it COPYs."""
+    return resolve_program(FIXTURE_ROOT, PROGRAM)
 
 
 @pytest.fixture(scope="module")
@@ -155,12 +163,46 @@ def test_domain_facts_state_precision_and_scale_so_the_model_never_recomputes_th
     assert "precision 12, scale 2, signed" in facts
 
 
-def test_the_prompt_wraps_both_the_narration_and_the_real_cobol_source(program_entry, entities):
+def test_the_computes_receiving_field_reaches_the_prompt_as_fact_not_prose(resolved):
+    """Gap G21, closed. WS-MONTHLY-INT sets the target scale of CBACT04C's interest COMPUTE.
+
+    It is declared in WORKING-STORAGE, so ADR-0010's copybook-only entity merge excluded it and it
+    reached the generator only inside the untrusted narration. A real model call inferred
+    `precision 11, scale 2`, was right, and said it was inferring. A target scale is not something
+    this repo lets a model decide.
+    """
+    facts = render_program_field_facts(resolved)
+    assert "WS-MONTHLY-INT" in facts
+    assert "precision 11, scale 2, signed" in facts
+    # The accumulator the same paragraph writes into, for the same reason.
+    assert "WS-TOTAL-INT" in facts
+
+
+def test_program_local_fields_are_not_rendered_as_record_accessors(resolved):
+    # They are program variables, not components of any domain record. Rendering them in the
+    # accessor shape would trade a narrated scale for a hallucinated getter -- a worse bargain.
+    facts = render_program_field_facts(resolved)
+    assert "WS-MONTHLY-INT()" not in facts
+    assert "no accessor" in facts
+
+
+def test_a_program_with_no_local_fields_contributes_nothing(program_entry, entities, resolved):
+    # An empty section would be a heading with nothing under it, which reads as missing data.
+    from cobol_modernizer.tools.tenant_repo import ResolvedProgram
+
+    bare = ResolvedProgram(
+        program_name="EMPTY", source_text="IDENTIFICATION DIVISION.", copy_statements=[],
+        copybook_sources={},
+    )
+    assert render_program_field_facts(bare) == ""
+
+
+def test_the_prompt_wraps_both_the_narration_and_the_real_cobol_source(program_entry, entities, resolved):
     prompt = build_engineer_prompt(
         STEP,
         entities,
         program_entry,
-        "IDENTIFICATION DIVISION.",
+        resolved,
         input_type="TranCatBal",
         output_type="BigDecimal",
     )
@@ -168,7 +210,7 @@ def test_the_prompt_wraps_both_the_narration_and_the_real_cobol_source(program_e
     assert f'<untrusted-cobol-source label="{PROGRAM}">' in prompt
 
 
-def test_everything_shared_across_steps_is_a_genuine_prefix(program_entry, entities):
+def test_everything_shared_across_steps_is_a_genuine_prefix(program_entry, entities, resolved):
     # The G13/ADR-0017 property, applied to `generate`. Two steps of one program must produce
     # prompts that are byte-identical until the step-specific tail, or a cache sees two different
     # prompts where it should see one prefix reused. Asserting the shared span *is* a prefix is
@@ -180,10 +222,10 @@ def test_everything_shared_across_steps_is_a_genuine_prefix(program_entry, entit
         description="Writes the computed interest transaction.",
     )
     first = build_engineer_prompt(
-        STEP, entities, program_entry, "SOURCE", input_type="A", output_type="B"
+        STEP, entities, program_entry, resolved, input_type="A", output_type="B"
     )
     second = build_engineer_prompt(
-        other, entities, program_entry, "SOURCE", input_type="A", output_type="B"
+        other, entities, program_entry, resolved, input_type="A", output_type="B"
     )
 
     shared = len(os.path.commonprefix([first, second]))
@@ -196,9 +238,9 @@ def test_everything_shared_across_steps_is_a_genuine_prefix(program_entry, entit
     assert "computeMonthlyInterest" in first[shared:]
 
 
-def test_the_untrusted_source_precedes_the_step_instruction(program_entry, entities):
+def test_the_untrusted_source_precedes_the_step_instruction(program_entry, entities, resolved):
     prompt = build_engineer_prompt(
-        STEP, entities, program_entry, "SOURCE", input_type="A", output_type="B"
+        STEP, entities, program_entry, resolved, input_type="A", output_type="B"
     )
     assert prompt.index("<untrusted-cobol-source") < prompt.index("## The step you are")
 
