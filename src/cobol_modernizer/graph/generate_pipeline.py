@@ -29,11 +29,18 @@ layers' logs and quadratic in cost.
 from __future__ import annotations
 
 import logging
+import shutil
 from dataclasses import dataclass, field
 from pathlib import Path
 
 from cobol_modernizer.core.complexity import ComplexityTier
-from cobol_modernizer.core.contracts import BatchStepDesign, DomainEntity, ProgramDesignEntry
+from cobol_modernizer.core.contracts import (
+    BatchJobDesign,
+    BatchStepDesign,
+    DesignDocument,
+    DomainEntity,
+    ProgramDesignEntry,
+)
 from cobol_modernizer.nodes.build_validator import AdviseFn, ValidationVerdict, validate_build
 from cobol_modernizer.nodes.modernization_engineer import (
     AuthorFn,
@@ -53,6 +60,12 @@ logger = logging.getLogger(__name__)
 #: plan. **Not** `model_client.MAX_TRANSPORT_ATTEMPTS`, which bounds something else entirely --
 #: see the module docstring for why keeping them apart matters.
 MAX_HEAL_ATTEMPTS = 3
+
+#: The baseline Maven project `generate` copies into an empty target repo (ADR-0009, ADR-0019).
+TEMPLATE_DIR = Path(__file__).resolve().parents[3] / "templates" / "target-spring-boot-baseline"
+
+#: Where generated processors are declared. `card-service`'s own package, not this repo's.
+DEFAULT_PACKAGE = "com.modernized.batch.processor"
 
 
 @dataclass(frozen=True)
@@ -95,6 +108,53 @@ def _extract_body(java_source: str) -> str:
         return ""
     lines = java_source.splitlines()[span[0] - 1 : span[1]]
     return "\n".join(line.strip() for line in lines)
+
+
+def materialize_target_project(output_dir: Path, template_dir: Path = TEMPLATE_DIR) -> bool:
+    """Ensure `output_dir` is a Maven project, copying the baseline template in if it is not.
+
+    Returns True when the template was copied, False when a project was already there.
+
+    **Never overwrites an existing project.** `card-service` is a real repository (ADR-0009), and a
+    second run that clobbered a reviewed scaffold would destroy work between the gate and the
+    merge. The presence of a `pom.xml` is the test, because that is what `local_compiler` requires
+    and what makes the directory buildable at all.
+    """
+    if (output_dir / "pom.xml").is_file():
+        return False
+
+    output_dir.mkdir(parents=True, exist_ok=True)
+    for entry in template_dir.iterdir():
+        target = output_dir / entry.name
+        if target.exists():
+            continue
+        if entry.is_dir():
+            shutil.copytree(entry, target, ignore=shutil.ignore_patterns("target"))
+        else:
+            shutil.copy2(entry, target)
+    logger.info("generate: materialized the baseline template into %s", output_dir)
+    return True
+
+
+def processor_types(step: BatchStepDesign, job: BatchJobDesign) -> tuple[str, str] | None:
+    """The `ItemProcessor<I, O>` type arguments for `step`, or `None` when the design omits them.
+
+    **It always returns `None` today, and that is the finding rather than a stub.** A processor's
+    signature is two types, and `BatchStepDesign` records `step_name`, `source_paragraphs`, `role`
+    and `description` -- none of which is one. `BatchJobDesign.domain_entities` lists what the job
+    touches, but which entity a given step consumes and what it produces is not derivable from a
+    list: a job over `[TranCatBal, DisGroup]` could have a step taking either, returning either,
+    or returning something neither names.
+
+    Guessing would be the exact inference this repo refuses elsewhere -- and the first real
+    generate call already demonstrated the cost, refusing to invent a rate rather than fabricate
+    one. So this names the gap instead of filling it, and `run_generate` turns it into a blocked
+    outcome that says what the design must state.
+
+    Closing it is a contract change to `BatchStepDesign` plus the `solution_architect` prompt that
+    fills it, which is an ADR-shaped decision rather than something to slip in here.
+    """
+    return None
 
 
 def heal_step(
@@ -220,4 +280,136 @@ def heal_step(
         java_source=java_source,
         relative_path=relative_path,
         notes=tuple(notes),
+    )
+
+
+@dataclass(frozen=True)
+class GenerateOutcome:
+    """Everything one `generate` invocation produced, for the CLI summary and a human gate."""
+
+    outcomes: tuple[StepOutcome, ...]
+    scaffolded: bool
+    output_dir: str
+
+    @property
+    def compiled(self) -> tuple[StepOutcome, ...]:
+        return tuple(o for o in self.outcomes if o.status == "compiled")
+
+    @property
+    def blocked(self) -> tuple[StepOutcome, ...]:
+        return tuple(o for o in self.outcomes if o.status == "blocked")
+
+    @property
+    def exhausted(self) -> tuple[StepOutcome, ...]:
+        return tuple(o for o in self.outcomes if o.status == "exhausted")
+
+    @property
+    def succeeded(self) -> bool:
+        """Every processor step compiled, and there was at least one to compile.
+
+        An empty run is not a success: a design that yielded no generable step means the pipeline
+        produced nothing, and reporting that as `ok` would tell control-plane's gate that a
+        migration happened when none did.
+        """
+        return bool(self.outcomes) and len(self.compiled) == len(self.outcomes)
+
+
+def run_generate(
+    design_path: Path,
+    worktree_root: Path,
+    output_dir: Path,
+    *,
+    package: str = DEFAULT_PACKAGE,
+    max_attempts: int = MAX_HEAL_ATTEMPTS,
+    author: AuthorFn | None = None,
+    advise: AdviseFn | None = None,
+) -> GenerateOutcome:
+    """Run the whole `generate` phase from an approved `design.json`.
+
+    Sequential across every processor step of every program -- see the module docstring for why
+    concurrency would be incorrect here rather than merely unnecessary.
+
+    Raises:
+        FileNotFoundError: `design_path` does not exist.
+        ValueError: the document has no `unified_design`, so there is nothing to generate from.
+        tools.local_compiler.ToolchainNotFoundError: no JDK or no Maven.
+        tools.local_compiler.CompileTimeoutError: a build exceeded its ceiling.
+    """
+    document = DesignDocument.model_validate_json(design_path.read_text(encoding="utf-8"))
+    if document.unified_design is None:
+        raise ValueError(
+            f"{design_path} has no unified_design; `design` must run before `generate`"
+        )
+
+    entities = document.unified_design.domain_entities
+    entries = {entry.program_name: entry for entry in document.programs}
+    scaffolded = materialize_target_project(output_dir)
+
+    outcomes: list[StepOutcome] = []
+    for job in document.unified_design.batch_jobs:
+        entry = entries.get(job.program_name)
+        if entry is None:
+            logger.warning(
+                "generate: job %s names program %s, which is not in this design document",
+                job.job_name, job.program_name,
+            )
+            continue
+
+        for step in job.steps:
+            if step.role != "processor":
+                # Readers, writers and tasklets are Spring Batch wiring rather than translated
+                # business logic, and `rendering/java_processor.py` renders an ItemProcessor only.
+                # Skipped rather than failed: nothing is wrong, this step is simply not this
+                # renderer's to produce.
+                logger.info(
+                    "generate: skipping %s/%s (role=%s, not a processor)",
+                    job.program_name, step.step_name, step.role,
+                )
+                continue
+
+            types = processor_types(step, job)
+            if types is None:
+                outcomes.append(
+                    StepOutcome(
+                        program_name=job.program_name,
+                        step_name=step.step_name,
+                        class_name="",
+                        status="blocked",
+                        attempts=0,
+                        reason=(
+                            "the design does not state this step's input and output types, and "
+                            "an ItemProcessor cannot be generated without both. BatchStepDesign "
+                            "records step_name, source_paragraphs, role and description only; "
+                            "which entity the step consumes and what it produces is not derivable "
+                            "from the job's entity list. Deriving it would be a guess"
+                        ),
+                    )
+                )
+                continue
+
+            outcomes.append(
+                heal_step(
+                    worktree_root,
+                    output_dir,
+                    entry,
+                    step,
+                    entities,
+                    package=package,
+                    input_type=types[0],
+                    output_type=types[1],
+                    max_attempts=max_attempts,
+                    author=author,
+                    advise=advise,
+                )
+            )
+
+    logger.info(
+        "generate: %d step(s) -- %d compiled, %d blocked, %d exhausted",
+        len(outcomes),
+        len([o for o in outcomes if o.status == "compiled"]),
+        len([o for o in outcomes if o.status == "blocked"]),
+        len([o for o in outcomes if o.status == "exhausted"]),
+    )
+    return GenerateOutcome(
+        outcomes=tuple(outcomes), scaffolded=scaffolded, output_dir=str(output_dir)
     )

@@ -242,6 +242,18 @@ class GenerateCliResult(BaseModel):
     run_id: str
     output_path: str
     detail: str
+    #: Processor steps this run attempted. Zero means the design yielded nothing generable, which
+    #: is reported as an error rather than a vacuous success -- see `GenerateOutcome.succeeded`.
+    steps_total: int = 0
+    #: Steps whose file compiled as part of the target project.
+    steps_compiled: int = 0
+    #: Steps stopped without spending the attempt budget: a design defect, an error in rendered
+    #: scaffolding, or a build failure with no located diagnostic. **Not** the same as exhausted:
+    #: these were never worth retrying, and conflating them would hide the difference between "the
+    #: model could not fix it" and "no model could".
+    steps_blocked: int = 0
+    #: Steps that spent every heal attempt and still did not compile.
+    steps_exhausted: int = 0
 
 
 def build_gate_items(programs: list[ProgramDesignEntry]) -> list[GateItem]:

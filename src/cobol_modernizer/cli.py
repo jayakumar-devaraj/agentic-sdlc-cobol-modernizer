@@ -7,9 +7,10 @@ compile. Control-plane's own durable gate sits between two separate, independent
 process invocations, not inside one continuous flow -- see
 docs/adr/0003-two-phase-invocation-split-at-the-human-gate.md.
 
-`design` is fully wired (ADR-0012): it runs the real LangGraph pipeline over the requested
-programs and writes real artifacts. `generate` is still the Milestone C1 skeleton; it lands in
-Milestone C4, once `modernization_engineer` and `build_validator` exist.
+Both subcommands are wired. `design` runs the real LangGraph pipeline (ADR-0012) over the
+requested programs and writes real artifacts. `generate` runs the self-healing loop: render a
+processor, write it into the target project, compile, and -- while `build_validator` says a rewrite
+could help -- ask for one, at most three times.
 
 **stdout carries exactly one JSON object and nothing else** when `--json` is passed. Every log
 line goes to stderr (`telemetry/logging_config.py`). That contract is the reason this module
@@ -29,6 +30,7 @@ from pathlib import Path
 from cobol_modernizer.core.contracts import DesignCliResult, GenerateCliResult
 from cobol_modernizer.core.design_outputs import write_design_outputs
 from cobol_modernizer.graph.design_graph import run_design
+from cobol_modernizer.graph.generate_pipeline import run_generate
 from cobol_modernizer.telemetry.logging_config import bind_run_id, configure_logging
 
 logger = logging.getLogger(__name__)
@@ -149,23 +151,62 @@ def _run_design_command(args: argparse.Namespace) -> tuple[DesignCliResult, int]
 
 
 def _run_generate_command(args: argparse.Namespace) -> tuple[GenerateCliResult, int]:
-    """The Milestone C1 skeleton -- the sub-pipeline itself still lands in Milestone C4.
-
-    The correlation id is bound here rather than in the C4 work that will fill this in, so that
-    every log line the loop eventually emits inherits it without that change having to remember to.
-    """
+    """Execute the `generate` subcommand. Returns the stdout contract object and the exit code."""
     run_id = args.run_id or uuid.uuid4().hex
+    output_dir = Path(args.output)
     bind_run_id(run_id)
 
-    logger.info("generate phase: design_file=%s", args.design)
+    logger.info(
+        "generate: start design=%s tenant_repo=%s output=%s",
+        args.design, args.tenant_repo, output_dir,
+    )
+
+    try:
+        outcome = run_generate(Path(args.design), Path(args.tenant_repo), output_dir)
+    except Exception as exc:
+        # Deliberately broad, for the reason `_run_design_command` documents: a caller parsing
+        # stdout must get a structured reason even when something unanticipated failed. The full
+        # traceback still reaches stderr.
+        logger.exception("generate: failed")
+        return (
+            GenerateCliResult(
+                status="error",
+                run_id=run_id,
+                output_path=str(output_dir),
+                detail=f"{type(exc).__name__}: {exc}",
+            ),
+            1,
+        )
+
+    unfinished = outcome.blocked + outcome.exhausted
+    if outcome.succeeded:
+        detail = f"Generated and compiled {len(outcome.compiled)} processor step(s)."
+    elif not outcome.outcomes:
+        detail = (
+            "No processor steps to generate: the design's batch jobs contain no steps with "
+            "role='processor'."
+        )
+    else:
+        # The first unfinished reason, in full. A count alone tells a reviewer that something is
+        # wrong without telling them what, and the reason is the part that took a model call.
+        detail = (
+            f"{len(outcome.compiled)} of {len(outcome.outcomes)} processor step(s) compiled. "
+            f"First unresolved: {unfinished[0].program_name}/{unfinished[0].step_name} -- "
+            f"{unfinished[0].reason}"
+        )
+
     return (
         GenerateCliResult(
-            status="error",
+            status="ok" if outcome.succeeded else "error",
             run_id=run_id,
-            output_path=args.output,
-            detail="Not implemented: the generate sub-pipeline lands in Milestone C4.",
+            output_path=str(output_dir),
+            detail=detail,
+            steps_total=len(outcome.outcomes),
+            steps_compiled=len(outcome.compiled),
+            steps_blocked=len(outcome.blocked),
+            steps_exhausted=len(outcome.exhausted),
         ),
-        1,
+        0 if outcome.succeeded else 1,
     )
 
 
