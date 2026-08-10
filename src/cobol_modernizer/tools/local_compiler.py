@@ -155,15 +155,19 @@ def resolve_build_command(project_dir: Path) -> list[str]:
 
     Raises `CompilerNotFoundError` when neither exists.
     """
-    # `mvnw.cmd` on Windows, `mvnw` elsewhere. Checked by existence rather than by platform so a
-    # POSIX shell on Windows (which is how this repo's own tests run) gets the script that works.
+    # **Chosen by platform, not by which file happens to exist.** Both scripts are committed, so an
+    # existence-ordered check picks `mvnw.cmd` on Linux too -- where it is a Windows batch file
+    # carrying no execute bit, and `subprocess` fails with `PermissionError: [Errno 13]`. That is a
+    # failure only a non-Windows run can produce, which is precisely why CI is the arbiter for this
+    # module rather than a green local suite.
     #
     # **Absolute, not relative.** `compile_project` runs the child with `cwd=project_dir`, so a
     # path relative to the *caller's* working directory resolves against the wrong base inside the
     # child and Maven never starts -- the failure is `The system cannot find the path specified.`
     # in 186ms, which arrives downstream as a build failure with zero diagnostics rather than as
     # anything that names the real cause.
-    for candidate in ("mvnw.cmd", "mvnw"):
+    candidates = ("mvnw.cmd", "mvnw") if os.name == "nt" else ("mvnw",)
+    for candidate in candidates:
         wrapper = project_dir / candidate
         if wrapper.is_file():
             return [str(wrapper.resolve())]

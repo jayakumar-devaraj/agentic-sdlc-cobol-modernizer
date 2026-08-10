@@ -14,6 +14,7 @@ would have found that — only running it did. CI gives this job a JDK for the s
 
 from __future__ import annotations
 
+import os
 import shutil
 from pathlib import Path
 
@@ -119,6 +120,22 @@ def test_render_is_one_actionable_line_plus_its_details():
 def test_the_projects_pinned_wrapper_is_preferred_over_path_maven():
     (command,) = resolve_build_command(TEMPLATE)
     assert Path(command).name in {"mvnw", "mvnw.cmd"}
+
+
+def test_the_wrapper_is_chosen_by_platform_not_by_which_file_exists():
+    # Both scripts are committed, so an existence-ordered check picks `mvnw.cmd` on Linux -- a
+    # Windows batch file with no execute bit, which fails as `PermissionError: [Errno 13]`. Caught
+    # by CI and not by any local run on Windows, where the .cmd is the correct choice.
+    (command,) = resolve_build_command(TEMPLATE)
+    expected = "mvnw.cmd" if os.name == "nt" else "mvnw"
+    assert Path(command).name == expected
+
+
+@pytest.mark.skipif(os.name == "nt", reason="execute bits are not meaningful on Windows")
+def test_the_posix_wrapper_is_executable():
+    assert os.access(TEMPLATE / "mvnw", os.X_OK), (
+        "mvnw lost its execute bit; ./mvnw fails as Permission denied on any POSIX runner"
+    )
 
 
 def test_the_wrapper_path_is_absolute():
