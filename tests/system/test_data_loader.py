@@ -422,7 +422,9 @@ def _clean(connection) -> None:
     # and every later command in it is refused until it ends.
     connection.rollback()
     with connection.cursor() as cursor:
-        cursor.execute("DROP TABLE IF EXISTS systest_tran_cat_bal, systest_card_xref")
+        cursor.execute(
+            "DROP TABLE IF EXISTS systest_tran_cat_bal, systest_card_xref, systest_daily_tran"
+        )
         cursor.execute(f"DROP TABLE IF EXISTS {_BATCH_TABLES} CASCADE")
         cursor.execute(f"DROP SEQUENCE IF EXISTS {_BATCH_SEQUENCES} CASCADE")
     connection.commit()
@@ -460,6 +462,37 @@ def test_every_real_record_lands_in_postgres_with_its_computed_types(db, groups)
             "WHERE table_name = 'systest_tran_cat_bal' AND column_name = 'tran_cat_bal'"
         )
         assert cursor.fetchone() == (11, 2)
+
+
+def test_the_negative_amounts_survive_the_round_trip_through_postgres(db, trn_groups):
+    """The first real signed-negative data this repo has put into a column.
+
+    `tcatbal` proved a load works and proved nothing about the sign, because every value in it is
+    `+0`. Here the sign has to survive the overpunch decode, the `NUMERIC(11, 2)` column and the
+    read back -- and a `NUMERIC` narrower than the copybook would round the cents away *silently*,
+    which is the failure this schema is derived rather than hand-written to avoid.
+    """
+    loaded = load_file(
+        db,
+        table_name="systest_daily_tran",
+        data_path=DATA / "dailytran.txt",
+        mappings=trn_groups["CVTRA06Y"][0],
+    )
+    assert loaded == 300
+
+    with db.cursor() as cursor:
+        cursor.execute(
+            "SELECT count(*), min(dalytran_amt), max(dalytran_amt), sum(dalytran_amt) "
+            "FROM systest_daily_tran"
+        )
+        assert cursor.fetchone() == (
+            300,
+            Decimal("-998.33"),
+            Decimal("999.77"),
+            Decimal("104801.54"),
+        )
+        cursor.execute("SELECT count(*) FROM systest_daily_tran WHERE dalytran_amt < 0")
+        assert cursor.fetchone()[0] == 50
 
 
 def test_a_file_that_contradicts_its_copybook_is_refused_rather_than_partly_loaded(db, groups):
