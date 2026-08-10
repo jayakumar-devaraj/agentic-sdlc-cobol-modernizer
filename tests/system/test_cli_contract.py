@@ -13,6 +13,7 @@ be wrong for a repo with no durable state (ADR-0001).
 
 from __future__ import annotations
 
+import argparse
 import json
 
 import pytest
@@ -91,6 +92,70 @@ def test_generate_reports_not_implemented_honestly(capsys):
     assert payload["status"] == "error"
     assert payload["phase"] == "generate"
     assert "Milestone C4" in payload["detail"]
+
+
+# --- Both phases join the audit chain, not just `design` --------------------------------------
+#
+# `--run-id` was accepted by `design` and silently absent from `generate` for 27 PRs. Nothing
+# failed, because nothing asserted the two subcommands offered the same correlation surface --
+# the gap was invisible to a suite that tested each subcommand on its own terms. The parity test
+# below is the one that would have caught it, and is deliberately written against the parser
+# rather than against a hardcoded flag list so it keeps holding as arguments are added.
+
+
+def _optional_flags(parser, subcommand: str) -> set[str]:
+    """Every long option the given subcommand accepts, `--help` aside."""
+    action = next(a for a in parser._actions if isinstance(a, argparse._SubParsersAction))
+    sub = action.choices[subcommand]
+    return {opt for a in sub._actions for opt in a.option_strings if opt != "--help"}
+
+
+def test_correlation_and_transport_flags_are_offered_by_both_phases():
+    parser = build_parser()
+    shared = {"--run-id", "--json", "--tenant-repo", "--output"}
+
+    missing_from_design = shared - _optional_flags(parser, "design")
+    missing_from_generate = shared - _optional_flags(parser, "generate")
+
+    assert not missing_from_design, f"design is missing {sorted(missing_from_design)}"
+    assert not missing_from_generate, f"generate is missing {sorted(missing_from_generate)}"
+
+
+def test_generate_uses_a_supplied_run_id_verbatim_and_echoes_it(capsys):
+    exit_code = main(
+        [
+            "generate",
+            "--design", "/tmp/design.json",
+            "--tenant-repo", "/tmp/tenant",
+            "--output", "/tmp/out",
+            "--run-id", "cp-run-77",
+            "--json",
+        ]
+    )
+    captured = capsys.readouterr()
+
+    assert exit_code == 1
+    assert json.loads(captured.out)["run_id"] == "cp-run-77"
+    # The point of accepting it: control-plane's audit entry and this phase's stderr share an id.
+    assert "run_id=cp-run-77" in captured.err
+
+
+def test_generate_mints_a_run_id_when_none_is_supplied(capsys):
+    exit_code = main(
+        [
+            "generate",
+            "--design", "/tmp/design.json",
+            "--tenant-repo", "/tmp/tenant",
+            "--output", "/tmp/out",
+            "--json",
+        ]
+    )
+    captured = capsys.readouterr()
+    run_id = json.loads(captured.out)["run_id"]
+
+    assert exit_code == 1
+    assert run_id
+    assert f"run_id={run_id}" in captured.err
 
 
 # --- Logging goes to stderr, never corrupts the --json stdout contract ------------------------

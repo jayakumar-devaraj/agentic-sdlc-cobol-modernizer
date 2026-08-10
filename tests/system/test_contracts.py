@@ -292,8 +292,19 @@ def test_design_cli_result_requires_a_run_id():
 
 
 def test_generate_cli_result_minimal_shape():
-    result = GenerateCliResult(status="ok", output_path="/tmp/out", detail="done")
+    result = GenerateCliResult(
+        status="ok", run_id="r-1", output_path="/tmp/out", detail="done"
+    )
     assert result.phase == "generate"
+
+
+def test_generate_cli_result_requires_a_run_id():
+    # The mirror of test_design_cli_result_requires_a_run_id, and required for the same reason.
+    # It is a separate test rather than a parametrization of that one because the two models have
+    # genuinely different required fields; what must not differ is whether run_id is among them,
+    # which is the asymmetry that let `generate` go 27 PRs without a correlation id at all.
+    with pytest.raises(ValidationError):
+        GenerateCliResult(status="ok", output_path="/tmp/out", detail="done")
 
 
 def test_gate_item_requires_a_known_category():

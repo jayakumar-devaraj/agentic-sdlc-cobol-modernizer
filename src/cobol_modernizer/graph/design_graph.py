@@ -59,7 +59,7 @@ from cobol_modernizer.core.contracts import (
     UnifiedDesign,
     build_design_document,
 )
-from cobol_modernizer.core.model_client import UsageAccumulator, collect_usage
+from cobol_modernizer.core.model_client import RunBudget, UsageAccumulator, collect_usage
 from cobol_modernizer.nodes.solution_architect import ArchitectFn, design_solution
 from cobol_modernizer.nodes.spec_critic import CritiqueFn, critique_spec
 from cobol_modernizer.nodes.spec_extractor import NarrateFn, SpecExtractionResult, extract_spec
@@ -243,6 +243,7 @@ def run_design(
     critique: CritiqueFn | None = None,
     architect: ArchitectFn | None = None,
     model_routing_config: Path | None = None,
+    budget: RunBudget | None = None,
 ) -> DesignDocument:
     """Run the whole `design` phase and return the `design.json` contract object.
 
@@ -271,7 +272,7 @@ def run_design(
     # The accumulator is bound *before* invoke so every branch thread inherits it in its copied
     # context (ADR-0018). Binding it inside a node would be too late for the branches already
     # running, and would give each its own instance.
-    with collect_usage() as usage:
+    with collect_usage(budget if budget is not None else RunBudget()) as usage:
         try:
             final_state = app.invoke(
                 {

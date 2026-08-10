@@ -1,5 +1,5 @@
 {
-  "description": "The `cobol-modernizer generate --json` stdout contract.\n\nDeliberately minimal -- matches the current `cli.py` stub's shape. Self-healing-loop-specific\nfields (attempt count, compile diagnosis) are Milestone C4 work, once `build_validator` exists\nto define them; inventing them now would be the same speculative-design mistake\n`DesignDocument.unified_design` avoids.",
+  "description": "The `cobol-modernizer generate --json` stdout contract.\n\nDeliberately minimal -- matches the current `cli.py` stub's shape. Self-healing-loop-specific\nfields (attempt count, compile diagnosis) are Milestone C4 work, once `build_validator` exists\nto define them; inventing them now would be the same speculative-design mistake\n`DesignDocument.unified_design` avoids.\n\n`run_id` carries the same meaning as `DesignCliResult.run_id` and was added for the same\nreason, late: until this field existed, `--run-id` was accepted by `design` and **not** by\n`generate`, so the half of the pipeline that runs the compile loop and the second model stage\ncould not be correlated with control-plane's audit chain at all. That silently violated the\nspecialist contract's rule that a specialist accepts `--run-id` to join the chain -- on the\nnoisier half. Both phases now echo it.",
   "properties": {
     "detail": {
       "title": "Detail",
@@ -15,6 +15,10 @@
       "title": "Phase",
       "type": "string"
     },
+    "run_id": {
+      "title": "Run Id",
+      "type": "string"
+    },
     "status": {
       "enum": [
         "ok",
@@ -26,6 +30,7 @@
   },
   "required": [
     "status",
+    "run_id",
     "output_path",
     "detail"
   ],
