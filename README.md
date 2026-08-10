@@ -61,7 +61,10 @@ lines a model wrote, and a compile error outside that region blocks rather than 
 a model. What that does **not** yet amount to: the only body compiled so far is a scripted
 pass-through, **no real model has written business logic through this path**, nothing has been
 written to the real `card-service` repository, and **no generated program has been checked against
-its COBOL for equivalence** — that is step 45, and it needs step 40a's data loader first.
+its COBOL for equivalence** — that is step 45. Step 40a's loader now exists (`tools/data_loader.py`,
+reading CardDemo's fixed-width files into PostgreSQL with `pic_mapper`-derived types), but it also
+established that **every balance in the shipped data is zero**, so step 45 needs non-zero inputs
+before an equivalence test could mean anything.
 **Retrieval is not wired**: `tools/knowledge_store.py` is a real,
 tested pgvector storage layer with no production caller, because embeddings need a second vendor
 this environment has no credential for — and because nobody has shown retrieval would help a
@@ -107,10 +110,11 @@ stays read-only source of truth throughout. **The repository itself is still an 
 `generate` can now write a compiling project into a target directory, but nothing has been committed
 to `card-service` itself, and doing that is control-plane's job through its own clone (ADR-0001). What that target looks like is decided: Java 25 on Spring Batch over **PostgreSQL**,
 with CardDemo's data files as a one-time migration source rather than the runtime store, and
-`CBACT01C`'s fixed-`OCCURS` demo outputs scoped out of generation entirely (`docs/adr/0019`). This repo has **no Postgres edge in the diagram on purpose**: `tools/
-knowledge_store.py` can talk to Postgres for the knowledge store's own schema, but nothing in the
-`design` or `generate` path calls it yet (`docs/adr/0016`), so today that connection is exercised
-only by its own tests. When it is wired, the credential arrives as a mounted file path and never
+`CBACT01C`'s fixed-`OCCURS` demo outputs scoped out of generation entirely (`docs/adr/0019`). This repo has **no Postgres edge in the diagram on purpose**: two modules can talk to
+PostgreSQL — `tools/knowledge_store.py` for the knowledge store's own schema, and
+`tools/data_loader.py` for migrating CardDemo's data files into the target's tables — but neither is
+called from the `design` or `generate` path (`docs/adr/0016`, `docs/adr/0019`), so today both
+connections are exercised only by their own tests against a local container. When it is wired, the credential arrives as a mounted file path and never
 as an embedded value or an environment variable (`docs/adr/0005`). Durable orchestration state
 stays entirely control-plane's concern either way.
 
@@ -259,7 +263,7 @@ Milestone C4.
 ./.venv/Scripts/python -m pytest --cov=cobol_modernizer --cov-report=term-missing --cov-fail-under=90
 ```
 
-581 tests passing (4 skipped — the opt-in live-CLI tests), 99.03% coverage — CI's own numbers from
+622 tests passing (4 skipped — the opt-in live-CLI tests), 99.03% coverage — CI's own numbers from
 the run on this change, not a local approximation of them. The Postgres-backed
 `tools/knowledge_store.py` suite is included and skips nothing there, because CI provides a real
 service container. The target template's own 13 Java tests are not in that
