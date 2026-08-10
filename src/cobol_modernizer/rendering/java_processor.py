@@ -109,6 +109,31 @@ def _validated_imports(imports: Sequence[str]) -> list[str]:
     return sorted({candidate.strip() for candidate in imports})
 
 
+def model_authored_line_range(java_source: str) -> tuple[int, int] | None:
+    """The 1-based line range a model actually wrote, exclusive of the markers themselves.
+
+    The reason the markers are worth having beyond documentation: a compile error can be attributed
+    to the model or to the renderer. An error in rendered scaffolding is a defect in *this* module,
+    and asking a model to repair it would invite it to rewrite deterministic code to make a symptom
+    go away. `build_validator` uses this to refuse that.
+
+    Returns `None` when the file carries no marked region -- a hand-written file, or one rendered
+    before the markers existed. Callers must treat that as "attribution unavailable" rather than as
+    "nothing is model-authored", since the two justify opposite decisions.
+    """
+    begin = end = None
+    for number, line in enumerate(java_source.splitlines(), start=1):
+        if begin is None and BEGIN_MARKER in line:
+            begin = number
+        elif END_MARKER in line:
+            end = number
+            break
+    if begin is None or end is None or end <= begin:
+        return None
+    # Exclusive of both marker lines: the markers are rendered, not authored.
+    return (begin + 1, end - 1)
+
+
 def render_processor(
     step: BatchStepDesign,
     *,
@@ -138,8 +163,16 @@ def render_processor(
     require_java_identifier(class_name, source_name=step.step_name, kind="Processor class name")
     _require_no_forged_marker(body, step_name=step.step_name)
 
+    # `...batch.infrastructure.item...`, not `...batch.item...`. **Spring Batch 6 moved the
+    # package**, and this renderer had the pre-6 name -- so every processor it produced carried an
+    # import that does not resolve, and would have failed to compile the moment step 42 tried to
+    # build one. Found by compiling a rendered processor rather than by reading the pom, and it is
+    # the same shape as PR #27's finding that Spring Boot 4 deleted `spring.batch.jdbc.*`: the
+    # framework moved, and every pre-6 example still says otherwise. A model's training data
+    # overwhelmingly says otherwise too, which is exactly why this import is rendered rather than
+    # left for the model to supply.
     framework_imports = [
-        "org.springframework.batch.item.ItemProcessor",
+        "org.springframework.batch.infrastructure.item.ItemProcessor",
         "org.springframework.stereotype.Component",
     ]
     all_imports = sorted({*framework_imports, *_validated_imports(body_imports)})
