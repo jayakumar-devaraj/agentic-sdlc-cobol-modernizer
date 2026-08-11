@@ -29,7 +29,7 @@ from cobol_modernizer.core.guardrails import wrap_untrusted_cobol
 from cobol_modernizer.core.model_client import call_model
 from cobol_modernizer.core.structured_output import strip_code_fence
 from cobol_modernizer.rendering.java_processor import render_processor
-from tests.evaluations.corpus import CRITERIA, CRITERIA_BY_ID, EvalCase, Verdict
+from tests.evaluations.corpus import CRITERIA, CRITERIA_BY_ID, EvalCase, Ground, Verdict
 
 #: The judge, pinned. See the module docstring on why this is not a routing decision.
 #:
@@ -105,8 +105,13 @@ def render_rubric() -> str:
     return "\n".join(lines)
 
 
-def render_case_facts(case: EvalCase, cobol_source: str) -> str:
-    """The step, the COBOL it came from, and the rendered Java -- and nothing about the answer."""
+def render_cobol_facts(cobol_source: str, *, program: str) -> str:
+    """The program's source, wrapped. Identical for every case of one program, so it goes early."""
+    return wrap_untrusted_cobol(cobol_source, source_label=program)
+
+
+def render_step_facts(case: EvalCase) -> str:
+    """The step under judgement -- short, varies per case, and therefore late in the prompt."""
     step = case.step
     guard = (
         f"`{step.guard_condition}` (the COBOL performs this step only when it holds)"
@@ -122,8 +127,6 @@ def render_case_facts(case: EvalCase, cobol_source: str) -> str:
             f"- Source COBOL paragraph(s): {', '.join(step.source_paragraphs) or '(none recorded)'}",
             f"- Signature: {step.output_type} process({step.input_type} item)",
             f"- Guard condition: {guard}",
-            "",
-            wrap_untrusted_cobol(cobol_source, source_label=case.step.step_name),
         ]
     )
 
@@ -148,15 +151,20 @@ def render_generated_java(case: EvalCase) -> str:
     return f"## The generated Java\n\n```java\n{rendered.strip()}\n```"
 
 
-def build_judge_prompt(case: EvalCase, cobol_source: str) -> str:
-    """Rubric first, then the case. Stable content leads, exactly as in `build_engineer_prompt`.
+def build_judge_prompt(case: EvalCase, cobol_source: str, *, program: str = "CBACT04C") -> str:
+    """Stable content first, the varying part last -- exactly as in `build_engineer_prompt`.
 
-    The rubric is identical for every case in a run, so it is the cached prefix; the COBOL source is
-    identical for every case of one program; the Java is what varies. Ordering them this way is worth
-    the thought for the same reason ADR-0017 was: six cases re-sending a rubric behind a variable
-    prefix is G13's shape in miniature.
+    **The ordering was wrong on the first pass and it is worth recording why.** The step facts sat
+    ahead of the COBOL, which put a ~25k-token source file -- identical for all six cases -- behind a
+    block that changes with the step. That is G13's shape and ADR-0017's correction, reintroduced in
+    a new module: the shared span stops being a *prefix* and a cache cannot see it. Rubric and source
+    now lead, so every case of one program shares everything up to a few hundred characters of step
+    facts and the Java under judgement.
     """
-    return f"{render_rubric()}\n\n{render_case_facts(case, cobol_source)}\n\n{render_generated_java(case)}"
+    return (
+        f"{render_rubric()}\n\n{render_cobol_facts(cobol_source, program=program)}\n\n"
+        f"{render_step_facts(case)}\n\n{render_generated_java(case)}"
+    )
 
 
 def parse_judge_response(raw_response: str) -> dict[str, Verdict]:
@@ -241,7 +249,13 @@ class CaseResult:
 
     @property
     def correct(self) -> bool:
-        return (self.caught in (True, None)) and not self.false_positives
+        """Found the defect if there was one, and invented none either way.
+
+        `is not False` rather than `in (True, None)`: the three-state `caught` reads badly through a
+        membership test, and `1 in (True, None)` being true is the kind of thing that survives review
+        and bites later.
+        """
+        return self.caught is not False and not self.false_positives
 
 
 def score_case(case: EvalCase, verdicts: dict[str, Verdict]) -> CaseResult:
@@ -280,7 +294,9 @@ class BenchmarkSummary:
 
     results: tuple[CaseResult, ...]
 
-    def _subset(self, *, ground=None, defective: bool | None = None) -> tuple[CaseResult, ...]:
+    def _subset(
+        self, *, ground: Ground | None = None, defective: bool | None = None
+    ) -> tuple[CaseResult, ...]:
         return tuple(
             result
             for result in self.results
@@ -291,14 +307,14 @@ class BenchmarkSummary:
             )
         )
 
-    def detection_rate(self, *, ground=None) -> float:
+    def detection_rate(self, *, ground: Ground | None = None) -> float:
         """Fraction of defective cases whose defect the judge named. `nan` when there are none."""
         defective = self._subset(ground=ground, defective=True)
         if not defective:
             return float("nan")
         return sum(1 for result in defective if result.caught) / len(defective)
 
-    def false_positive_rate(self, *, ground=None) -> float:
+    def false_positive_rate(self, *, ground: Ground | None = None) -> float:
         """Fraction of *faithful* cases the judge failed on some criterion. `nan` when there are none."""
         faithful = self._subset(ground=ground, defective=False)
         if not faithful:

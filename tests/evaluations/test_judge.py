@@ -10,6 +10,7 @@ package reports are known to move in the right direction before a real model pro
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
 
 import pytest
@@ -124,12 +125,28 @@ def test_the_prompt_states_the_guard_when_the_step_has_one(cobol_source):
     assert "every input record" in unguarded
 
 
-def test_the_rubric_leads_so_the_shared_prefix_is_a_prefix(cobol_source):
-    # G13/ADR-0017's shape: six cases re-sending an identical rubric behind a variable prefix.
+def test_the_large_shared_span_really_is_a_prefix(cobol_source):
+    """G13/ADR-0017's shape, which this module reintroduced once before this test existed.
+
+    The COBOL source is ~25k tokens and identical for all six cases; the step facts are a few hundred
+    characters and vary. Ordered the other way round, the big shared span sits behind a variable
+    block and no cache can see it. Asserted by position rather than by measuring a cache, because the
+    ordering is the thing under this module's control.
+    """
     prompt = build_judge_prompt(CASES[0], cobol_source)
-    assert prompt.index("## Rubric") < prompt.index("## The step") < prompt.index(
-        "## The generated Java"
+    assert (
+        prompt.index("## Rubric")
+        < prompt.index("<untrusted-cobol-source")
+        < prompt.index("## The step")
+        < prompt.index("## The generated Java")
     )
+
+
+def test_all_six_cases_share_the_rubric_and_the_source_as_a_common_prefix(cobol_source):
+    prompts = [build_judge_prompt(case, cobol_source) for case in CASES]
+    common = len(os.path.commonprefix(prompts))
+    # The shared prefix must cover the whole source block, not merely the rubric.
+    assert common > prompts[0].index("</untrusted-cobol-source>")
 
 
 def test_the_system_prompt_rules_out_a_style_review():
@@ -304,6 +321,60 @@ def test_the_rendered_table_names_every_case_and_its_verdict():
     for case in CASES:
         assert case.name in rendered
     assert "NO" not in rendered, "a perfect run should mark no case incorrect"
+
+
+# --- The opt-in guard, which this package broke and then fixed ----------------------------------
+
+
+class _FakeItem:
+    """The two methods `pytest_collection_modifyitems` uses, and nothing else."""
+
+    def __init__(self, live: bool) -> None:
+        self._live = live
+        self.markers: list = []
+
+    def get_closest_marker(self, name: str):
+        return pytest.mark.live_claude_cli if (self._live and name == "live_claude_cli") else None
+
+    def add_marker(self, marker) -> None:
+        self.markers.append(marker)
+
+
+@pytest.mark.parametrize(
+    ("env_value", "live", "expect_skipped"),
+    [
+        (None, True, True),  # opted out: a live test must be skipped
+        ("0", True, True),  # anything but "1" is opted out
+        ("1", True, False),  # opted in: the live test must actually run
+        (None, False, False),  # an ordinary test is never touched
+        ("1", False, False),
+    ],
+)
+def test_the_live_opt_in_guard_skips_and_unskips_correctly(
+    monkeypatch, env_value, live, expect_skipped
+):
+    """Both directions, because only one of them was ever exercised by running the suite.
+
+    The skip direction is what stops a `pytest tests/` from spending money -- and it failed here
+    once: this package's benchmark put its model calls in a *module-scoped* fixture, which pytest
+    sets up before any function-scoped autouse guard, so an ordinary run made six real calls with
+    the opt-in unset. The guard moved to collection time, which has no such hole.
+
+    The un-skip direction has no such evidence, because verifying it by running the suite would cost
+    exactly what the guard exists to prevent. So it is checked here against the hook directly: a
+    guard that skips unconditionally would look identical in CI and only fail when someone tried to
+    opt in.
+    """
+    from tests.conftest import LIVE_CLI_ENV_VAR, pytest_collection_modifyitems
+
+    monkeypatch.delenv(LIVE_CLI_ENV_VAR, raising=False)
+    if env_value is not None:
+        monkeypatch.setenv(LIVE_CLI_ENV_VAR, env_value)
+
+    item = _FakeItem(live=live)
+    pytest_collection_modifyitems(config=None, items=[item])
+
+    assert bool(item.markers) is expect_skipped
 
 
 def test_judge_case_uses_the_injected_adjudicator(cobol_source):
