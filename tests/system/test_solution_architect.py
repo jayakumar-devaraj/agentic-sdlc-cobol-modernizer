@@ -554,3 +554,14 @@ def test_a_plain_entity_step_is_handled_without_a_composite(entities, cbact04c_s
         composites=[],
     )
     assert "DisGroup" in missing, "a balance-only step cannot reach the rate it multiplies by"
+
+
+def test_a_paragraph_name_the_parser_does_not_know_is_skipped_not_raised(cbact04c_source):
+    # A design may name a paragraph this parser did not recognise. That is a different problem from
+    # this one, and turning it into an exception here would make an unrelated defect look like an
+    # unpopulatable step.
+    from cobol_modernizer.parsing.field_references import reachable_paragraphs
+
+    reached = reachable_paragraphs(cbact04c_source, ["1300-COMPUTE-INTEREST", "NO-SUCH-PARAGRAPH"])
+    assert "1300-COMPUTE-INTEREST" in reached
+    assert "NO-SUCH-PARAGRAPH" not in reached

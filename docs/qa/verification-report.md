@@ -1784,6 +1784,19 @@ COBOL, which `core/contracts.py` deliberately does not read.
 **Ambiguity resolves toward silence, deliberately.** A field name owned by two entities counts as
 reachable if either is. A gate nobody trusts is worse than one that occasionally under-reports.
 
+**CI's coverage caught the wiring untested — the G21 pattern, one more time.** The first CI run on
+this branch reported **98.37% against 98.59%**, and every uncovered line was
+`unpopulatable_gate_items`: the function that turns the check's answer into something a human at the
+gate actually reads. `unreachable_entities` had four tests of its own the whole time. That is
+exactly the shape G21 was closed twice over — a helper tested directly while the path to production
+was never exercised — and the only reason it surfaced is that a number moved.
+
+Closed by testing through the wiring: the gate item is produced, it names both entities and the
+paragraph, and it **reaches `DesignDocument.gate_items`** (a gate item nobody assembles into
+`design.json` is a gate item nobody sees). Both modules are now at **100%**, and the set includes
+the case where the check must go quiet — without it, a check that always fires would look exactly
+like a check that works.
+
 ### G28 — the width was computed all along and thrown away one line early
 
 **"Pad in the writer" could not be done as stated: there is no writer.** `generate` renders

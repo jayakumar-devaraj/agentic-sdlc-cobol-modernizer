@@ -436,3 +436,129 @@ def test_run_cost_is_logged_even_when_the_run_fails(monkeypatch, caplog):
     # The valid program's branch really did call a model before the invalid one raised.
     assert "model_calls=1" in cost_lines[0]
     assert "input_tokens=11" in cost_lines[0]
+
+
+# --- The populatability gate item, through the wiring rather than the helper ----------------------
+
+
+def _entry(program_name: str):
+    from cobol_modernizer.core.contracts import ProgramDesignEntry
+    from cobol_modernizer.nodes.spec_critic import critique_spec
+    from cobol_modernizer.nodes.spec_extractor import extract_spec
+
+    def narrate(model, system_prompt, user_content):
+        return user_content.split(f'<untrusted-cobol-source label="{program_name}">')[0]
+
+    extraction = extract_spec(FIXTURE_ROOT, program_name, narrate=narrate)
+    critique = critique_spec(FIXTURE_ROOT, extraction, critique=lambda m, s, u: "[]")
+    return ProgramDesignEntry(
+        program_name=program_name, spec_extraction=extraction, critique=critique
+    )
+
+
+def _narrow_design():
+    """The design as it stood when a real model could not populate the `Tran` it was asked for."""
+    from cobol_modernizer.core.contracts import (
+        BatchJobDesign,
+        BatchStepDesign,
+        CompositeComponent,
+        CompositeType,
+        UnifiedDesign,
+    )
+    from cobol_modernizer.nodes.solution_architect import build_domain_entities
+
+    entry = _entry("CBACT04C")
+    entities = build_domain_entities(FIXTURE_ROOT, [entry])
+    design = UnifiedDesign(
+        domain_entities=entities,
+        composite_types=[
+            CompositeType(
+                name="TranCatBalWithRate",
+                components=[
+                    CompositeComponent(field_name="balance", entity_name="TranCatBal"),
+                    CompositeComponent(field_name="disclosureGroup", entity_name="DisGroup"),
+                ],
+            )
+        ],
+        batch_jobs=[
+            BatchJobDesign(
+                job_name="interestJob",
+                program_name="CBACT04C",
+                description="Monthly interest.",
+                domain_entities=[e.name for e in entities],
+                steps=[
+                    BatchStepDesign(
+                        step_name="computeInterest",
+                        source_paragraphs=["1300-COMPUTE-INTEREST"],
+                        role="processor",
+                        description="Computes monthly interest.",
+                        input_type="TranCatBalWithRate",
+                        output_type="Tran",
+                        guard_condition="IF DIS-INT-RATE NOT = 0",
+                    )
+                ],
+            )
+        ],
+        rest_endpoints=[],
+    )
+    return entry, design
+
+
+def test_an_unpopulatable_step_becomes_a_gate_item_a_reviewer_sees():
+    """The wiring, not the helper -- which is the distinction G21 was closed twice over.
+
+    `unreachable_entities` had tests of its own while nothing exercised the path that turns its
+    answer into something a human at control-plane's gate actually reads. CI's coverage falling
+    from 98.59% to 98.37% is what surfaced that, and every uncovered line was this function.
+    """
+    entry, design = _narrow_design()
+    items = design_graph.unpopulatable_gate_items(FIXTURE_ROOT, [entry], design)
+
+    assert len(items) == 1
+    item = items[0]
+    assert item.program_name == "CBACT04C"
+    assert "Account" in item.summary and "CardXref" in item.summary
+    assert "1300-COMPUTE-INTEREST" in item.detail
+
+
+def test_the_gate_item_reaches_the_design_document():
+    # A gate item nobody assembles into `design.json` is a gate item nobody sees.
+    from cobol_modernizer.core.contracts import build_design_document
+
+    entry, design = _narrow_design()
+    document = build_design_document(
+        [entry],
+        unified_design=design,
+        design_gate_items=design_graph.unpopulatable_gate_items(FIXTURE_ROOT, [entry], design),
+    )
+    assert any("cannot reach" in gate_item.summary for gate_item in document.gate_items)
+
+
+def test_a_design_that_never_ran_the_architect_yields_no_items():
+    assert design_graph.unpopulatable_gate_items(FIXTURE_ROOT, [_entry("CBACT04C")], None) == []
+
+
+def test_a_job_for_another_program_is_not_analysed_against_this_ones_source():
+    # The program filter matters: analysing CBACT04C's steps against CBCUS01C's source would
+    # report every entity as unreachable, which is a false alarm rather than a finding.
+    entry, design = _narrow_design()
+    design.batch_jobs[0].program_name = "CBCUS01C"
+    assert design_graph.unpopulatable_gate_items(FIXTURE_ROOT, [entry], design) == []
+
+
+def test_a_populatable_step_produces_no_gate_item():
+    """The other half of a check that can fail: it must also go quiet when the design is right.
+
+    This is PR #40's widened composite. Without this case the suite only ever saw the check
+    complain, which is how a check that always fires looks exactly like a check that works.
+    """
+    from cobol_modernizer.core.contracts import CompositeComponent
+
+    entry, design = _narrow_design()
+    design.composite_types[0].components.extend(
+        [
+            CompositeComponent(field_name="account", entity_name="Account"),
+            CompositeComponent(field_name="cardXref", entity_name="CardXref"),
+        ]
+    )
+    assert design_graph.unpopulatable_gate_items(FIXTURE_ROOT, [entry], design) == []
