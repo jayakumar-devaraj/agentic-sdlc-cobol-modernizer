@@ -1741,6 +1741,76 @@ repo's design**, not about the model:
 Three of these describe work no step currently owns. They are the natural input to whatever revisits
 `solution_architect`'s step decomposition.
 
+### Generating the write step — by splitting logic from wiring, not by rendering writers
+
+**`generate` renders `ItemProcessor`s only** (ADR-0019, reaffirmed by ADR-0023), so there were two
+ways to produce Java for `1300-B-WRITE-TX`: teach the renderer about `ItemWriter`s, or find the line
+inside the paragraph where business logic stops and infrastructure begins. The second is the one
+this repo's architecture already points at — render the mechanical, model the logic.
+
+**The paragraph is mostly per-item field population**: fourteen `MOVE`s and two `STRING`s. Three
+statements are not, and they are the ones that cannot be an `ItemProcessor`:
+
+| Not translatable here | Why |
+|---|---|
+| `ADD 1 TO WS-TRANID-SUFFIX` + `STRING PARM-DATE …` | a per-run counter and a job parameter |
+| `PERFORM Z-GET-DB2-FORMAT-TIMESTAMP` | a clock, into `REDEFINES` fields the matrix gates |
+| `WRITE FD-TRANFILE-REC` | the physical I/O |
+
+So the step is a `processor` named `completeTransaction`, and those three stay wiring. **Typing the
+whole paragraph as a `writer` would have left its field population ungenerated for the sake of three
+statements** — the same mistake as putting the guard in `source_paragraphs`: taking a boundary the
+COBOL draws and assuming the design must draw it in the same place.
+
+**Verified through `run_generate`**: both steps compile, `not_generated` is now empty, and the
+generated completion body contains `item.account().acctId()`, `item.cardXref().xrefCardNum()` and
+`CobolText.spaces(50)` — G26's two newly-reachable fields and G28's padding, exercised in generated
+Java rather than asserted about it.
+
+**The residual is unchanged and still stated**: `TRAN-ID` and the timestamps are `null` in the body,
+because a stateless processor has neither a run counter nor a clock. That is the same boundary G26
+recorded, now visible in the generated file rather than only in a gap register.
+
+#### The real run — and the G28 fix landing on a model
+
+Two Opus 5 calls, capped at one attempt each, **$0.6062 notional**. Both processors compiled on
+attempt 1, and `computeInterest` still passes the oracle **10 of 10** under the changed output type.
+
+**G28's fix worked.** The model wrote `CobolText.spaces(50)` for the three `MOVE SPACES` fields —
+not `""`. Its previous run, before the width and the helper existed, wrote `""` and flagged that it
+was wrong to.
+
+**It went further than the scripted body.** It padded *every* alphanumeric field to its declared
+width — `pad("01", 2)`, `pad("System", 10)`, the card number to 16, the timestamps to 26 — where the
+hand-written fixture only padded the three the COBOL spells `SPACES`.
+
+**G26's reachability worked**: `item.account().acctId()` and `item.cardXref().xrefCardNum()`, the
+two fields it left `null` last time.
+
+**One finding is a correction to this repo's own fixture, not to the model.** For
+`STRING 'Int. for a/c ', ACCT-ID DELIMITED BY SIZE`, it wrote:
+
+```java
+String acctIdDigits = String.format("%011d", item.account().acctId().toBigInteger());
+```
+
+with the reasoning that `ACCT-ID` is an unsigned 11-digit **display** field, so `DELIMITED BY SIZE`
+contributes all eleven zero-padded positions rather than a trimmed number. That is right, and the
+scripted `_COMPLETE_BODY` in this repo concatenates the bare value — which would write
+`Int. for a/c 194` where the COBOL writes `Int. for a/c 00000000194`. **The hand-written fixture is
+the less faithful of the two.**
+
+**What it decided rather than refused, and therefore needs review.** It implemented the DB2
+timestamp, reconstructing the format from `Z-GET-DB2-FORMAT-TIMESTAMP`'s sub-fields — including that
+the trailing group is hundredths of a second — and used `LocalDateTime.now()`. Those sub-fields are
+`REDEFINES`, which the construct matrix routes to a human, and `now()` is non-deterministic in a
+batch record. It said so in its notes rather than passing it off as settled, but this is the one
+part of the body a reviewer must not skim.
+
+**Still refused, and flagged for a human**: `TRAN-ID`'s counter and job parameter, `TRAN-AMT`'s
+provenance across the step boundary, the `WRITE` and its status handling, and whether
+`MOVE '05' TO TRAN-CAT-CD (PIC 9(04))` is faithfully `BigDecimal("5")`.
+
 ### `1300-B-WRITE-TX` becomes its own step
 
 **The design decision G26 and G27 both left open, now made.** The interest paragraph performs the
