@@ -40,7 +40,10 @@ from cobol_modernizer.core.model_client import call_model
 from cobol_modernizer.core.model_routing import RoutingDecision, resolve_routing
 from cobol_modernizer.core.structured_output import strip_code_fence
 from cobol_modernizer.prompts_registry_client.loader import prompt_path
-from cobol_modernizer.rendering.java_processor import model_authored_line_range
+from cobol_modernizer.rendering.java_processor import (
+    model_authored_line_numbers,
+    model_authored_line_range,
+)
 from cobol_modernizer.tools.local_compiler import CompileDiagnostic, CompileResult
 
 logger = logging.getLogger(__name__)
@@ -104,8 +107,8 @@ def attribute_errors(
 
     for error in result.errors:
         source = generated_sources.get(error.file)
-        span = model_authored_line_range(source) if source is not None else None
-        if span is not None and error.line is not None and span[0] <= error.line <= span[1]:
+        authored = model_authored_line_numbers(source) if source is not None else frozenset()
+        if error.line is not None and error.line in authored:
             model_authored.append(error)
         else:
             rendered.append(error)
@@ -180,7 +183,23 @@ def build_validator_prompt(
         span = model_authored_line_range(source) if source else None
         if source is None or span is None:
             continue
-        body = source.splitlines()[span[0] - 1 : span[1]]
+        source_lines = source.splitlines()
+
+        # The imports the model supplied, when one of them is what broke (G30). Without these the
+        # validator would be shown a body that is fine and asked why the build failed -- the error
+        # points at a line the prompt does not contain, which is how a repairable failure gets
+        # judged unrepairable.
+        import_numbers = sorted(
+            number
+            for number in model_authored_line_numbers(source)
+            if not span[0] <= number <= span[1]
+        )
+        if import_numbers:
+            lines.append(f"### {path} -- imports this model supplied")
+            lines += [f"{number}: {source_lines[number - 1].strip()}" for number in import_numbers]
+            lines.append("")
+
+        body = source_lines[span[0] - 1 : span[1]]
         lines.append(f"### {path} (lines {span[0]}-{span[1]})")
         lines += [f"{span[0] + offset}: {text}" for offset, text in enumerate(body)]
         lines.append("")

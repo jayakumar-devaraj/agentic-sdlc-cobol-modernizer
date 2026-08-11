@@ -1741,7 +1741,65 @@ repo's design**, not about the model:
 Three of these describe work no step currently owns. They are the natural input to whatever revisits
 `solution_architect`'s step decomposition.
 
-### Step 44 — the LLM-as-judge harness, verified as an instrument and not yet run as one
+### G30 closed — the loop repairs a model's own import, and stops blaming the renderer
+
+**The gap, restated as what it actually was.** Step 43's harness found that `unresolved_import` would
+not heal: a model-supplied import that does not resolve produced a diagnostic on line 3, outside the
+`BEGIN`/`END` markers, so `build_validator` called it rendered scaffolding and refused to hand it
+back. The instinct is to read that as a bug in the validator's line test. It is not. **The artifact
+under-reported what the model wrote** — model-authored text lives in two disjoint regions of the file
+and only one of them was marked — so the validator got an incomplete answer from the only thing it
+has, and so did any reviewer skimming for "which lines did a model produce here".
+
+Fixed in the renderer, not the checker (ADR-0025). `MODEL_IMPORT_MARKER` marks the imports the model
+supplied; `model_authored_line_numbers` returns the body's lines plus those; `build_validator`
+attributes from that set.
+
+**The rule was not relaxed, which was the constraint.** Everything unmarked is still deterministic
+and still refused to a model. The one-line alternative — letting the rendered-region refusal go — was
+available and refused on the record: it would hand a model errors in genuinely rendered scaffolding
+in order to fix a case where that refusal was merely misapplied.
+
+```
+JAVA_HOME=... pytest tests/system/test_generate_pipeline.py -q
+20 passed in 329.25s (0:05:29)
+```
+
+**All four injected error classes now heal in two attempts**, where three did before:
+`test_the_loop_heals_every_injected_error_class` is parametrised over the full `_INJECTED_ERRORS`
+list, and `unresolved_import`'s exclusion — which existed on evidence, not convenience — is gone.
+
+**The message is pinned separately from the outcome**, deliberately. A misattributed *verdict* costs
+one retry; a misattributed *reason* costs a reviewer an investigation of the wrong component, and
+§ 4b puts human review three to four orders of magnitude above inference. A future change could
+restore the heal while reintroducing the wrong explanation, and a test that only checked the outcome
+would pass it — so `test_the_blocked_message_no_longer_blames_the_renderer_for_a_models_import`
+asserts the reason on its own.
+
+```
+pytest tests/system/test_java_processor.py tests/system/test_build_validator.py -q
+61 passed in 16.62s
+```
+
+**Three properties checked rather than argued**, each with its own test:
+
+| Property | Why it matters |
+|---|---|
+| An import the renderer emits anyway is **never** marked | Marking it would be G30 inverted — a model made answerable for a line it could not have caused |
+| The marker counts only on a real `import` line | Nothing written inside a body can forge attribution for a line outside it; `_validated_imports` closes the other route by refusing an import that is not a bare qualified name |
+| Imports stay deduplicated and sorted | One design still renders byte-identically whatever order the model emitted them in |
+
+**Also verified directly rather than assumed**: `_extract_model_imports` reads the marked imports back
+out of the rendered file and strips the marker — given a model that supplied both
+`java.math.BigDecimal` and `org.springframework.stereotype.Component`, it returns exactly
+`('java.math.BigDecimal',)`, excluding the framework import the renderer would have emitted regardless.
+
+**Not claimed.** No real model has repaired an import through this path; the four classes are scripted
+on both sides, which is what step 43 established is being measured — the **loop**, not a model's
+ability to fix things. And the round-trip metric does not move: this repairs attribution, not
+translation.
+
+### Step 44 — the LLM-as-judge harness, verified as an instrument *(then run; see the entry below)*
 
 **Stated first, because it is the thing most likely to be over-read.** This entry reports a
 **harness**, not a measurement of judge quality. No real judge call has been made. What follows is

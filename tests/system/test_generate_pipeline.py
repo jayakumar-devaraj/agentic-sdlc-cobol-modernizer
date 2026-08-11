@@ -272,9 +272,12 @@ def test_each_injected_error_class_produces_a_diagnostic_the_loop_can_act_on(
     ), f"{name} is not attributed to the generated file, so no rewrite would be aimed at it"
 
 
-#: `unresolved_import` is excluded from the heal cases and has its own test below. Excluded on
-#: evidence, not convenience: the harness found that the loop **cannot** heal it, and why.
-_HEALABLE = [e for e in _INJECTED_ERRORS if e[0] != "unresolved_import"]
+#: All four heal now. `unresolved_import` was excluded here until G30 was fixed -- the loop could not
+#: repair it, because a model-supplied import was rendered outside the model-authored markers and
+#: `build_validator` attributed by line. The renderer now marks those imports, so the class the
+#: harness found unhealable is healable, and it belongs in the parametrised run rather than in a
+#: special case of its own.
+_HEALABLE = list(_INJECTED_ERRORS)
 
 
 @pytest.mark.parametrize(("name", "body", "imports"), _HEALABLE, ids=[e[0] for e in _HEALABLE])
@@ -296,36 +299,54 @@ def test_the_loop_heals_every_injected_error_class(
     assert compile_project(project, goal="compile").succeeded
 
 
-def test_a_model_supplied_import_that_does_not_resolve_is_refused_rather_than_repaired(
+def test_a_model_supplied_import_that_does_not_resolve_is_the_models_to_repair(
     project, program_entry, entities
 ):
-    """What the harness found on its first run, and the finding is about attribution (gap G30).
+    """G30, closed. This test previously asserted the opposite, and that is the point of it.
 
     A model supplies the imports its body needs -- the renderer never reads the body, so it cannot
-    derive them. But those imports are *rendered* into the import block, outside the
-    `BEGIN/END model-authored` markers, and `build_validator` attributes a diagnostic by **line**.
-    So a bad import lands on line 3, is attributed to rendered scaffolding, and the loop refuses to
-    hand it back -- correctly by its own rule, and wrongly in substance: the model wrote it and a
-    rewrite would plainly fix it.
+    derive them -- and they are rendered into the import block, structurally outside the
+    `BEGIN/END model-authored` markers. `build_validator` decided ownership by asking whether a
+    diagnostic's line fell inside those markers, so a model's own bad import landed on line 3, was
+    counted as rendered scaffolding, and the loop refused to hand it back. Correct by its own rule
+    and wrong in substance, and the message was worse than the lost attempt: it told a reviewer
+    *"That is a defect in this repo's renderer"*, which for this class is simply false.
 
-    Two costs, and the second is worse. The step spends one attempt instead of two and stops. And
-    the blocked reason tells a reviewer *"That is a defect in this repo's renderer"*, which for this
-    class is **false** -- it misattributes a model's mistake to the code generator.
-
-    Pinned as the behaviour that exists rather than the behaviour that should. Changing where the
-    attribution line falls is a change to ADR-0020-era reasoning about which lines a model owns, and
-    that belongs in its own decision, not smuggled into a test harness.
+    The fix was not to relax the rule. Everything outside the markers is still deterministic; what
+    changed is that the renderer now **states** which imports the model supplied instead of leaving
+    ownership to be inferred from geometry, so the artifact reports what the model wrote -- which is
+    what the BEGIN/END markers were already for, applied to the region that had been missed.
     """
     author = _scripted_author(
         ("return item;", ["com.modernized.batch.nowhere.NoSuchHelper"]), (GOOD, [])
     )
     outcome = _heal(project, program_entry, entities, author, _advise(True))
 
-    assert outcome.status == "blocked"
-    assert outcome.attempts == 1, "a blocked verdict must not spend the whole budget"
-    assert "rendered scaffolding" in outcome.reason
-    # The misattribution, asserted so the fix has a failing test waiting for it.
-    assert "renderer" in outcome.reason, "today's message blames the renderer for a model's import"
+    assert outcome.succeeded, f"the loop still cannot repair its own import: {outcome.reason}"
+    assert outcome.attempts == 2
+    assert compile_project(project, goal="compile").succeeded
+
+
+def test_the_blocked_message_no_longer_blames_the_renderer_for_a_models_import(
+    project, program_entry, entities
+):
+    """The half of G30 that was worse than the lost attempt, pinned separately.
+
+    A misattributed *verdict* costs one retry. A misattributed *reason* costs a reviewer an
+    investigation of the wrong component, and § 4b of the feasibility assessment puts human review
+    three to four orders of magnitude above inference. So the message is asserted on its own, not
+    folded into the heal assertion above -- a future change could restore the heal while
+    reintroducing the wrong explanation, and that would pass a test that only checked the outcome.
+    """
+    author = _scripted_author(
+        ("return item;", ["com.modernized.batch.nowhere.NoSuchHelper"]), (GOOD, [])
+    )
+    outcome = _heal(project, program_entry, entities, author, _advise(True), max_attempts=1)
+
+    assert "renderer" not in outcome.reason, (
+        "a model's own bad import is still being reported as a defect in this repo's renderer"
+    )
+    assert "rendered scaffolding" not in outcome.reason
 
 
 def test_the_error_classes_are_genuinely_different_to_the_compiler(project, program_entry, entities):

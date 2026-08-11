@@ -44,6 +44,24 @@ BEGIN_MARKER = "// --- BEGIN model-authored logic"
 #: Closes it. Deliberately a fixed string with no interpolation, so the check below is exact.
 END_MARKER = "// --- END model-authored logic ---"
 
+#: Marks an import the **model** supplied, as opposed to one this renderer adds unconditionally.
+#:
+#: **Why the file has to say this** (gap G30). The model supplies the imports its body needs -- the
+#: renderer never reads the body, so it cannot derive them -- and they are rendered into the import
+#: block, structurally outside the BEGIN/END region. `build_validator` attributed a diagnostic by
+#: asking whether its line fell inside that region, so a model's own bad import landed on line 3,
+#: counted as rendered scaffolding, and the heal loop refused to let the model fix its own mistake --
+#: while telling the reviewer the renderer was at fault, which for this class is simply false.
+#:
+#: The root cause is not the validator's arithmetic. It is that **the artifact under-reported what
+#: the model wrote**: two disjoint regions are model-authored and only one of them was marked. The
+#: BEGIN/END markers exist so a reviewer can see at a glance which lines a model produced; an
+#: unmarked model-supplied import defeated that for the reviewer exactly as it did for the validator.
+#: So this fixes both, and it keeps the rule intact rather than loosening it -- everything unmarked
+#: is still deterministic, and the renderer now *states* provenance instead of leaving it to be
+#: inferred from geometry.
+MODEL_IMPORT_MARKER = "// model-authored import"
+
 _BODY_INDENT = " " * 8
 
 
@@ -189,6 +207,37 @@ def model_authored_line_range(java_source: str) -> tuple[int, int] | None:
     return (begin + 1, end - 1)
 
 
+def model_authored_line_numbers(java_source: str) -> frozenset[int]:
+    """Every 1-based line a model is answerable for -- the body **and** the imports it supplied.
+
+    The line range above answers "where is the body", which is what a reviewer's eye needs. This
+    answers "what is the model responsible for", which is what attribution needs, and gap G30 is the
+    difference between the two: model-authored text lives in two disjoint regions of the file, and
+    treating the body's range as the whole answer made a model's bad import look like a renderer
+    defect.
+
+    Returns an empty set when the file carries no marked body region, preserving
+    `model_authored_line_range`'s posture exactly: attribution is *unavailable* for a hand-written or
+    pre-marker file, and the conservative reading of unavailable is that nothing is the model's to
+    rewrite.
+
+    An import line counts only when it really is an import statement, so nothing a model writes
+    *inside* its body can forge attribution for a line outside it -- and `_validated_imports` already
+    refuses anything that is not a bare qualified name, so the marker cannot arrive through the
+    import list either.
+    """
+    span = model_authored_line_range(java_source)
+    if span is None:
+        return frozenset()
+
+    numbers = set(range(span[0], span[1] + 1))
+    for number, line in enumerate(java_source.splitlines(), start=1):
+        stripped = line.strip()
+        if stripped.startswith("import ") and stripped.endswith(MODEL_IMPORT_MARKER):
+            numbers.add(number)
+    return frozenset(numbers)
+
+
 def render_processor(
     step: BatchStepDesign,
     *,
@@ -231,8 +280,16 @@ def render_processor(
         "org.springframework.batch.infrastructure.item.ItemProcessor",
         "org.springframework.stereotype.Component",
     ]
-    all_imports = sorted({*framework_imports, *_validated_imports(body_imports)})
-    import_block = "\n".join(f"import {name};" for name in all_imports)
+    supplied = set(_validated_imports(body_imports))
+    # Marked only where the model is *solely* responsible. An import it happened to name that this
+    # renderer emits anyway is one the renderer would have written unprompted, so making the model
+    # answerable for that line would hand it a defect it could not have caused.
+    model_only = supplied - set(framework_imports)
+    all_imports = sorted({*framework_imports, *supplied})
+    import_block = "\n".join(
+        f"import {name};" + (f"  {MODEL_IMPORT_MARKER}" if name in model_only else "")
+        for name in all_imports
+    )
 
     paragraphs = ", ".join(step.source_paragraphs) or "(none recorded)"
     source = f"""\

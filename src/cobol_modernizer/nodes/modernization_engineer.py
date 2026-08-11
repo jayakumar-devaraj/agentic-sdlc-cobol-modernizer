@@ -92,6 +92,11 @@ class RepairContext:
     diagnostics: tuple[CompileDiagnostic, ...]
     instruction: str
     attempt: int
+    #: The imports the previous attempt supplied. Carried for the same reason `previous_body` is:
+    #: a repair that cannot see what it is repairing is a rewrite from scratch. It matters more here
+    #: than it looks, because since G30 an import can be the thing that failed -- and a model shown
+    #: only its body would be asked to fix a line it cannot see.
+    previous_imports: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -277,6 +282,22 @@ def render_repair_facts(repair: RepairContext) -> str:
         repair.previous_body.strip(),
         "```",
         "",
+    ]
+    if repair.previous_imports:
+        lines += [
+            "### The imports you supplied with it",
+            "",
+            "```java",
+            *[f"import {name};" for name in repair.previous_imports],
+            "```",
+            "",
+            (
+                "These are rendered into the file's import block. If a diagnostic points at one of "
+                "them, it is yours to correct -- return a corrected `imports` list."
+            ),
+            "",
+        ]
+    lines += [
         "### What the compiler said",
         "",
     ]
