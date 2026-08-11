@@ -528,3 +528,102 @@ def test_the_write_step_reaches_the_pipeline_and_is_reported_not_dropped(
     # The processor still compiled, and a declared writer does not fail the run.
     assert outcome.succeeded
     assert [o.step_name for o in outcome.compiled] == ["computeInterest"]
+
+
+# --- The renderer's refusals, which are the part worth covering ------------------------------------
+
+
+def _render(oracle, entities, **overrides):
+    kwargs = {
+        "package": DEFAULT_PACKAGE,
+        "test_class_name": "ComputeInterestEquivalenceTest",
+        "processor_class": "ComputeInterestProcessor",
+        "composite": COMPOSITE,
+        "entities": entities,
+        "output_entity": "TranWithContext",
+        "output_composite": OUTPUT_COMPOSITE,
+        "domain_package": DEFAULT_DOMAIN_PACKAGE,
+    }
+    kwargs.update(overrides)
+    return render_equivalence_test(oracle, **kwargs)
+
+
+def test_a_component_binding_without_the_composite_is_refused(oracle, entities):
+    # The renderer is handed the design's composite; being asked for a component of something it
+    # was not given means the two disagree about the shape of the thing under test.
+    with pytest.raises(UnrenderableOracleError, match="no matching composite"):
+        _render(oracle, entities, output_composite=None)
+
+
+def test_a_component_the_composite_does_not_have_is_refused(oracle, entities):
+    broken = json.loads(json.dumps(oracle))
+    broken["java_binding"]["result_field"]["component"] = "transaction"
+    with pytest.raises(UnrenderableOracleError, match="no 'transaction' component"):
+        _render(broken, entities)
+
+
+def test_a_plain_entity_output_still_renders(oracle, entities):
+    """The pre-split shape, kept working and kept covered.
+
+    Splitting `1300-B-WRITE-TX` out made every call in this module use a composite output, which
+    quietly left the plain-entity path unexercised -- CI's coverage is what said so. Most steps
+    return an entity, so that path is the common case, not a legacy one.
+    """
+    plain = json.loads(json.dumps(oracle))
+    del plain["java_binding"]["result_field"]["component"]
+    rendered = _render(plain, entities, output_entity="Tran", output_composite=None)
+
+    assert "Tran result = processor.process(" in rendered
+    assert "result.tranAmt()" in rendered
+
+
+def test_an_ambiguous_composite_is_refused_rather_than_picked_from(oracle, entities):
+    # Two components of the same entity: which one carries the balance is a design question, and
+    # guessing it would silently read the wrong record.
+    ambiguous = CompositeType(
+        name="TranCatBalWithRate",
+        components=[
+            CompositeComponent(field_name="opening", entity_name="TranCatBal"),
+            CompositeComponent(field_name="closing", entity_name="TranCatBal"),
+            CompositeComponent(field_name="disclosureGroup", entity_name="DisGroup"),
+        ],
+    )
+    with pytest.raises(UnrenderableOracleError, match="ambiguous"):
+        _render(oracle, entities, composite=ambiguous)
+
+
+def test_a_binding_naming_an_entity_the_design_lacks_is_refused(oracle, entities):
+    # Pre-existing refusal, uncovered until now. A binding is written by hand against a design; if
+    # the two drift, this is the failure that says so rather than a mystery at compile time.
+    broken = json.loads(json.dumps(oracle))
+    broken["java_binding"]["balance_field"]["entity"] = "NoSuchEntity"
+    with pytest.raises(UnrenderableOracleError, match="does not declare"):
+        _render(broken, entities)
+
+
+def test_a_component_type_with_no_placeholder_is_refused_rather_than_nulled(oracle, entities):
+    """The renderer builds unbound components from placeholders; an unknown type has none.
+
+    It raises rather than emitting `null`, because a `null` component turns a wrong-value failure
+    into a `NullPointerException` several frames away from the cause.
+    """
+    from cobol_modernizer.core.contracts import DomainEntity, DomainField
+
+    exotic = DomainEntity(
+        name="Account",
+        source_copybook="CVACT01Y",
+        used_by_programs=[PROGRAM],
+        fields=[
+            DomainField(
+                java_field_name="openedOn",
+                cobol_field_name="ACCT-OPEN-DATE",
+                java_type="LocalDate",
+                precision=None,
+                scale=None,
+                signed=False,
+            )
+        ],
+    )
+    patched = [exotic if e.name == "Account" else e for e in entities]
+    with pytest.raises(UnrenderableOracleError, match="no placeholder"):
+        _render(oracle, patched)

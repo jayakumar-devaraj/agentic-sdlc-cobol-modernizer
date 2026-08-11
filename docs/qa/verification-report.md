@@ -1775,8 +1775,15 @@ the step exists, is owned, and its logic is declared as not yet produced. Assert
 `run_generate`, because a step nothing exercises is a step that has not really been added.
 
 The oracle's result now sits one accessor deeper (`result.tran().tranAmt()`), declared as a
-`component` in `java_binding` rather than inferred. All 12 harness tests pass, including the three
-real-Maven runs and both negative cases.
+`component` in `java_binding` rather than inferred.
+
+**CI's coverage caught a quieter cost of the split.** It fell 98.62% → 98.50%, and the uncovered
+lines were the renderer's refusals — including the **plain-entity output path**, which every call in
+the harness stopped exercising the moment the output became a composite. Most steps return an
+entity, so that is the common case, not a legacy one; it was silently untested by a change that
+looked like it only added something. Closed, along with the two new refusals and two pre-existing
+ones the same pass exposed: the module is at **100%**, and every `UnrenderableOracleError` branch
+now has a test. Third time this session a coverage delta was the thing that noticed.
 
 ### G26's systemic half — resolving is not populating
 
