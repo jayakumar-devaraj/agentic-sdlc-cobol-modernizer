@@ -54,15 +54,21 @@ from langgraph.types import Send
 
 from cobol_modernizer.core.contracts import (
     DesignDocument,
+    GateItem,
     ProgramDesignEntry,
     RunCost,
     UnifiedDesign,
     build_design_document,
 )
 from cobol_modernizer.core.model_client import RunBudget, UsageAccumulator, collect_usage
-from cobol_modernizer.nodes.solution_architect import ArchitectFn, design_solution
+from cobol_modernizer.nodes.solution_architect import (
+    ArchitectFn,
+    design_solution,
+    unreachable_entities,
+)
 from cobol_modernizer.nodes.spec_critic import CritiqueFn, critique_spec
 from cobol_modernizer.nodes.spec_extractor import NarrateFn, SpecExtractionResult, extract_spec
+from cobol_modernizer.tools.tenant_repo import resolve_program
 
 logger = logging.getLogger(__name__)
 
@@ -295,9 +301,70 @@ def run_design(
     ordered_entries = [entries_by_name[name] for name in program_names]
 
     return build_design_document(
-        ordered_entries, unified_design=final_state["unified_design"], cost=cost
+        ordered_entries,
+        unified_design=final_state["unified_design"],
+        cost=cost,
+        design_gate_items=unpopulatable_gate_items(
+            worktree_root, ordered_entries, final_state["unified_design"]
+        ),
     )
 
+
+
+def unpopulatable_gate_items(
+    worktree_root: Path,
+    entries: list[ProgramDesignEntry],
+    unified_design: UnifiedDesign | None,
+) -> list[GateItem]:
+    """One gate item per step whose COBOL reads data its declared types cannot reach (G26).
+
+    ADR-0020 checks a step's types **resolve**; this reports whether they are **populatable**. The
+    two failed apart once already: every type name real, and a model unable to reach `ACCT-ID` or
+    `XREF-CARD-NUM` for the record it was asked to build. It left them null and said so, which is
+    the only reason anyone found out.
+
+    A fact, not a refusal. A referenced entity may be legitimately absent -- mentioned in a
+    DISPLAY, or read by a paragraph whose logic belongs to a different step -- so this surfaces the
+    finding and lets the reviewer weigh it, per the specialist contract's rule 5.
+    """
+    if unified_design is None:
+        return []
+
+    items: list[GateItem] = []
+    for entry in entries:
+        source_text = resolve_program(worktree_root, entry.program_name).source_text
+        for job in unified_design.batch_jobs:
+            if job.program_name != entry.program_name:
+                continue
+            for step in job.steps:
+                missing = unreachable_entities(
+                    step,
+                    source_text=source_text,
+                    entities=unified_design.domain_entities,
+                    composites=unified_design.composite_types,
+                )
+                if not missing:
+                    continue
+                items.append(
+                    GateItem(
+                        category="fidelity_issue",
+                        program_name=entry.program_name,
+                        summary=(
+                            f"step {step.step_name!r} reads {', '.join(missing)}, which "
+                            f"{step.input_type}/{step.output_type} cannot reach"
+                        ),
+                        detail=(
+                            f"Paragraph(s) {', '.join(step.source_paragraphs) or '(none)'} -- and "
+                            f"anything they PERFORM -- reference fields of {', '.join(missing)}. "
+                            f"The step declares input {step.input_type!r} and output "
+                            f"{step.output_type!r}, and neither reaches those entities, so a "
+                            f"generator has no way to read or populate them. Either widen the "
+                            f"composite, or split the paragraph's work into a step that can reach "
+                            f"them. Confirm before approving: a reference may be incidental."
+                        ),
+                    )
+                )
+    return items
 
 def _summarize_cost(usage: UsageAccumulator) -> RunCost:
     """Snapshot the accumulator into the immutable contract type."""

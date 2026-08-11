@@ -61,6 +61,7 @@ from cobol_modernizer.core.model_client import call_model
 from cobol_modernizer.core.model_routing import RoutingDecision, resolve_routing
 from cobol_modernizer.core.structured_output import strip_code_fence
 from cobol_modernizer.nodes.spec_extractor import group_field_mappings_by_source
+from cobol_modernizer.parsing.field_references import referenced_fields
 from cobol_modernizer.prompts_registry_client.loader import prompt_path
 from cobol_modernizer.tools.pic_mapper import PicMapping
 from cobol_modernizer.tools.tenant_repo import resolve_program
@@ -179,6 +180,56 @@ def build_domain_entities(
 
     return list(entities.values())
 
+
+
+def unreachable_entities(
+    step: BatchStepDesign,
+    *,
+    source_text: str,
+    entities: list[DomainEntity],
+    composites: list[CompositeType],
+) -> list[str]:
+    """Entities the step's COBOL reads that its declared types cannot reach (gap G26).
+
+    ADR-0020 decision 5 checks a step's `input_type`/`output_type` **resolve** -- that each names a
+    declared entity or composite. This is the other half: whether the data those paragraphs
+    actually touch is *in* the types the step was handed. Resolution passing while this fails is
+    exactly the state that produced G26 -- every type name real, the design ungeneratable, and the
+    only signal a model refusing to invent the values it could not reach.
+
+    Deterministic and deliberately shallow: declared field names matched against the paragraph
+    text, following `PERFORM`. It does not decide whether a reference matters. A name that appears
+    is reported and a human weighs it, which is the specialist contract's rule that this repo emits
+    facts for a gate and never decisions.
+
+    Returns sorted names, so a gate item is stable across runs.
+    """
+    by_name = {entity.name: entity for entity in entities}
+    composites_by_name = {composite.name: composite for composite in composites}
+
+    def entities_of(type_name: str) -> set[str]:
+        if type_name in composites_by_name:
+            return {c.entity_name for c in composites_by_name[type_name].components}
+        return {type_name} if type_name in by_name else set()
+
+    reachable = entities_of(step.input_type) | entities_of(step.output_type)
+
+    # Every declared field name, mapped back to the entities that own it. A name shared by two
+    # entities counts as reachable if *either* is: the COBOL's own ambiguity should not become a
+    # false alarm, because a gate nobody trusts is worse than one that occasionally under-reports.
+    owners: dict[str, set[str]] = {}
+    for entity in entities:
+        for field in entity.fields:
+            owners.setdefault(field.cobol_field_name.upper(), set()).add(entity.name)
+
+    referenced = referenced_fields(source_text, list(step.source_paragraphs), set(owners))
+
+    unreachable: set[str] = set()
+    for field_name in referenced:
+        candidates = owners[field_name]
+        if not (candidates & reachable):
+            unreachable |= candidates
+    return sorted(unreachable)
 
 def _render_known_facts(
     domain_entities: list[DomainEntity], programs: list[ProgramDesignEntry]

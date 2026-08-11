@@ -1741,6 +1741,62 @@ repo's design**, not about the model:
 Three of these describe work no step currently owns. They are the natural input to whatever revisits
 `solution_architect`'s step decomposition.
 
+### G26's systemic half — resolving is not populating
+
+**The gap in one sentence.** ADR-0020 checks a step's `input_type`/`output_type` **resolve** — that
+each names a declared entity or composite. Nothing checked they were **populatable**: whether the
+data the step's COBOL actually reads is reachable from the type it was handed. Those two failed
+apart once already, and the only signal was a model refusing to invent values.
+
+**What the check does.** `unreachable_entities` matches declared COBOL field names against the
+step's paragraph text and reports entities that are mentioned but not reachable from the declared
+types. Deterministic, and deliberately shallow — no expression parsing, no dataflow inference.
+
+**It follows `PERFORM`, and that is the load-bearing part.** G26's fields are not in the paragraph
+the step names: `1300-COMPUTE-INTEREST` performs `1300-B-WRITE-TX`, and the moves live there. A
+check reading only the named paragraph finds nothing wrong with the design that produced the defect.
+Asserted directly rather than assumed:
+
+```
+XREF-CARD-NUM in 1300-B-WRITE-TX        → True
+XREF-CARD-NUM in 1300-COMPUTE-INTEREST  → False
+```
+
+**Demonstrated on the real before and after**, which is what makes it a check rather than a claim:
+
+| Composite | Result |
+|---|---|
+| `balance` + `disclosureGroup` (what the design had when the model failed) | `['Account', 'CardXref']` |
+| plus `account` + `cardXref` (PR #40's fix) | `[]` |
+| a plain `TranCatBal` step, no composite | `['DisGroup', …]` — cannot reach the rate it multiplies by |
+
+The first row is G26 reproduced from the real COBOL: every type name resolved, and two entities were
+still out of reach.
+
+**A fact, not a refusal.** It emits a `GateItem` rather than raising, because a referenced entity
+may be legitimately absent — mentioned in a `DISPLAY`, or read by a paragraph whose logic belongs to
+another step. Surfacing it and letting a reviewer weigh it is the specialist contract's rule 5, and
+the same posture ADR-0008 fixed for every other gate item. `build_design_document` gained
+`design_gate_items` for facts that are properties of the *design* rather than of a program's
+extraction; they are passed in rather than derived there because deriving them needs the tenant's
+COBOL, which `core/contracts.py` deliberately does not read.
+
+**Ambiguity resolves toward silence, deliberately.** A field name owned by two entities counts as
+reachable if either is. A gate nobody trusts is worse than one that occasionally under-reports.
+
+**CI's coverage caught the wiring untested — the G21 pattern, one more time.** The first CI run on
+this branch reported **98.37% against 98.59%**, and every uncovered line was
+`unpopulatable_gate_items`: the function that turns the check's answer into something a human at the
+gate actually reads. `unreachable_entities` had four tests of its own the whole time. That is
+exactly the shape G21 was closed twice over — a helper tested directly while the path to production
+was never exercised — and the only reason it surfaced is that a number moved.
+
+Closed by testing through the wiring: the gate item is produced, it names both entities and the
+paragraph, and it **reaches `DesignDocument.gate_items`** (a gate item nobody assembles into
+`design.json` is a gate item nobody sees). Both modules are now at **100%**, and the set includes
+the case where the check must go quiet — without it, a check that always fires would look exactly
+like a check that works.
+
 ### G28 — the width was computed all along and thrown away one line early
 
 **"Pad in the writer" could not be done as stated: there is no writer.** `generate` renders
