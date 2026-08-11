@@ -127,6 +127,11 @@ COMPLETE_STEP = BatchStepDesign(
 #:
 #: `MOVE SPACES TO TRAN-MERCHANT-NAME` is G28's case, and why `CobolText.spaces` exists: the field
 #: is `PIC X(50)`, so an empty string is not the same record on disk.
+#:
+#: The `ACCT-ID` formatting is a correction **the model made to this fixture**, not the reverse.
+#: `STRING 'Int. for a/c ', ACCT-ID DELIMITED BY SIZE` takes an unsigned 11-digit *display* field,
+#: so it contributes all eleven zero-padded positions. This body originally concatenated the bare
+#: value and would have written `Int. for a/c 194` where the COBOL writes `Int. for a/c 00000000194`.
 _COMPLETE_BODY = """\
 com.modernized.batch.domain.Tran source = item.tran();
 return new Tran(
@@ -134,7 +139,8 @@ return new Tran(
     "01",
     new BigDecimal("5"),
     "System",
-    "Int. for a/c " + item.account().acctId(),
+    CobolText.pad("Int. for a/c " + String.format("%011d",
+        item.account().acctId().toBigInteger()), 100),
     source.tranAmt(),
     BigDecimal.ZERO,
     CobolText.spaces(50),

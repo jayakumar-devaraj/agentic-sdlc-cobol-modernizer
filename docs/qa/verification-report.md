@@ -1771,9 +1771,45 @@ Java rather than asserted about it.
 because a stateless processor has neither a run counter nor a clock. That is the same boundary G26
 recorded, now visible in the generated file rather than only in a gap register.
 
-**Not claimed:** that a *model* writes this body. The one above is scripted, injected through
-`author=`, and the module says so. What is verified is that the paragraph's logic is now something
-the pipeline produces at all.
+#### The real run — and the G28 fix landing on a model
+
+Two Opus 5 calls, capped at one attempt each, **$0.6062 notional**. Both processors compiled on
+attempt 1, and `computeInterest` still passes the oracle **10 of 10** under the changed output type.
+
+**G28's fix worked.** The model wrote `CobolText.spaces(50)` for the three `MOVE SPACES` fields —
+not `""`. Its previous run, before the width and the helper existed, wrote `""` and flagged that it
+was wrong to.
+
+**It went further than the scripted body.** It padded *every* alphanumeric field to its declared
+width — `pad("01", 2)`, `pad("System", 10)`, the card number to 16, the timestamps to 26 — where the
+hand-written fixture only padded the three the COBOL spells `SPACES`.
+
+**G26's reachability worked**: `item.account().acctId()` and `item.cardXref().xrefCardNum()`, the
+two fields it left `null` last time.
+
+**One finding is a correction to this repo's own fixture, not to the model.** For
+`STRING 'Int. for a/c ', ACCT-ID DELIMITED BY SIZE`, it wrote:
+
+```java
+String acctIdDigits = String.format("%011d", item.account().acctId().toBigInteger());
+```
+
+with the reasoning that `ACCT-ID` is an unsigned 11-digit **display** field, so `DELIMITED BY SIZE`
+contributes all eleven zero-padded positions rather than a trimmed number. That is right, and the
+scripted `_COMPLETE_BODY` in this repo concatenates the bare value — which would write
+`Int. for a/c 194` where the COBOL writes `Int. for a/c 00000000194`. **The hand-written fixture is
+the less faithful of the two.**
+
+**What it decided rather than refused, and therefore needs review.** It implemented the DB2
+timestamp, reconstructing the format from `Z-GET-DB2-FORMAT-TIMESTAMP`'s sub-fields — including that
+the trailing group is hundredths of a second — and used `LocalDateTime.now()`. Those sub-fields are
+`REDEFINES`, which the construct matrix routes to a human, and `now()` is non-deterministic in a
+batch record. It said so in its notes rather than passing it off as settled, but this is the one
+part of the body a reviewer must not skim.
+
+**Still refused, and flagged for a human**: `TRAN-ID`'s counter and job parameter, `TRAN-AMT`'s
+provenance across the step boundary, the `WRITE` and its status handling, and whether
+`MOVE '05' TO TRAN-CAT-CD (PIC 9(04))` is faithfully `BigDecimal("5")`.
 
 ### `1300-B-WRITE-TX` becomes its own step
 
