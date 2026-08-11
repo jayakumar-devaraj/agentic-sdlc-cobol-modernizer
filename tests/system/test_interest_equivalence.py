@@ -21,6 +21,7 @@ and needs a real call.
 from __future__ import annotations
 
 import json
+import re
 from pathlib import Path
 
 import pytest
@@ -54,13 +55,23 @@ ORACLE_PATH = (
 )
 PROGRAM = "CBACT04C"
 
-#: The composite the real architect run implied and PR #28's model explicitly asked for: interest
-#: needs a balance *and* its rate, and `DIS-INT-RATE` is not reachable from `TranCatBal` alone.
+#: What the step actually needs, arrived at in two steps and both times from a model's refusal.
+#:
+#: `balance` + `disclosureGroup` came first: PR #28's model refused to compute interest from a
+#: `TranCatBal` alone, because `DIS-INT-RATE` is not reachable from it.
+#:
+#: `account` + `cardXref` are G26. The step's declared *output* is a `Tran`, standing in for
+#: `1300-B-WRITE-TX`, and that paragraph moves `ACCT-ID` into `TRAN-DESC` and `XREF-CARD-NUM` into
+#: `TRAN-CARD-NUM` -- neither reachable from balance-and-rate. The model left both `null` and named
+#: the COBOL rather than inventing values. ADR-0020 resolves a step's types by *name*; nothing
+#: checked they were **populatable**, and this is what that gap looked like in practice.
 COMPOSITE = CompositeType(
     name="TranCatBalWithRate",
     components=[
         CompositeComponent(field_name="balance", entity_name="TranCatBal"),
         CompositeComponent(field_name="disclosureGroup", entity_name="DisGroup"),
+        CompositeComponent(field_name="account", entity_name="Account"),
+        CompositeComponent(field_name="cardXref", entity_name="CardXref"),
     ],
 )
 STEP = BatchStepDesign(
@@ -231,6 +242,37 @@ def test_the_rendered_test_carries_every_oracle_row_as_a_literal(oracle, entitie
     assert oracle["not_computed"][0]["id"] in rendered
 
 
+def test_every_type_the_rendered_test_constructs_is_imported(oracle, entities):
+    """The defect widening the composite actually caused, caught by compiling rather than reading.
+
+    The import set was built from the *bound* entities -- balance, rate, output, composite. Adding
+    `Account` and `CardXref` (G26) left the file constructing two types it had not imported, and
+    javac said `cannot find symbol` twice. A renderer that emits a `new X(...)` must emit the
+    import for `X`; asserting it here means the next component added cannot reintroduce this.
+    """
+    rendered = render_equivalence_test(
+        oracle,
+        package=DEFAULT_PACKAGE,
+        test_class_name="ComputeInterestEquivalenceTest",
+        processor_class="ComputeInterestProcessor",
+        composite=COMPOSITE,
+        entities=entities,
+        output_entity="Tran",
+        domain_package=DEFAULT_DOMAIN_PACKAGE,
+    )
+    # Every `new X(` in the file, not the first per line: the composite is constructed on one line
+    # with its components nested inside it, so a per-line split sees only the outermost type.
+    # `BigDecimal` is imported from java.math, and the processor shares this file's package, so
+    # neither needs a domain import. Everything else the file constructs is a domain type.
+    constructed = set(re.findall(r"new ([A-Z]\w*)\(", rendered)) - {
+        "BigDecimal",
+        "ComputeInterestProcessor",
+    }
+    assert {"TranCatBalWithRate", "Account", "CardXref"} <= constructed
+    for name in constructed:
+        assert f"import {DEFAULT_DOMAIN_PACKAGE}.{name};" in rendered, name
+
+
 def test_rendering_refuses_a_binding_the_design_does_not_declare(oracle, entities):
     broken = json.loads(json.dumps(oracle))
     broken["java_binding"]["result_field"]["field"] = "tranTotalAmount"
@@ -329,6 +371,61 @@ def test_emitting_a_transaction_for_a_zero_rate_fails_it(tmp_path, entry, entiti
     project = _generate_and_render(tmp_path, entry, entities, oracle, _ALWAYS_WRITES_BODY)
     result = compile_project(project, goal="verify")
     assert not result.succeeded, "a zero rate must produce no transaction record"
+
+
+def test_the_composite_reaches_every_field_1300_b_write_tx_takes_from_a_record(entities):
+    """G26. The two fields the model left `null` because it could not reach them.
+
+    `1300-B-WRITE-TX` builds the `TRAN-RECORD` this step returns. Two of its moves read records the
+    composite did not carry: `ACCT-ID` (into `TRAN-DESC`) and `XREF-CARD-NUM` (into
+    `TRAN-CARD-NUM`). The model named both, left them `null`, and said which paragraph produced
+    them rather than inventing values.
+
+    Asserted against the real COBOL and the real entities rather than against the composite alone,
+    so this fails if either the copybooks or the paragraph change out from under it.
+    """
+    source = (FIXTURE_ROOT / "app" / "cbl" / "CBACT04C.cbl").read_text()
+    assert "MOVE XREF-CARD-NUM        TO TRAN-CARD-NUM" in source
+    assert "'Int. for a/c '" in source  # STRING ... ACCT-ID INTO TRAN-DESC
+
+    carried = {c.entity_name: c.field_name for c in COMPOSITE.components}
+    assert {"TranCatBal", "DisGroup", "Account", "CardXref"} <= set(carried)
+
+    by_name = {e.name: e for e in entities}
+    reachable = {
+        f"item.{carried['Account']}().{f.java_field_name}()"
+        for f in by_name["Account"].fields
+    } | {
+        f"item.{carried['CardXref']}().{f.java_field_name}()"
+        for f in by_name["CardXref"].fields
+    }
+    assert "item.account().acctId()" in reachable
+    assert "item.cardXref().xrefCardNum()" in reachable
+
+
+def test_two_of_the_four_unreachable_fields_stay_unreachable_and_it_is_not_the_composites_fault():
+    """The honest residual of G26, pinned so widening the composite is not mistaken for closing it.
+
+    The model named four fields it could not populate. A composite fixes exactly the two that are
+    **record data**. The other two are not, and no composite can carry them:
+
+    - `TRAN-ID` is `STRING PARM-DATE, WS-TRANID-SUFFIX` -- a job parameter and a per-run counter.
+      ADR-0020 says a composite's components are *existing domain entities*, and neither of these
+      is one. The model also noted a stateless processor cannot produce a monotonic suffix
+      correctly under restart or partitioning, which is a stronger objection than reachability.
+    - `TRAN-ORIG-TS`/`TRAN-PROC-TS` come from `Z-GET-DB2-FORMAT-TIMESTAMP`, whose target fields are
+      `REDEFINES` -- a construct the support matrix routes to a human gate rather than translating.
+
+    So the real remainder is a design decision this test deliberately does not make: either
+    `1300-B-WRITE-TX` becomes its own step with access to job parameters and a clock, or the target
+    populates those fields outside the translated logic.
+    """
+    source = (FIXTURE_ROOT / "app" / "cbl" / "CBACT04C.cbl").read_text()
+    assert "STRING PARM-DATE," in source
+    assert "WS-TRANID-SUFFIX" in source
+    assert "PERFORM Z-GET-DB2-FORMAT-TIMESTAMP" in source
+    # Neither is a domain entity, so neither can become a composite component under ADR-0020.
+    assert not any(c.entity_name in {"ParmDate", "Timestamp"} for c in COMPOSITE.components)
 
 
 def test_the_zero_rate_guard_is_not_in_the_paragraph_the_step_names():
