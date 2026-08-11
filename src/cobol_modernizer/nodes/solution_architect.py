@@ -128,6 +128,7 @@ def _domain_field(mapping: PicMapping) -> DomainField:
         precision=mapping.precision,
         scale=mapping.scale,
         signed=mapping.signed,
+        length=mapping.string_length,
     )
 
 

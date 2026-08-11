@@ -42,6 +42,7 @@ from cobol_modernizer.rendering.java_processor import (
     GeneratedBodyForgeryError,
     UnrenderableImportError,
 )
+from cobol_modernizer.rendering.target_api import render_target_api_facts
 from cobol_modernizer.tools.tenant_repo import resolve_program
 
 FIXTURE_ROOT = Path(__file__).parent.parent / "fixtures" / "tenant_repo_sample"
@@ -478,3 +479,31 @@ def test_a_step_name_java_cannot_accept_fails_loudly_rather_than_being_mangled(
             tier=ComplexityTier.SIMPLE,
             author=_good_author(),
         )
+
+
+def test_a_pic_x_width_reaches_the_prompt_so_move_spaces_has_a_translation(entities):
+    """Gap G28. Without the declared width, `MOVE SPACES` has no faithful translation.
+
+    `pic_mapper` computed `string_length` all along and `_to_domain_field` dropped it one line
+    before it would have reached the design, so a `PIC X(50)` became a bare `String`. A real model
+    asked to build a `Tran` wrote `""` for three such fields and flagged in its notes that an empty
+    string and fifty spaces are not the same record on disk. It was right, and it had not been told
+    the widths.
+    """
+    facts = render_domain_facts(entities)
+    # TRAN-MERCHANT-NAME is PIC X(50) -- one of the fields the model wrote "" for.
+    assert "PIC X(50) -- pad to this width" in facts
+    # A numeric field still states precision and scale, and never a width.
+    assert "precision 12, scale 2, signed" in facts
+
+
+def test_the_text_helper_reaches_the_prompt_beside_the_arithmetic_one(entities):
+    """A helper the generator cannot see is a helper that does not exist (the G21 lesson).
+
+    `render_target_api_facts` read one hardcoded class. Adding `CobolText` without generalising it
+    would have produced a class written, tested, and invisible -- so this asserts both are listed.
+    """
+    facts = render_target_api_facts()
+    assert "CobolArithmetic" in facts and "CobolText" in facts
+    assert "pad(String value, int width)" in facts
+    assert "spaces(int width)" in facts

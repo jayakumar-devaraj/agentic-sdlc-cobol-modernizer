@@ -151,6 +151,10 @@ def render_domain_facts(
             if field.precision is not None:
                 sign = "signed" if field.signed else "unsigned"
                 shape += f"  // precision {field.precision}, scale {field.scale}, {sign}"
+            elif field.length is not None:
+                # G28. Without the width, `MOVE SPACES` has no faithful translation: a model can
+                # only write `""`, and an empty string is not fifty spaces on a fixed-width record.
+                shape += f"  // PIC X({field.length}) -- pad to this width, do not emit a short value"
             lines.append(f"- {shape}")
         lines.append("")
 

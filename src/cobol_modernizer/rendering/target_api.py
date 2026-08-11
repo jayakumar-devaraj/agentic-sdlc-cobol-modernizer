@@ -26,15 +26,22 @@ rather than re-billed.
 from __future__ import annotations
 
 import re
+from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
 
 _TEMPLATE_ROOT = Path(__file__).resolve().parents[3] / "templates" / "target-spring-boot-baseline"
 
-COBOL_ARITHMETIC_PATH = (
+_COBOL_PACKAGE = (
     _TEMPLATE_ROOT / "src" / "main" / "java" / "com" / "modernized" / "batch" / "cobol"
-    / "CobolArithmetic.java"
 )
+
+COBOL_ARITHMETIC_PATH = _COBOL_PACKAGE / "CobolArithmetic.java"
+COBOL_TEXT_PATH = _COBOL_PACKAGE / "CobolText.java"
+
+#: Every helper class the generator may call. A class missing from this list is invisible to the
+#: prompt however well it is written and tested -- the reason this is a list at all (G28).
+HELPER_PATHS = (COBOL_ARITHMETIC_PATH, COBOL_TEXT_PATH)
 
 #: A Javadoc block immediately followed by a `public static` signature. Deliberately narrow: it
 #: matches the shape this one hand-written helper class actually has, and will simply find nothing
@@ -94,18 +101,27 @@ def extract_helper_api(java_source: str) -> list[HelperMethod]:
     ]
 
 
-def render_target_api_facts(path: Path = COBOL_ARITHMETIC_PATH) -> str:
-    """The prompt section describing the target's arithmetic helper, read from the real class."""
-    methods = extract_helper_api(path.read_text(encoding="utf-8"))
+def render_target_api_facts(paths: Sequence[Path] = HELPER_PATHS) -> str:
+    """The prompt section describing the target's COBOL helpers, read from the real classes.
+
+    Takes a list rather than one path because it grew a second class (G28's `CobolText`), and the
+    single-path version would have left the new helper invisible to the generator -- a helper
+    written, tested and never reachable, which is G21's failure exactly. Adding a third is one
+    entry in `HELPER_PATHS`.
+    """
     lines = [
-        "### The target's arithmetic helper: com.modernized.batch.cobol.CobolArithmetic",
+        "### The target's COBOL helpers, in com.modernized.batch.cobol",
         "",
-        "These are the real, already-implemented methods of the class in the target template, read",
-        "from its source. Use them rather than reimplementing their behaviour inline, and do not",
-        "assume a method that is not listed here exists.",
+        "These are the real, already-implemented methods of the classes in the target template,",
+        "read from their source. Use them rather than reimplementing their behaviour inline, and",
+        "do not assume a method that is not listed here exists.",
         "",
     ]
-    for method in methods:
-        lines.append(f"- `public static {method.signature}`")
-        lines.append(f"  - {method.doc}")
-    return "\n".join(lines)
+    for path in paths:
+        lines.append(f"#### {path.stem}")
+        lines.append("")
+        for method in extract_helper_api(path.read_text(encoding="utf-8")):
+            lines.append(f"- `public static {method.signature}`")
+            lines.append(f"  - {method.doc}")
+        lines.append("")
+    return "\n".join(lines).rstrip()

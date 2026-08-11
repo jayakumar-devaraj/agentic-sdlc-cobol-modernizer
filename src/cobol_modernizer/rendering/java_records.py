@@ -98,6 +98,10 @@ def _component_doc(field: DomainField) -> str:
     if field.precision is not None:
         signedness = "signed" if field.signed else "unsigned"
         detail += f"; PIC precision {field.precision}, scale {field.scale}, {signedness}"
+    elif field.length is not None:
+        # The declared width, so a reviewer of generated code can see that a shorter value is not
+        # the same record on disk (G28). Numerics carry precision/scale above for the same reason.
+        detail += f"; PIC X({field.length}), space-padded to that width"
     return f" * @param {field.java_field_name} {detail}"
 
 

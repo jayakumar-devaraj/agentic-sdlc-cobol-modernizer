@@ -52,6 +52,19 @@ class DomainField(BaseModel):
     java_type: str
     precision: int | None
     scale: int | None
+    #: The declared width of a `PIC X(n)` field, and `None` for a numeric one (gap G28).
+    #:
+    #: `pic_mapper` has always computed this and `_to_domain_field` dropped it one line before it
+    #: would have reached the design -- so a `PIC X(50)` became a bare `String` and the width
+    #: existed nowhere the generator could see. A model asked to translate `MOVE SPACES` therefore
+    #: wrote `""`, and flagged that an empty string and fifty spaces are not the same record on
+    #: disk. Same defect class as G21 and G24: a computed fact that never reached the target.
+    #:
+    #: Optional with a default, unlike `BatchStepDesign.guard_condition`, and the asymmetry is
+    #: deliberate: a guard is LLM judgment, where a missing key and a considered `null` must look
+    #: different. This is deterministic -- the producer always fills it -- so there is no silence
+    #: to distinguish, and a required key would break every existing design for no signal.
+    length: int | None = None
     signed: bool
 
 

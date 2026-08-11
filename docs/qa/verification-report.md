@@ -1741,6 +1741,53 @@ repo's design**, not about the model:
 Three of these describe work no step currently owns. They are the natural input to whatever revisits
 `solution_architect`'s step decomposition.
 
+### G28 — the width was computed all along and thrown away one line early
+
+**"Pad in the writer" could not be done as stated: there is no writer.** `generate` renders
+`ItemProcessor`s only, and ADR-0023 records that non-processor steps are reported rather than
+rendered. But the defect is not a writer's — **the `""` the model wrote appeared in a *processor*'s
+output record**, so it is fixable where it occurs.
+
+**The root, found by reading the chain rather than the symptom.** `pic_mapper` computes
+`string_length` for every `PIC X(n)`. `_to_domain_field` copied `precision`, `scale` and `signed`
+and **dropped the width one line before it reached the design** — so a `PIC X(50)` became a bare
+`String`, and the width existed nowhere the generator, the record, or a reviewer could see it. Same
+defect class as G21 (`WS-MONTHLY-INT`'s scale) and G24 (a composite's accessors): a computed fact
+that never reached the target.
+
+| Where the width now appears | Form |
+|---|---|
+| `DomainField.length` | carried from `pic_mapper`, optional with a default |
+| Generated record Javadoc | `@param tranMerchantName from COBOL TRAN-MERCHANT-NAME; PIC X(50), space-padded to that width` |
+| Generator prompt | `String tranMerchantName()  // PIC X(50) -- pad to this width, do not emit a short value` |
+
+**Why optional here and required for `guard_condition`** (ADR-0022): a guard is LLM judgment, where
+a missing key and a considered `null` must look different. A width is deterministic — the producer
+always fills it — so there is no silence to distinguish, and a required key would break every
+existing design for no signal. The asymmetry is deliberate, not an oversight.
+
+**`CobolText`, beside `CobolArithmetic`.** The semantic lives in one place, per that class's own
+stated rationale. `pad` truncates on the **right** — the opposite end from a numeric `MOVE`, which
+discards high-order digits — and `null` maps to spaces, because a COBOL `PIC X` field has no null
+state and mapping it to `""` would reintroduce the defect. 7 Java tests; the template now runs **20**
+(`mvn -B test`, `BUILD SUCCESS`).
+
+**The helper would have been invisible.** `render_target_api_facts` read one hardcoded class, so
+adding a second would have produced a helper written, tested and unreachable — G21 exactly. It now
+takes a list, and a test asserts both classes and both new signatures appear in the prompt.
+
+**The suite caught a violation in the fix itself.** `CobolText`'s first Javadoc explained the
+defect using the program and field names it was found in, and
+`test_the_template_carries_no_tenant_vocabulary` failed on it. That guard exists because the
+template is the scaffold *every* tenant's generated code is seeded into — ADR-0001's boundary, and
+the inverse of `guardrails.py`'s concern. The explanation is unchanged in substance and now names no
+tenant. Worth recording because the violation was in documentation, which is where this rule is
+easiest to break without noticing.
+
+**Not claimed:** that any generated body pads today. No model has been asked to translate
+`MOVE SPACES` since the width and the helper existed. What is verified is that the fact and the
+primitive now reach the generator, and that the template builds and tests them.
+
 ### G26 — the composite gains `Account` and `CardXref`, and two fields stay out of reach
 
 **What was verified.** `1300-B-WRITE-TX` builds the `Tran` this step returns, and two of its moves
