@@ -1814,7 +1814,9 @@ never pay for a model call.*
 **Second, smaller:** `_extract_model_imports` returning `()` for a file with no marked region — the
 "attribution unavailable" posture the G30 fix introduced, which nothing exercised.
 
-Neither was found by review. Both were found by a number moving 0.11%.
+Neither was found by review. Both were found by a number moving 0.11%. Coverage ended at **98.85%**,
+above the 98.84% it started from — which is the same shape as PRs #42 and #43: chasing the delta left
+the suite better than the change found it.
 
 **Not claimed.** No real model has repaired an import through this path; the four classes are scripted
 on both sides, which is what step 43 established is being measured — the **loop**, not a model's
