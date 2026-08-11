@@ -129,6 +129,7 @@ def render_equivalence_test(
     entities: Sequence[DomainEntity],
     output_entity: str,
     domain_package: str,
+    output_composite: CompositeType | None = None,
 ) -> str:
     """Render the equivalence test for one interest-computing step.
 
@@ -147,7 +148,28 @@ def render_equivalence_test(
 
     balance_entity = _entity(entities, binding["balance_field"]["entity"])
     rate_entity = _entity(entities, binding["rate_field"]["entity"])
-    result_entity = _entity(entities, output_entity)
+    # The output may be a composite once a design splits a paragraph chain into steps: with
+    # `1300-B-WRITE-TX` owned separately, the interest step hands its successor a record *plus* the
+    # context that successor needs, and the amount sits one accessor deeper. The binding names that
+    # component -- declared, not guessed, like everything else here.
+    result_component = binding["result_field"].get("component")
+    if result_component is not None:
+        if output_composite is None or output_composite.name != output_entity:
+            raise UnrenderableOracleError(
+                f"the oracle's java_binding names component {result_component!r} on "
+                f"{output_entity!r}, but no matching composite was supplied to render against"
+            )
+        owner = next(
+            (c for c in output_composite.components if c.field_name == result_component), None
+        )
+        if owner is None:
+            raise UnrenderableOracleError(
+                f"{output_entity!r} has no {result_component!r} component; components are "
+                f"{sorted(c.field_name for c in output_composite.components)}"
+            )
+        result_entity = _entity(entities, owner.entity_name)
+    else:
+        result_entity = _entity(entities, output_entity)
     _field(balance_entity, binding["balance_field"]["field"])
     _field(rate_entity, binding["rate_field"]["field"])
     _field(result_entity, binding["result_field"]["field"])
@@ -155,6 +177,9 @@ def render_equivalence_test(
     _require_reachable(composite, balance_entity.name)
     _require_reachable(composite, rate_entity.name)
     result_field = binding["result_field"]["field"]
+    result_path = (
+        f"{result_component}().{result_field}()" if result_component else f"{result_field}()"
+    )
 
     # Component order is the composite's own, so the constructor call matches the rendered record.
     by_entity = {
@@ -243,7 +268,7 @@ class {test_class_name} {{
         {output_entity} result = processor.process(item(balance, rate));
 
         assertNotNull(result, () -> id + ": expected a transaction, got none");
-        BigDecimal actual = result.{result_field}();
+        BigDecimal actual = result.{result_path};
         // compareTo, not equals: BigDecimal.equals is false for 2.4 against 2.40, and a scale
         // difference is not a wrong answer. A wrong *value* is what this test is for.
         assertEquals(

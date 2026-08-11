@@ -29,11 +29,15 @@
       "repo removes everywhere else, and a wrong guess here silently checks the wrong column.",
       "",
       "`result_field` is where WS-MONTHLY-INT lands: 1300-B-WRITE-TX does",
-      "`MOVE WS-MONTHLY-INT TO TRAN-AMT`, so the transaction's amount is the monthly interest."
+      "`MOVE WS-MONTHLY-INT TO TRAN-AMT`, so the transaction's amount is the monthly interest.",
+      "",
+      "`component` names the composite component the Tran travels in, once 1300-B-WRITE-TX is a",
+      "step of its own and the interest step hands its successor the record plus the context that",
+      "successor needs. Declared rather than inferred, like every other entry here."
     ],
     "balance_field": {"entity": "TranCatBal", "field": "tranCatBal", "cobol": "TRAN-CAT-BAL"},
     "rate_field": {"entity": "DisGroup", "field": "disIntRate", "cobol": "DIS-INT-RATE"},
-    "result_field": {"entity": "Tran", "field": "tranAmt", "cobol": "TRAN-AMT"},
+    "result_field": {"entity": "Tran", "field": "tranAmt", "cobol": "TRAN-AMT", "component": "tran"},
     "absent_output_means": "COBOL writes no transaction record; an ItemProcessor returns null to filter the item"
   },
   "rows": [

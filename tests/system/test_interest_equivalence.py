@@ -74,16 +74,42 @@ COMPOSITE = CompositeType(
         CompositeComponent(field_name="cardXref", entity_name="CardXref"),
     ],
 )
+#: What `computeInterest` hands its successor now that `1300-B-WRITE-TX` is a step of its own: the
+#: transaction it computed, plus the context that step needs to finish it. A composite carries
+#: existing entities only (ADR-0020), which is why the amount travels inside a `Tran` rather than
+#: as a bare value.
+OUTPUT_COMPOSITE = CompositeType(
+    name="TranWithContext",
+    components=[
+        CompositeComponent(field_name="tran", entity_name="Tran"),
+        CompositeComponent(field_name="account", entity_name="Account"),
+        CompositeComponent(field_name="cardXref", entity_name="CardXref"),
+    ],
+)
+
 STEP = BatchStepDesign(
     step_name="computeInterest",
     source_paragraphs=["1300-COMPUTE-INTEREST"],
     role="processor",
     description="Computes monthly interest from a balance and its disclosure-group rate.",
     input_type="TranCatBalWithRate",
-    output_type="Tran",
+    output_type="TranWithContext",
     # ADR-0022, closing G25. Verbatim from `CBACT04C.cbl:214` -- and note it is *not* in
     # `1300-COMPUTE-INTEREST`, which is why `source_paragraphs` could never have carried it.
     guard_condition="IF DIS-INT-RATE NOT = 0",
+)
+
+#: `1300-B-WRITE-TX` as its own step. A `writer`, because it is where the record leaves the job --
+#: which also means `generate` reports it `not_generated` (ADR-0023) rather than rendering it. That
+#: is the honest state: the step exists, is owned, and its logic is declared as not yet produced.
+WRITE_STEP = BatchStepDesign(
+    step_name="writeTransaction",
+    source_paragraphs=["1300-B-WRITE-TX"],
+    role="writer",
+    description="Completes and writes the interest transaction record.",
+    input_type="TranWithContext",
+    output_type="Tran",
+    guard_condition=None,
 )
 
 #: `Tran`'s components in declaration order, with the amount left as a `{}` slot. Written out rather
@@ -106,7 +132,8 @@ if (rate.compareTo(java.math.BigDecimal.ZERO) == 0) {
 _CORRECT_BODY = _PRELUDE + (
     "java.math.BigDecimal monthlyInterest = CobolArithmetic.divide("
     'balance.multiply(rate), new java.math.BigDecimal("1200"), 2);\n'
-    f"return {_TRAN.format(amount='monthlyInterest')};"
+    f"return new TranWithContext({_TRAN.format(amount='monthlyInterest')},"
+    " item.account(), item.cardXref());"
 )
 
 #: One token different, and wrong. `divideRounded` is `HALF_UP`, so it disagrees with COBOL on every
@@ -114,7 +141,8 @@ _CORRECT_BODY = _PRELUDE + (
 _ROUNDING_BODY = _PRELUDE + (
     "java.math.BigDecimal monthlyInterest = CobolArithmetic.divideRounded("
     'balance.multiply(rate), new java.math.BigDecimal("1200"), 2);\n'
-    f"return {_TRAN.format(amount='monthlyInterest')};"
+    f"return new TranWithContext({_TRAN.format(amount='monthlyInterest')},"
+    " item.account(), item.cardXref());"
 )
 
 #: Emits a zero-amount transaction for a zero rate instead of none. Every arithmetic row still
@@ -124,7 +152,8 @@ _ALWAYS_WRITES_BODY = (
     "java.math.BigDecimal rate = item.disclosureGroup().disIntRate();\n"
     "java.math.BigDecimal monthlyInterest = CobolArithmetic.divide("
     'balance.multiply(rate), new java.math.BigDecimal("1200"), 2);\n'
-    f"return {_TRAN.format(amount='monthlyInterest')};"
+    f"return new TranWithContext({_TRAN.format(amount='monthlyInterest')},"
+    " item.account(), item.cardXref());"
 )
 
 #: The imports the body needs. Supplied with the body because that is the real contract: the
@@ -135,6 +164,7 @@ _IMPORTS = [
     "java.math.BigDecimal",
     "com.modernized.batch.cobol.CobolArithmetic",
     f"{DEFAULT_DOMAIN_PACKAGE}.Tran",
+    f"{DEFAULT_DOMAIN_PACKAGE}.TranWithContext",
 ]
 
 
@@ -163,14 +193,14 @@ def _design_json(tmp_path: Path, entry: ProgramDesignEntry, entities: list) -> P
         [entry],
         unified_design=UnifiedDesign(
             domain_entities=entities,
-            composite_types=[COMPOSITE],
+            composite_types=[COMPOSITE, OUTPUT_COMPOSITE],
             batch_jobs=[
                 BatchJobDesign(
                     job_name="interestJob",
                     program_name=PROGRAM,
                     description="Monthly interest calculation.",
                     domain_entities=[e.name for e in entities],
-                    steps=[STEP],
+                    steps=[STEP, WRITE_STEP],
                 )
             ],
             rest_endpoints=[],
@@ -210,7 +240,8 @@ def _generate_and_render(tmp_path: Path, entry, entities, oracle, body: str) -> 
         processor_class="ComputeInterestProcessor",
         composite=COMPOSITE,
         entities=entities,
-        output_entity="Tran",
+        output_entity="TranWithContext",
+        output_composite=OUTPUT_COMPOSITE,
         domain_package=DEFAULT_DOMAIN_PACKAGE,
     )
     destination = (
@@ -232,7 +263,8 @@ def test_the_rendered_test_carries_every_oracle_row_as_a_literal(oracle, entitie
         processor_class="ComputeInterestProcessor",
         composite=COMPOSITE,
         entities=entities,
-        output_entity="Tran",
+        output_entity="TranWithContext",
+        output_composite=OUTPUT_COMPOSITE,
         domain_package=DEFAULT_DOMAIN_PACKAGE,
     )
     for row in oracle["rows"]:
@@ -257,7 +289,8 @@ def test_every_type_the_rendered_test_constructs_is_imported(oracle, entities):
         processor_class="ComputeInterestProcessor",
         composite=COMPOSITE,
         entities=entities,
-        output_entity="Tran",
+        output_entity="TranWithContext",
+        output_composite=OUTPUT_COMPOSITE,
         domain_package=DEFAULT_DOMAIN_PACKAGE,
     )
     # Every `new X(` in the file, not the first per line: the composite is constructed on one line
@@ -284,7 +317,8 @@ def test_rendering_refuses_a_binding_the_design_does_not_declare(oracle, entitie
             processor_class="ComputeInterestProcessor",
             composite=COMPOSITE,
             entities=entities,
-            output_entity="Tran",
+            output_entity="TranWithContext",
+        output_composite=OUTPUT_COMPOSITE,
             domain_package=DEFAULT_DOMAIN_PACKAGE,
         )
 
@@ -311,7 +345,8 @@ def test_rendering_refuses_a_composite_that_cannot_reach_the_rate(oracle, entiti
             processor_class="ComputeInterestProcessor",
             composite=without_rate,
             entities=entities,
-            output_entity="Tran",
+            output_entity="TranWithContext",
+        output_composite=OUTPUT_COMPOSITE,
             domain_package=DEFAULT_DOMAIN_PACKAGE,
         )
 
@@ -326,7 +361,8 @@ def test_rendering_refuses_an_oracle_with_no_declared_binding(oracle, entities):
             processor_class="ComputeInterestProcessor",
             composite=COMPOSITE,
             entities=entities,
-            output_entity="Tran",
+            output_entity="TranWithContext",
+        output_composite=OUTPUT_COMPOSITE,
             domain_package=DEFAULT_DOMAIN_PACKAGE,
         )
 
@@ -464,3 +500,130 @@ def test_the_zero_rate_guard_is_not_in_the_paragraph_the_step_names():
     assert STEP.source_paragraphs == ["1300-COMPUTE-INTEREST"]
     # The step names the callee only, so nothing the generator was given mentions the guard.
     assert not any("DIS-INT-RATE NOT" in line for line in source[paragraph : paragraph + 12])
+
+
+def test_the_write_step_reaches_the_pipeline_and_is_reported_not_dropped(
+    tmp_path, entry, entities, oracle
+):
+    """`1300-B-WRITE-TX` as its own step, end to end rather than merely declared.
+
+    Splitting it out is only real if the pipeline sees it. A `writer` is not rendered (ADR-0019
+    scopes generation to processors), and ADR-0023 is why that now produces a `not_generated`
+    outcome naming the paragraph instead of a silent `continue`. So the honest end state is
+    visible: the step exists, is owned, and its logic is declared as not yet produced.
+    """
+    design_path = _design_json(tmp_path, entry, entities)
+    outcome = run_generate(
+        design_path,
+        FIXTURE_ROOT,
+        tmp_path / "proj",
+        author=_author(_CORRECT_BODY),
+        advise=lambda routing, s, u: json.dumps(
+            {"repairable": False, "reason": "scripted", "instruction": ""}
+        ),
+    )
+
+    assert [o.step_name for o in outcome.not_generated] == ["writeTransaction"]
+    assert "1300-B-WRITE-TX" in outcome.not_generated[0].reason
+    # The processor still compiled, and a declared writer does not fail the run.
+    assert outcome.succeeded
+    assert [o.step_name for o in outcome.compiled] == ["computeInterest"]
+
+
+# --- The renderer's refusals, which are the part worth covering ------------------------------------
+
+
+def _render(oracle, entities, **overrides):
+    kwargs = {
+        "package": DEFAULT_PACKAGE,
+        "test_class_name": "ComputeInterestEquivalenceTest",
+        "processor_class": "ComputeInterestProcessor",
+        "composite": COMPOSITE,
+        "entities": entities,
+        "output_entity": "TranWithContext",
+        "output_composite": OUTPUT_COMPOSITE,
+        "domain_package": DEFAULT_DOMAIN_PACKAGE,
+    }
+    kwargs.update(overrides)
+    return render_equivalence_test(oracle, **kwargs)
+
+
+def test_a_component_binding_without_the_composite_is_refused(oracle, entities):
+    # The renderer is handed the design's composite; being asked for a component of something it
+    # was not given means the two disagree about the shape of the thing under test.
+    with pytest.raises(UnrenderableOracleError, match="no matching composite"):
+        _render(oracle, entities, output_composite=None)
+
+
+def test_a_component_the_composite_does_not_have_is_refused(oracle, entities):
+    broken = json.loads(json.dumps(oracle))
+    broken["java_binding"]["result_field"]["component"] = "transaction"
+    with pytest.raises(UnrenderableOracleError, match="no 'transaction' component"):
+        _render(broken, entities)
+
+
+def test_a_plain_entity_output_still_renders(oracle, entities):
+    """The pre-split shape, kept working and kept covered.
+
+    Splitting `1300-B-WRITE-TX` out made every call in this module use a composite output, which
+    quietly left the plain-entity path unexercised -- CI's coverage is what said so. Most steps
+    return an entity, so that path is the common case, not a legacy one.
+    """
+    plain = json.loads(json.dumps(oracle))
+    del plain["java_binding"]["result_field"]["component"]
+    rendered = _render(plain, entities, output_entity="Tran", output_composite=None)
+
+    assert "Tran result = processor.process(" in rendered
+    assert "result.tranAmt()" in rendered
+
+
+def test_an_ambiguous_composite_is_refused_rather_than_picked_from(oracle, entities):
+    # Two components of the same entity: which one carries the balance is a design question, and
+    # guessing it would silently read the wrong record.
+    ambiguous = CompositeType(
+        name="TranCatBalWithRate",
+        components=[
+            CompositeComponent(field_name="opening", entity_name="TranCatBal"),
+            CompositeComponent(field_name="closing", entity_name="TranCatBal"),
+            CompositeComponent(field_name="disclosureGroup", entity_name="DisGroup"),
+        ],
+    )
+    with pytest.raises(UnrenderableOracleError, match="ambiguous"):
+        _render(oracle, entities, composite=ambiguous)
+
+
+def test_a_binding_naming_an_entity_the_design_lacks_is_refused(oracle, entities):
+    # Pre-existing refusal, uncovered until now. A binding is written by hand against a design; if
+    # the two drift, this is the failure that says so rather than a mystery at compile time.
+    broken = json.loads(json.dumps(oracle))
+    broken["java_binding"]["balance_field"]["entity"] = "NoSuchEntity"
+    with pytest.raises(UnrenderableOracleError, match="does not declare"):
+        _render(broken, entities)
+
+
+def test_a_component_type_with_no_placeholder_is_refused_rather_than_nulled(oracle, entities):
+    """The renderer builds unbound components from placeholders; an unknown type has none.
+
+    It raises rather than emitting `null`, because a `null` component turns a wrong-value failure
+    into a `NullPointerException` several frames away from the cause.
+    """
+    from cobol_modernizer.core.contracts import DomainEntity, DomainField
+
+    exotic = DomainEntity(
+        name="Account",
+        source_copybook="CVACT01Y",
+        used_by_programs=[PROGRAM],
+        fields=[
+            DomainField(
+                java_field_name="openedOn",
+                cobol_field_name="ACCT-OPEN-DATE",
+                java_type="LocalDate",
+                precision=None,
+                scale=None,
+                signed=False,
+            )
+        ],
+    )
+    patched = [exotic if e.name == "Account" else e for e in entities]
+    with pytest.raises(UnrenderableOracleError, match="no placeholder"):
+        _render(oracle, patched)

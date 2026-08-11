@@ -336,12 +336,18 @@ def unpopulatable_gate_items(
         for job in unified_design.batch_jobs:
             if job.program_name != entry.program_name:
                 continue
+            # Every paragraph any step of this job claims. A step is answerable for what it
+            # reads itself, not for what it hands to a sibling step (G26's split).
+            owned = frozenset(
+                paragraph for other in job.steps for paragraph in other.source_paragraphs
+            )
             for step in job.steps:
                 missing = unreachable_entities(
                     step,
                     source_text=source_text,
                     entities=unified_design.domain_entities,
                     composites=unified_design.composite_types,
+                    owned_elsewhere=owned,
                 )
                 if not missing:
                     continue

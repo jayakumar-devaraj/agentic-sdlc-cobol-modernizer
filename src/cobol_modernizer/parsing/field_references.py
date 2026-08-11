@@ -39,27 +39,45 @@ _PERFORM = re.compile(r"\bPERFORM\s+(?P<name>[A-Z0-9][A-Z0-9-]*)\b(?!\s+(?:UNTIL
 _WORD = re.compile(r"[A-Z0-9][A-Z0-9-]*")
 
 
-def reachable_paragraphs(source_text: str, names: list[str]) -> dict[str, str]:
+def reachable_paragraphs(
+    source_text: str, names: list[str], stop_at: frozenset[str] = frozenset()
+) -> dict[str, str]:
     """The named paragraphs plus every paragraph they reach through `PERFORM`, transitively.
 
     Returns name -> body. Unknown names are skipped rather than raised on: a design may name a
     paragraph this parser did not recognise, and that is a separate problem from this one.
+
+    `stop_at` names paragraphs to treat as boundaries -- not followed into, and not included.
+    **A `PERFORM` is a call, and a design may legitimately split one into two steps.** Once
+    `1300-B-WRITE-TX` is a step of its own, the paragraph that performs it is no longer answerable
+    for what it reads, and charging the caller with the callee's data would report every chained
+    design as broken. The names it stops at are the ones another step already owns, so nothing goes
+    unexamined -- the responsibility moves rather than disappearing.
     """
     bodies = {paragraph.name: paragraph.body for paragraph in extract_paragraphs(source_text)}
 
     collected: dict[str, str] = {}
-    pending = list(names)
+    pending = [name for name in names if name not in stop_at]
     while pending:
         name = pending.pop()
         if name in collected or name not in bodies:
             continue
         body = bodies[name]
         collected[name] = body
-        pending.extend(match.group("name") for match in _PERFORM.finditer(body))
+        pending.extend(
+            match.group("name")
+            for match in _PERFORM.finditer(body)
+            if match.group("name") not in stop_at
+        )
     return collected
 
 
-def referenced_fields(source_text: str, names: list[str], vocabulary: set[str]) -> set[str]:
+def referenced_fields(
+    source_text: str,
+    names: list[str],
+    vocabulary: set[str],
+    stop_at: frozenset[str] = frozenset(),
+) -> set[str]:
     """Every name in `vocabulary` mentioned by the step's paragraphs or anything they `PERFORM`.
 
     `vocabulary` is the set of COBOL field names the design knows about, so this reports references
@@ -67,7 +85,7 @@ def referenced_fields(source_text: str, names: list[str], vocabulary: set[str]) 
     to understand any of them.
     """
     seen: set[str] = set()
-    for body in reachable_paragraphs(source_text, names).values():
+    for body in reachable_paragraphs(source_text, names, stop_at).values():
         for word in _WORD.findall(body.upper()):
             if word in vocabulary:
                 seen.add(word)
