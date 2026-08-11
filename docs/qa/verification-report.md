@@ -1741,6 +1741,46 @@ repo's design**, not about the model:
 Three of these describe work no step currently owns. They are the natural input to whatever revisits
 `solution_architect`'s step decomposition.
 
+### G7 — the handoff, finally exercised from the receiving side
+
+**The gap in one sentence.** ADR-0003 specifies the whole exchange; it had been implemented and
+tested **on the producing side only**, and control-plane had never received a `design.json`. Each
+side looked complete from inside itself, which is why this survived as the platform's largest
+integration unknown for eleven revisions of the audit.
+
+**Now tested from both sides, each in its own repo**, because it cannot be done in one.
+control-plane's ADR-0001 forbids tenant vocabulary and its own ADR-0001 says the platform ships no
+tenant fixtures, so a CardDemo `design.json` cannot live there. The split is forced by the
+architecture, not by convenience:
+
+| Side | Where | What it settles |
+|---|---|---|
+| Receiving | control-plane [PR #9](https://github.com/jayakumar-devaraj/agentic-sdlc-control-plane/pull/9) | An opaque artifact survives the allowlisted serde, a real durable pause and resume, and reaches a gate as *facts* |
+| Producing | `tests/system/test_handoff_contract.py` | A **real** `design.json` meets every requirement that spike established |
+
+**What the receiving-side spike found by running.** `build_serde` restricts msgpack to
+control-plane's own state models, so an artifact needing a registered type would have required a
+package change over there before a gate could even pause on it. It does not — plain JSON
+round-trips byte-identically under a canonical dump. And two **independent** `PostgresSaver`
+contexts against the published container prove the container-restart case rather than simulating
+it: the first pauses and closes, the second resumes on the same thread id and **reads the artifact
+back from the store before anyone resumes**, which is what an approval interface would render.
+
+**What this side now asserts**, each requirement traceable to something the spike ran:
+
+- the document is plain JSON containing no type control-plane must declare;
+- it is self-contained and **leaks no local path** — the specific way "self-contained" fails
+  quietly, since the document still parses and the reviewer following the reference finds nothing.
+  Verified falsifiable against a poisoned document rather than assumed;
+- `gate_items` travel with it and carry **no verdict** — no severity, no score, no `blocks` flag;
+- `schema_version` and `generated_at` are stated, and the narration a reviewer reads is reachable
+  without re-running extraction.
+
+**Scope, stated.** This retires the unknown, not the integration. control-plane still has no node
+that invokes this CLI, and the spike deliberately adds none: it introduces no node, no gate type and
+no state field, so that whatever Phase 2.1 needs is now a measured requirement instead of a guess.
+G7 moves to partial, not closed.
+
 ### Generating the write step — by splitting logic from wiring, not by rendering writers
 
 **`generate` renders `ItemProcessor`s only** (ADR-0019, reaffirmed by ADR-0023), so there were two

@@ -58,13 +58,20 @@ the domain records, asks a model for one `process(...)` method body per step, co
 and — while `build_validator` judges that a rewrite could help — asks for one, at most three times
 (ADR-0020). The model-authored region is marked in every generated file so a reviewer can see which
 lines a model wrote, and a compile error outside that region blocks rather than being handed back to
-a model. What that does **not** yet amount to: the only body compiled so far is a scripted
-pass-through, **no real model has written business logic through this path**, nothing has been
-written to the real `card-service` repository, and **no generated program has been checked against
-its COBOL for equivalence** — that is step 45. Step 40a's loader now exists (`tools/data_loader.py`,
-reading CardDemo's fixed-width files into PostgreSQL with `pic_mapper`-derived types), but it also
-established that **every balance in the shipped data is zero**, so step 45 needs non-zero inputs
-before an equivalence test could mean anything.
+a model. A real model has now written business logic through this
+path, and one calculation is checked against its COBOL: `CBACT04C`'s interest `COMPUTE` passes an
+equivalence test **10 of 10** against expected values derived by hand from the source (ADR-0021),
+rendered into the generated project and run by real Maven.
+
+What that does **not** yet amount to: it is **one `COMPUTE` of one program**, not a program.
+`CBACT04C` is also a rate lookup, a `'DEFAULT'` fallback, a per-account accumulation and an account
+update, and generating a stateful control-break writer is out of scope (ADR-0019). Nothing has been
+written to the real `card-service` repository. **No program round-trips** — COBOL to compiling Java
+to a passing differential test — and that count is `0 of 4`. Step 40a's loader
+(`tools/data_loader.py`) reads CardDemo's fixed-width files into PostgreSQL with
+`pic_mapper`-derived types; its finding that every `TRAN-CAT-BAL` in the shipped data is zero turned
+out to be a property of *that* file rather than the corpus — `dailytran.txt` carries 299 distinct
+signed amounts, and the zeros are the state before posting has run.
 **Retrieval is not wired**: `tools/knowledge_store.py` is a real,
 tested pgvector storage layer with no production caller, because embeddings need a second vendor
 this environment has no credential for — and because nobody has shown retrieval would help a
@@ -263,7 +270,7 @@ Milestone C4.
 ./.venv/Scripts/python -m pytest --cov=cobol_modernizer --cov-report=term-missing --cov-fail-under=90
 ```
 
-688 tests passing (4 skipped — the opt-in live-CLI tests), 98.76% coverage — CI's own numbers from
+693 tests passing (4 skipped — the opt-in live-CLI tests), 98.76% coverage — CI's own numbers from
 the run on this change, not a local approximation of them. The Postgres-backed
 `tools/knowledge_store.py` suite is included and skips nothing there, because CI provides a real
 service container. The target template's own 20 Java tests are not in that
