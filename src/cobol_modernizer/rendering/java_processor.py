@@ -69,6 +69,28 @@ class GeneratedBodyForgeryError(Exception):
     """
 
 
+class NonDeterministicBodyError(Exception):
+    """A model-authored body reads ambient state -- a clock, a random source, the environment.
+
+    **A batch record's contents must be reproducible.** Two runs over the same input, or a restart
+    that reprocesses one chunk, must produce the same bytes; a `LocalDateTime.now()` in a generated
+    body means they do not, and nothing downstream notices. It compiles, it looks right, and the
+    only symptom is that the same record differs between runs -- the failure class this repo's
+    deterministic core exists to prevent, arriving through the one part a model writes.
+
+    Found in a real body (2026-08-11). Asked to translate a paragraph that performs
+    `Z-GET-DB2-FORMAT-TIMESTAMP`, the model reconstructed the timestamp layout from the `REDEFINES`
+    sub-fields -- a construct the support matrix routes to a human -- and reached for
+    `LocalDateTime.now()` because nothing gives a processor the run's instant. It said so in its
+    notes, which is why it was caught, and the next model may not.
+
+    The right answer is not a different clock call: it is that the value comes from **outside the
+    step**, the same way `PARM-DATE` does. Both are job-level facts, and supplying them is one
+    design decision rather than two (audit G29). Until it is made, this refuses rather than letting
+    a non-reproducible record through.
+    """
+
+
 def _require_no_forged_marker(body: str, *, step_name: str) -> None:
     for marker in (BEGIN_MARKER, END_MARKER):
         if marker in body:
@@ -92,6 +114,39 @@ def _indent_body(body: str) -> list[str]:
         f"{_BODY_INDENT}{line}".rstrip() if line.strip() else ""
         for line in dedented.splitlines()
     ]
+
+
+#: Ambient state a stateless `ItemProcessor` must not read. Matched as call sites rather than by
+#: bare identifier so a *field* named `now` or a comment mentioning randomness is not a violation.
+_AMBIENT_STATE = re.compile(
+    r"\b(?:"
+    r"(?:LocalDate|LocalDateTime|LocalTime|Instant|OffsetDateTime|ZonedDateTime|Year|Clock)"
+    r"\s*\.\s*now\s*\("
+    r"|System\s*\.\s*(?:currentTimeMillis|nanoTime|getenv|getProperty)\s*\("
+    r"|new\s+(?:Random|Date)\s*\("
+    r"|Math\s*\.\s*random\s*\("
+    r"|UUID\s*\.\s*randomUUID\s*\("
+    r")"
+)
+
+
+def _require_no_ambient_state(body: str, *, step_name: str) -> None:
+    """Refuse a body whose output depends on when or where it ran.
+
+    Raised rather than flagged, on the same reasoning as the forgery check: the case is
+    unambiguous, and the alternative is a record that differs between two runs over identical
+    input with nothing reporting it.
+    """
+    match = _AMBIENT_STATE.search(body)
+    if match is None:
+        return
+    raise NonDeterministicBodyError(
+        f"model-authored body for step {step_name!r} reads ambient state ({match.group(0)!r}); a "
+        f"generated ItemProcessor must produce the same record for the same input on every run, "
+        f"including a restart that reprocesses a chunk. A run timestamp or an id seed is a "
+        f"job-level fact and has to be supplied to the step, not read from the environment -- "
+        f"leave the field and say so in `notes` instead"
+    )
 
 
 def _validated_imports(imports: Sequence[str]) -> list[str]:
@@ -162,6 +217,7 @@ def render_processor(
     """
     require_java_identifier(class_name, source_name=step.step_name, kind="Processor class name")
     _require_no_forged_marker(body, step_name=step.step_name)
+    _require_no_ambient_state(body, step_name=step.step_name)
 
     # `...batch.infrastructure.item...`, not `...batch.item...`. **Spring Batch 6 moved the
     # package**, and this renderer had the pre-6 name -- so every processor it produced carried an

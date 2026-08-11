@@ -1800,12 +1800,36 @@ scripted `_COMPLETE_BODY` in this repo concatenates the bare value — which wou
 `Int. for a/c 194` where the COBOL writes `Int. for a/c 00000000194`. **The hand-written fixture is
 the less faithful of the two.**
 
-**What it decided rather than refused, and therefore needs review.** It implemented the DB2
+**What it decided rather than refused, and therefore needed a fix.** It implemented the DB2
 timestamp, reconstructing the format from `Z-GET-DB2-FORMAT-TIMESTAMP`'s sub-fields — including that
 the trailing group is hundredths of a second — and used `LocalDateTime.now()`. Those sub-fields are
 `REDEFINES`, which the construct matrix routes to a human, and `now()` is non-deterministic in a
-batch record. It said so in its notes rather than passing it off as settled, but this is the one
-part of the body a reviewer must not skim.
+batch record. It said so in its notes rather than passing it off as settled, **which is the only
+reason it was caught.** See the next section.
+
+#### Ambient state is now refused, not reviewed
+
+**A batch record has to come out the same on every run over the same input**, including a restart
+that reprocesses a chunk. `LocalDateTime.now()` in a generated body means it does not, and nothing
+downstream notices: it compiles, it looks right, and the only symptom is two runs disagreeing.
+
+That is the failure class this repo's deterministic core exists to prevent, arriving through the one
+part a model writes — so it is a **refusal** (`NonDeterministicBodyError`), the same posture as the
+forgery check, rather than a note a reviewer might skim. `render_processor` rejects
+`LocalDate/LocalDateTime/LocalTime/Instant/OffsetDateTime/ZonedDateTime/Year/Clock.now(...)`,
+`System.currentTimeMillis/nanoTime/getenv/getProperty`, `new Random(...)`, `new Date(...)`,
+`Math.random(...)` and `UUID.randomUUID(...)`.
+
+**It matches call sites, not words.** A field named `nowField`, a `CobolText` call, and a comment
+explaining why the clock was *not* used all pass — a guard that fired on the word would push a model
+into writing worse notes. Pinned both ways, and the positive case is the **verbatim body the real
+model wrote**, so this cannot regress into a check that no longer catches the thing it was built for.
+
+**The right answer is not a different clock call.** A run timestamp and `TRAN-ID`'s
+`PARM-DATE`-plus-counter are the same kind of thing — **job-level facts**, belonging to the
+invocation rather than the item — and a stateless processor has access to neither. Supplying them is
+one design decision, not two (audit **G29**). Until it is made, the fields stay unset and flagged,
+which the prompt now asks for explicitly rather than leaving a model to infer.
 
 **Still refused, and flagged for a human**: `TRAN-ID`'s counter and job parameter, `TRAN-AMT`'s
 provenance across the step boundary, the `WRITE` and its status handling, and whether

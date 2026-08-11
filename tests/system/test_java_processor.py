@@ -17,6 +17,7 @@ from cobol_modernizer.rendering.java_processor import (
     BEGIN_MARKER,
     END_MARKER,
     GeneratedBodyForgeryError,
+    NonDeterministicBodyError,
     UnrenderableImportError,
     render_processor,
 )
@@ -203,3 +204,85 @@ def test_real_import_shapes_are_accepted(good):
 def test_an_illegal_class_name_raises_rather_than_rendering_uncompilable_java():
     with pytest.raises(UnrenderableJavaNameError, match="Processor class name"):
         _render(class_name="class")
+
+
+# --- Reproducibility: a generated body may not read a clock -----------------------------------------
+
+
+def test_the_real_body_that_reached_for_a_clock_is_refused():
+    """The exact line a real model wrote, now rejected before it reaches a compiler.
+
+    Asked to translate a paragraph performing `Z-GET-DB2-FORMAT-TIMESTAMP`, a real Opus 5 call
+    reconstructed the timestamp layout from the `REDEFINES` sub-fields and filled it with
+    `LocalDateTime.now()`. It compiled, it looked right, and it makes the same input produce a
+    different record on every run -- including a restart that reprocesses one chunk.
+
+    It flagged the choice in its notes, which is the only reason it was caught. The next one may
+    not, so this is a refusal rather than a note.
+    """
+    body = (
+        'String db2FormatTs = LocalDateTime.now()\n'
+        '        .format(DateTimeFormatter.ofPattern("yyyy-MM-dd-HH.mm.ss.SS")) + "0000";\n'
+        "return new Tran(db2FormatTs);"
+    )
+    with pytest.raises(NonDeterministicBodyError, match="ambient state"):
+        render_processor(
+            STEP,
+            package=PACKAGE,
+            class_name="CompleteTransactionProcessor",
+            input_type="TranWithContext",
+            output_type="Tran",
+            body=body,
+            authored_by="test",
+        )
+
+
+@pytest.mark.parametrize(
+    "snippet",
+    [
+        "Instant.now()",
+        "System.currentTimeMillis()",
+        "new Random().nextInt()",
+        "Math.random()",
+        "UUID.randomUUID()",
+        'System.getenv("RUN_DATE")',
+    ],
+)
+def test_every_ambient_source_is_refused(snippet):
+    with pytest.raises(NonDeterministicBodyError):
+        render_processor(
+            STEP,
+            package=PACKAGE,
+            class_name="P",
+            input_type="A",
+            output_type="B",
+            body=f"return {snippet};",
+            authored_by="test",
+        )
+
+
+@pytest.mark.parametrize(
+    "snippet",
+    [
+        "item.tran().tranAmt()",
+        "item.nowField()",
+        "CobolText.spaces(50)",
+        "// the COBOL reads the clock here; see notes",
+    ],
+)
+def test_a_body_that_merely_mentions_time_is_not_refused(snippet):
+    """The check matches call sites, not words.
+
+    A field named `nowField`, a helper call, or a comment explaining why the clock was *not* used
+    must all pass -- a guard that fired on the word would push a model into writing worse notes.
+    """
+    source = render_processor(
+        STEP,
+        package=PACKAGE,
+        class_name="P",
+        input_type="A",
+        output_type="B",
+        body=f"return {snippet};" if not snippet.startswith("//") else f"{snippet}\nreturn null;",
+        authored_by="test",
+    )
+    assert snippet.strip("/ ") in source or snippet in source
