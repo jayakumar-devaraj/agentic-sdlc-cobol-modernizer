@@ -1794,6 +1794,28 @@ out of the rendered file and strips the marker — given a model that supplied b
 `java.math.BigDecimal` and `org.springframework.stereotype.Component`, it returns exactly
 `('java.math.BigDecimal',)`, excluding the framework import the renderer would have emitted regardless.
 
+#### The coverage delta, and what it caught
+
+CI fell **98.84% → 98.73%** on this change. Chased rather than explained away, per the standing rule
+that a moving coverage number has been a real gap every time here. It was two, and the first is the
+one worth reading.
+
+**`validate_build`'s deterministic short-circuit lost its only test.** `classify` has a direct test
+for every deterministic branch, and nothing tested that `validate_build` actually *short-circuits* on
+one — until this change, a single integration test happened to cover it: **G30's own case**, which
+drove a rendered-region error through the real entrypoint. Closing G30 made that case heal instead,
+and the early return silently went uncovered. **G21's shape a fifth time**: a helper with its own
+tests, and no test of the path to production, where the only cover was incidental.
+
+Closed by asserting it through the real entrypoint with an `advise` that raises if called — which
+pins the property as economic as well as behavioural: *a verdict this node can reach on its own must
+never pay for a model call.*
+
+**Second, smaller:** `_extract_model_imports` returning `()` for a file with no marked region — the
+"attribution unavailable" posture the G30 fix introduced, which nothing exercised.
+
+Neither was found by review. Both were found by a number moving 0.11%.
+
 **Not claimed.** No real model has repaired an import through this path; the four classes are scripted
 on both sides, which is what step 43 established is being measured — the **loop**, not a model's
 ability to fix things. And the round-trip metric does not move: this repairs attribution, not

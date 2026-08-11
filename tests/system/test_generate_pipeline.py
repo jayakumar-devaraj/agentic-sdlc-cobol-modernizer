@@ -22,6 +22,7 @@ from cobol_modernizer.core.contracts import BatchStepDesign, ProgramDesignEntry
 from cobol_modernizer.core.model_client import MAX_TRANSPORT_ATTEMPTS
 from cobol_modernizer.graph.generate_pipeline import (
     MAX_HEAL_ATTEMPTS,
+    _extract_model_imports,
     heal_step,
     processor_relative_path,
 )
@@ -297,6 +298,19 @@ def test_the_loop_heals_every_injected_error_class(
     assert outcome.succeeded, f"the loop failed to heal {name}"
     assert outcome.attempts == 2, f"{name} healed in {outcome.attempts} attempts, expected 2"
     assert compile_project(project, goal="compile").succeeded
+
+
+def test_reading_model_imports_back_out_of_an_unmarked_file_yields_nothing():
+    """The "attribution unavailable" case, which the G30 fix introduced and nothing covered.
+
+    A hand-written file, or one rendered before the markers existed, carries no marked region — and
+    the deliberate posture (shared with `model_authored_line_range`) is that *nobody knows* rather
+    than *nothing is the model's*. A repair prompt must then claim no imports at all, instead of
+    guessing from whatever import lines happen to be there.
+
+    Found by CI's coverage falling on this PR, not by review.
+    """
+    assert _extract_model_imports("class Foo {}") == ()
 
 
 def test_a_model_supplied_import_that_does_not_resolve_is_the_models_to_repair(
