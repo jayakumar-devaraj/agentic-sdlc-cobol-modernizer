@@ -1741,6 +1741,43 @@ repo's design**, not about the model:
 Three of these describe work no step currently owns. They are the natural input to whatever revisits
 `solution_architect`'s step decomposition.
 
+### `1300-B-WRITE-TX` becomes its own step
+
+**The design decision G26 and G27 both left open, now made.** The interest paragraph performs the
+write paragraph, and a single step owning both was what made `Tran`'s id, description, card number
+and timestamps unreachable in the first place.
+
+**The split needed a change to the check before it meant anything.** `unreachable_entities` follows
+`PERFORM`, so `computeInterest` would still have been charged with the write paragraph's data
+however the design divided them. A `PERFORM` is a call, and a design may legitimately split one
+into two steps — so paragraphs another step of the same job owns are now boundaries: not followed
+into, not included, and a step is never excluded from its own.
+
+**The assertion that matters is that the finding relocates rather than vanishing:**
+
+| | `computeInterest` | `writeTransaction` |
+|---|---|---|
+| Undivided | `['Account', 'CardXref']` | — |
+| Split | `[]` | `['Account', 'CardXref']` |
+
+A boundary that made a real gap disappear would be worse than no boundary. It lands on the step that
+now owns the work, which is why `writeTransaction`'s input is the composite that reaches them.
+
+**The shape.** `computeInterest` takes `TranCatBalWithRate` and returns `TranWithContext` — the
+transaction plus the context its successor needs; a composite carries existing entities only
+(ADR-0020), which is why the amount travels inside a `Tran` rather than as a bare value.
+`writeTransaction` takes that and produces the `Tran`. That is the chain ADR-0020 recorded a real
+architect run producing.
+
+**End to end, not merely declared.** `writeTransaction` is a `writer`, so `generate` reports it
+`not_generated` naming `1300-B-WRITE-TX` (ADR-0023) rather than rendering it — the honest end state:
+the step exists, is owned, and its logic is declared as not yet produced. Asserted through
+`run_generate`, because a step nothing exercises is a step that has not really been added.
+
+The oracle's result now sits one accessor deeper (`result.tran().tranAmt()`), declared as a
+`component` in `java_binding` rather than inferred. All 12 harness tests pass, including the three
+real-Maven runs and both negative cases.
+
 ### G26's systemic half — resolving is not populating
 
 **The gap in one sentence.** ADR-0020 checks a step's `input_type`/`output_type` **resolve** — that
