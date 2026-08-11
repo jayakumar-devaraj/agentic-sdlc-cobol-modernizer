@@ -36,6 +36,7 @@ from pathlib import Path
 
 import pytest
 
+from cobol_modernizer.core.model_client import collect_usage
 from cobol_modernizer.tools.tenant_repo import resolve_program
 from tests.evaluations.corpus import CASES, Ground
 from tests.evaluations.judge import JUDGE_MODEL, BenchmarkSummary, judge_case
@@ -54,8 +55,17 @@ def summary() -> BenchmarkSummary:
     responses, and a flaky benchmark is one nobody trusts enough to act on.
     """
     source = resolve_program(FIXTURE_ROOT, "CBACT04C").source_text
-    results = tuple(judge_case(case, source) for case in CASES)
+    # `collect_usage` so the instrument reports what it cost to run. An evaluation harness whose own
+    # price is unknown is awkward in a repo whose § 4b argument is about cost per unit of review --
+    # and the first two runs of this benchmark could not say, because nothing bound an accumulator.
+    with collect_usage() as usage:
+        results = tuple(judge_case(case, source) for case in CASES)
     rendered = BenchmarkSummary(results=results)
+    print(
+        f"\n\n{usage.model_calls} calls  in={usage.input_tokens}  out={usage.output_tokens}  "
+        f"cache_read={usage.cache_read_input_tokens}  "
+        f"notional=${usage.notional_cost_usd if usage.notional_cost_usd is not None else 0.0:.4f}"
+    )
     # Printed so a real run leaves the artifact the verification report needs, whether or not the
     # assertions below pass. A benchmark that fails and prints nothing has to be run twice.
     print(f"\n\nJudge: {JUDGE_MODEL}\n\n{rendered.render()}\n")
@@ -64,6 +74,9 @@ def summary() -> BenchmarkSummary:
         f"source-grounded detection: {rendered.detection_rate(ground=Ground.SOURCE):.2f}  "
         f"false-positive rate: {rendered.false_positive_rate():.2f}"
     )
+    # The judge's own reasoning for anything it got wrong. Added after the first billed run, which
+    # failed and left no way to tell a judge error from a corpus error without paying again.
+    print(f"\n{rendered.render_disagreements()}\n")
     return rendered
 
 

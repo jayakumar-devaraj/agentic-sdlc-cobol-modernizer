@@ -189,6 +189,35 @@ _INVENTED_ID_BODY = _mutate(
 )
 
 
+#: What happens to each step's output after it returns -- keyed by step, so it **cannot** vary with
+#: the case and therefore cannot leak which body is defective.
+#:
+#: **Why this is here at all**, and it is the fifth instance of one defect class. The first billed run
+#: flagged `fixed_width_text` on all three `computeInterest` bodies, including the faithful one, and
+#: it was *right on the facts*: that step builds a carrier `Tran` with `""` in `PIC X(16)` and
+#: `"Int."` in `PIC X(100)`. What makes those placeholders legitimate rather than defective is that
+#: `completeTransaction` reads only `tranAmt` off that record and rebuilds every other field -- a fact
+#: `design.json` holds in its step chain and the judge was never given. Same shape as G21, G24, G28
+#: and G26: *a computed fact this repo holds and never hands over.*
+#:
+#: **This is not teaching to the test**, and the check is whether a human reviewer would need it. They
+#: would: shown only `computeInterest` and its COBOL, a careful reviewer flags `""` in a `PIC X(100)`
+#: field too. And it does not blunt the criterion -- `completeTransaction` is terminal, so a short
+#: string there is still a defect, which is what `completion_empty_string` pins.
+DOWNSTREAM_BY_STEP: dict[str, str] = {
+    "computeInterest": (
+        "This step's output is consumed by a later step, `completeTransaction`, which reads only "
+        "`tran().tranAmt()` from it and constructs the final transaction record itself. Every other "
+        "component of the `Tran` this step returns is discarded downstream and never reaches a file, "
+        "so a placeholder in one of those fields is carried data rather than written output."
+    ),
+    "completeTransaction": (
+        "This step is terminal: the `Tran` it returns is the transaction record written to the "
+        "output file as-is. No later step repopulates any of its fields."
+    ),
+}
+
+
 @dataclass(frozen=True)
 class EvalCase:
     """One body, the step it implements, and what a competent judge must say about it."""
@@ -217,7 +246,12 @@ CASES: tuple[EvalCase, ...] = (
         ground=Ground.ORACLE,
         evidence=(
             "passes all 10 oracle rows under real Maven "
-            "(test_a_faithful_body_passes_the_equivalence_test)"
+            "(test_a_faithful_body_passes_the_equivalence_test). **The oracle asserts on `tranAmt` "
+            "and nothing else**, so this case claims arithmetic and control-flow fidelity, not "
+            "byte-fidelity of the whole record -- the first billed run flagged the carrier's "
+            "placeholder fields and was right on the facts (see DOWNSTREAM_BY_STEP). Narrowed here "
+            "rather than in the bar: calling a body faithful because it passed a one-column check is "
+            "a conclusion generalised past its evidence"
         ),
     ),
     EvalCase(

@@ -172,6 +172,31 @@ def test_the_corpus_can_measure_false_positives_as_well_as_misses():
     assert UNFAITHFUL_CASES, "no unfaithful case: nothing here could detect a judge that passes all"
 
 
+def test_every_step_in_the_corpus_says_what_becomes_of_its_output():
+    """A step with no downstream fact is a step the judge must guess about.
+
+    The first billed run is why this exists: without it the judge flagged placeholder fields in a
+    *carried* record as short written output, correctly on the facts and wrongly as a defect. A new
+    step added without this entry would reintroduce that silently, and the symptom would look like
+    the judge getting worse.
+    """
+    from tests.evaluations.corpus import DOWNSTREAM_BY_STEP
+
+    for case in CASES:
+        assert case.step.step_name in DOWNSTREAM_BY_STEP, case.step.step_name
+
+
+def test_the_downstream_fact_is_keyed_by_step_so_it_cannot_leak_the_answer():
+    # Keyed by step rather than by case, so two cases of one step get identical text by construction
+    # rather than by anyone remembering to keep them in sync.
+    from tests.evaluations.corpus import DOWNSTREAM_BY_STEP
+
+    for case in CASES:
+        assert case.name not in DOWNSTREAM_BY_STEP[case.step.step_name]
+        if case.failing_criterion:
+            assert case.failing_criterion not in DOWNSTREAM_BY_STEP[case.step.step_name]
+
+
 def test_both_grounds_are_represented_and_labelled():
     grounds = {case.ground for case in CASES}
     assert grounds == {Ground.ORACLE, Ground.SOURCE}

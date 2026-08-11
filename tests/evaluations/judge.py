@@ -29,7 +29,14 @@ from cobol_modernizer.core.guardrails import wrap_untrusted_cobol
 from cobol_modernizer.core.model_client import call_model
 from cobol_modernizer.core.structured_output import strip_code_fence
 from cobol_modernizer.rendering.java_processor import render_processor
-from tests.evaluations.corpus import CRITERIA, CRITERIA_BY_ID, EvalCase, Ground, Verdict
+from tests.evaluations.corpus import (
+    CRITERIA,
+    CRITERIA_BY_ID,
+    DOWNSTREAM_BY_STEP,
+    EvalCase,
+    Ground,
+    Verdict,
+)
 
 #: The judge, pinned. See the module docstring on why this is not a routing decision.
 #:
@@ -118,17 +125,22 @@ def render_step_facts(case: EvalCase) -> str:
         if step.guard_condition
         else "none -- the COBOL performs this step for every input record"
     )
-    return "\n".join(
-        [
-            "## The step",
-            "",
-            f"- Step: {step.step_name} ({step.role})",
-            f"- Description: {step.description}",
-            f"- Source COBOL paragraph(s): {', '.join(step.source_paragraphs) or '(none recorded)'}",
-            f"- Signature: {step.output_type} process({step.input_type} item)",
-            f"- Guard condition: {guard}",
-        ]
-    )
+    lines = [
+        "## The step",
+        "",
+        f"- Step: {step.step_name} ({step.role})",
+        f"- Description: {step.description}",
+        f"- Source COBOL paragraph(s): {', '.join(step.source_paragraphs) or '(none recorded)'}",
+        f"- Signature: {step.output_type} process({step.input_type} item)",
+        f"- Guard condition: {guard}",
+    ]
+    downstream = DOWNSTREAM_BY_STEP.get(step.step_name)
+    if downstream:
+        # Keyed by step, never by case -- see `DOWNSTREAM_BY_STEP`. Without it the judge cannot tell a
+        # placeholder in a carried record from a short value in a written one, and the first billed
+        # run showed it calling the first the second.
+        lines += ["", f"- **What happens to this step's output**: {downstream}"]
+    return "\n".join(lines)
 
 
 def render_generated_java(case: EvalCase) -> str:
@@ -167,12 +179,32 @@ def build_judge_prompt(case: EvalCase, cobol_source: str, *, program: str = "CBA
     )
 
 
-def parse_judge_response(raw_response: str) -> dict[str, Verdict]:
-    """Parse the judge's array into `{criterion_id: Verdict}`, or raise.
+@dataclass(frozen=True)
+class JudgeAnswer:
+    """One judge response: what it decided, **and why**.
 
-    Strict on every axis a silent partial answer could take: unknown criterion ids, missing ones, and
-    unrecognised verdict strings all raise. A judge that answers three of four criteria and is scored
-    as though the fourth passed would report a miss as a clean run.
+    The rationales exist because the first billed run needed them and they were not there. The
+    original `parse_judge_response` returned verdicts and dropped the reasoning on the floor, so when
+    the judge disagreed with the corpus there was no way to tell a judge error from a corpus error
+    without paying for another run. For an instrument whose entire output is a disagreement, the
+    reasoning *is* the finding -- the verdict is just its index.
+    """
+
+    verdicts: dict[str, Verdict]
+    rationales: dict[str, str]
+
+
+def parse_judge_response(raw_response: str) -> JudgeAnswer:
+    """Parse the judge's array into verdicts and rationales, or raise.
+
+    Strict on every axis a silent partial answer could take: unknown criterion ids, missing ones,
+    duplicates, and unrecognised verdict strings all raise. A judge that answers three of four
+    criteria and is scored as though the fourth passed would report a miss as a clean run.
+
+    **A missing or empty `rationale` raises too**, which is the `modernization_engineer` precedent --
+    `notes` is mandatory there so that having nothing to say is a statement rather than an omission.
+    The same argument applies with more force here, since a rationale is the only thing that makes a
+    surprising verdict diagnosable without spending money again.
     """
     try:
         payload = json.loads(strip_code_fence(raw_response))
@@ -185,6 +217,7 @@ def parse_judge_response(raw_response: str) -> dict[str, Verdict]:
         )
 
     verdicts: dict[str, Verdict] = {}
+    rationales: dict[str, str] = {}
     for index, entry in enumerate(payload):
         if not isinstance(entry, dict) or "criterion" not in entry or "verdict" not in entry:
             raise JudgeResponseParseError(
@@ -207,10 +240,18 @@ def parse_judge_response(raw_response: str) -> dict[str, Verdict]:
                 f"{entry['verdict']!r}"
             ) from exc
 
+        rationale = entry.get("rationale")
+        if not isinstance(rationale, str) or not rationale.strip():
+            raise JudgeResponseParseError(
+                f"judge gave no rationale for {criterion_id!r}; a verdict whose reasoning is not "
+                f"recorded cannot be diagnosed without paying for another run"
+            )
+        rationales[criterion_id] = rationale.strip()
+
     missing = sorted(set(CRITERIA_BY_ID) - set(verdicts))
     if missing:
         raise JudgeResponseParseError(f"judge did not answer for criterion(s): {missing}")
-    return verdicts
+    return JudgeAnswer(verdicts=verdicts, rationales=rationales)
 
 
 @dataclass(frozen=True)
@@ -218,7 +259,15 @@ class CaseResult:
     """What the judge said about one case, and whether it was right."""
 
     case: EvalCase
-    verdicts: dict[str, Verdict]
+    answer: JudgeAnswer
+
+    @property
+    def verdicts(self) -> dict[str, Verdict]:
+        return self.answer.verdicts
+
+    @property
+    def rationales(self) -> dict[str, str]:
+        return self.answer.rationales
 
     @property
     def caught(self) -> bool | None:
@@ -258,8 +307,8 @@ class CaseResult:
         return self.caught is not False and not self.false_positives
 
 
-def score_case(case: EvalCase, verdicts: dict[str, Verdict]) -> CaseResult:
-    return CaseResult(case=case, verdicts=verdicts)
+def score_case(case: EvalCase, answer: JudgeAnswer) -> CaseResult:
+    return CaseResult(case=case, answer=answer)
 
 
 def _default_adjudicate(system_prompt: str, user_content: str) -> str:
@@ -332,3 +381,27 @@ class BenchmarkSummary:
                 f"{', '.join(failed) or '(none)'} | {'yes' if result.correct else 'NO'} |"
             )
         return "\n".join(lines)
+
+    def render_disagreements(self) -> str:
+        """Every verdict this run got wrong, **with the judge's own reasoning**.
+
+        The part worth reading when a benchmark fails. A table of criterion names says a
+        disagreement happened; only the rationale distinguishes a judge that misread the code from a
+        corpus that mislabelled it -- which is exactly the question the first run could not answer,
+        because rationales were not kept.
+        """
+        blocks: list[str] = []
+        for result in self.results:
+            if result.correct:
+                continue
+            wrong = list(result.false_positives)
+            if result.caught is False and result.case.failing_criterion:
+                wrong.append(f"{result.case.failing_criterion} (missed)")
+            blocks.append(f"### {result.case.name}")
+            for criterion_id in wrong:
+                key = criterion_id.split(" ")[0]
+                blocks.append(
+                    f"- **{criterion_id}** -> {result.verdicts[key].value}: "
+                    f"{result.rationales.get(key, '(no rationale)')}"
+                )
+        return "\n".join(blocks) if blocks else "(no disagreements)"

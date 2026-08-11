@@ -1837,12 +1837,81 @@ source, putting the large identical span behind a varying prefix — G13's shape
 correction, reintroduced in a new module. Reordered so all six cases share the rubric and the source
 as a genuine prefix, asserted by `test_all_six_cases_share_the_rubric_and_the_source_as_a_common_prefix`.
 
-**What is not verified.** No real judge call, so: no detection rate, no false-positive rate, no
-comparison between a cheap and an expensive judge, and no evidence that `claude-opus-5` is any good
-at this task. ADR-0015's `verified_for` gate does not cover it — pinning rather than routing bypasses
-that gate mechanically, which ADR-0024 states outright rather than leaving implicit. The first billed
-run is the measurement that would earn a listing, and it either clears the two derived bars in
-`test_judge_benchmark.py` or is a finding.
+### Step 44's benchmark, run for real — and the first run failed
+
+*(Supersedes the "what is not verified" paragraph that closed the entry above, which read: **"No real
+judge call, so: no detection rate, no false-positive rate…"** That was true when written and is no
+longer. Kept rather than deleted, per this file's convention.)*
+
+```
+COBOL_MODERNIZER_RUN_LIVE_CLI_TESTS=1 pytest tests/evaluations/test_judge_benchmark.py -q -s
+```
+
+**Run 2 (final): 4 passed in 89.24s.** `claude-opus-5`, 6 calls.
+
+| case | ground | expected | judge said | correct |
+|---|---|---|---|---|
+| `interest_faithful` | oracle | (faithful) | (none) | yes |
+| `interest_rounds` | oracle | `arithmetic_mode` | `arithmetic_mode` | yes |
+| `interest_unguarded` | oracle | `guard_applied` | `guard_applied` | yes |
+| `completion_faithful` | source | (faithful) | (none) | yes |
+| `completion_empty_string` | source | `fixed_width_text` | `fixed_width_text` | yes |
+| `completion_invented_tran_id` | source | `no_invented_values` | `no_invented_values` | yes |
+
+**oracle-grounded detection 1.00 · source-grounded detection 1.00 · false-positive rate 0.00.**
+
+**Run 1 failed, and it is the more useful of the two.** `1 failed, 3 passed in 92.58s`. Detection was
+already 1.00 on both grounds — the bar that matters passed on the first attempt — but the
+false-positive rate was **0.50**: the judge failed `fixed_width_text` on all three `computeInterest`
+bodies, the faithful one included, and additionally `no_invented_values` on that one.
+
+**The judge was right on the facts, and the corpus was wrong.** Checked against the copybook before
+concluding anything: all three interest bodies build a carrier
+
+```java
+new Tran("", "01", new BigDecimal("5"), "System", "Int.", {amount}, BigDecimal.ZERO, "", "", "", "", "", "")
+```
+
+and `CVTRA05Y` declares `TRAN-ID PIC X(16)` (gets `""`), `TRAN-DESC PIC X(100)` (gets `"Int."`),
+`TRAN-SOURCE PIC X(10)` (gets `"System"`), plus six more fixed-width fields getting `""`. Every
+`fixed_width_text` flag was factually correct.
+
+What makes those placeholders legitimate is that `completeTransaction` reads only `tranAmt` off that
+record and rebuilds every other field — **a fact `design.json` holds in its step chain and the judge
+was never given.** Fifth instance of one defect class, after G21, G24, G28 and G26: *a computed fact
+this repo holds and never hands over.*
+
+**Read the other way, this is the strongest result the run could have produced.** The judge found a
+real property of a body ADR-0021's oracle certifies as correct, *because* the oracle asserts on
+`tranAmt` and the judge reads the whole record. That is precisely the capability the judge was
+proposed for — arriving disguised as a benchmark failure.
+
+**Two fixes, and neither was the bar.** `DOWNSTREAM_BY_STEP` supplies what becomes of a step's
+output, keyed by step so it cannot vary with the case and cannot leak which body is defective; and
+`interest_faithful`'s claim was narrowed to arithmetic and control-flow fidelity, since "passes 10 of
+10" was never evidence about the other 13 columns. Relaxing the false-positive bar was available and
+**refused** — the bar did its job.
+
+**Verified that the fix did not blunt the criterion**, which is what separates a real prompt gap from
+teaching to the test: `completion_empty_string` still fails `fixed_width_text` in run 2, because
+`completeTransaction` is terminal and a short string there is still a defect.
+
+#### Two defects in the harness itself, both exposed by running it
+
+1. **Rationales were discarded.** `parse_judge_response` kept verdicts and dropped the reasoning, so
+   when run 1 disagreed with the corpus there was no way to tell a judge error from a corpus error
+   without paying for another run. Now retained and required — a missing or blank rationale raises,
+   the `modernization_engineer` `notes` precedent — and `render_disagreements()` prints the judge's
+   own reasoning for anything it got wrong.
+2. **The run could not report its own cost.** Nothing bound a `UsageAccumulator`, so **no cost figure
+   exists for either run** — 12 calls total, ~90s each, and that is all that can honestly be said.
+   The fixture now runs inside `collect_usage`, so the next run reports calls, tokens, cache reads
+   and notional dollars. No estimate is recorded here in place of the measurement.
+
+**Still not measured.** Whether a cheaper judge does as well (both runs are Opus only — the
+`spec_critic` comparison this corpus makes possible has not been spent), and what the false-positive
+rate actually is: 0.00 over **two** faithful cases is a floor that rules out a judge flagging
+everything, not a rate over 44 programs.
 
 ### Step 43 — the injected-error harness, and what it found on its first run
 
