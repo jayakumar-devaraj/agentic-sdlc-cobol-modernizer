@@ -1741,6 +1741,47 @@ repo's design**, not about the model:
 Three of these describe work no step currently owns. They are the natural input to whatever revisits
 `solution_architect`'s step decomposition.
 
+### Step 43 — the injected-error harness, and what it found on its first run
+
+**Why one demonstrated heal was not enough.** Step 42 showed the loop repairing a compile error.
+That says the machinery works for the error that was tried and nothing about the next one — which is
+why pillar 20 stayed 🟡. This parameterises the loop over four error classes that differ in *how the
+compiler reports them*, since acting on a diagnostic is what the loop's whole design rests on.
+
+**Every class is one this platform really produced.** None was invented to be easy:
+
+| Class | Where it came from |
+|---|---|
+| `unknown_method` | PR #28 — a model assumed `CobolArithmetic`'s API rather than being told it |
+| `missing_import` | Hit **twice in one session** — a body constructing `Tran` by simple name, and the rendered equivalence test constructing composite components it had not imported |
+| `unresolved_import` | PR #32 — the pre-Spring-Batch-6 `ItemProcessor` package shipped in *every* processor. `_validated_imports` checks an import's shape, never its existence |
+| `wrong_return` | The output type churned three times this session; returning the previous shape is the natural mistake |
+
+**Two properties are asserted per class, not once overall.** That each produces a **located
+diagnostic attributed to the generated file** — a class the parser could not locate would exhaust no
+attempts, report `blocked`, and look exactly like a design defect — and that the loop heals it in
+two attempts. Plus a test that the four collapse to more than one distinct compiler message, since
+four cases producing one message would be one test wearing four names.
+
+#### The finding: the loop refuses to repair a defect the model caused (G30)
+
+`unresolved_import` **does not heal.** It blocks, and the reason is attribution.
+
+A model supplies the imports its body needs — the renderer never reads the body, so it cannot derive
+them. But those imports are **rendered into the import block**, outside the
+`BEGIN/END model-authored` markers, and `build_validator` attributes a diagnostic by **line**. A bad
+import lands on line 3, is attributed to rendered scaffolding, and the loop refuses to hand it back.
+Correct by its own rule; wrong in substance, because the model wrote it and a rewrite would fix it.
+
+**Two costs, and the second is worse.** The step spends one attempt instead of two. And the blocked
+reason tells a reviewer *"That is a defect in this repo's renderer"* — which for this class is
+**false**, misattributing a model's mistake to the code generator.
+
+Pinned as the behaviour that exists rather than the behaviour that should, with the misattribution
+asserted so the fix has a failing test waiting for it. Moving where the attribution line falls
+changes which lines a model is considered to own, and that belongs in its own decision rather than
+smuggled into a test harness.
+
 ### G7 — the handoff, finally exercised from the receiving side
 
 **The gap in one sentence.** ADR-0003 specifies the whole exchange; it had been implemented and
