@@ -188,8 +188,14 @@ def unreachable_entities(
     source_text: str,
     entities: list[DomainEntity],
     composites: list[CompositeType],
+    owned_elsewhere: frozenset[str] = frozenset(),
 ) -> list[str]:
     """Entities the step's COBOL reads that its declared types cannot reach (gap G26).
+
+    `owned_elsewhere` names paragraphs that other steps of the same job own. A `PERFORM` into one
+    of those is a call into another step's work, so it is a boundary rather than part of this
+    step's reach -- without it, splitting a paragraph chain into steps would leave every caller
+    charged with its callee's data and report a correct design as broken.
 
     ADR-0020 decision 5 checks a step's `input_type`/`output_type` **resolve** -- that each names a
     declared entity or composite. This is the other half: whether the data those paragraphs
@@ -222,7 +228,12 @@ def unreachable_entities(
         for field in entity.fields:
             owners.setdefault(field.cobol_field_name.upper(), set()).add(entity.name)
 
-    referenced = referenced_fields(source_text, list(step.source_paragraphs), set(owners))
+    referenced = referenced_fields(
+        source_text,
+        list(step.source_paragraphs),
+        set(owners),
+        stop_at=owned_elsewhere - set(step.source_paragraphs),
+    )
 
     unreachable: set[str] = set()
     for field_name in referenced:

@@ -565,3 +565,56 @@ def test_a_paragraph_name_the_parser_does_not_know_is_skipped_not_raised(cbact04
     reached = reachable_paragraphs(cbact04c_source, ["1300-COMPUTE-INTEREST", "NO-SUCH-PARAGRAPH"])
     assert "1300-COMPUTE-INTEREST" in reached
     assert "NO-SUCH-PARAGRAPH" not in reached
+
+
+def test_splitting_a_paragraph_chain_moves_responsibility_rather_than_erasing_it(
+    entities, cbact04c_source
+):
+    """`1300-B-WRITE-TX` as its own step, and what that does to the check.
+
+    A `PERFORM` is a call, and a design may legitimately split one into two steps. Once the write
+    paragraph is owned by a step of its own, the paragraph that performs it is no longer answerable
+    for the data it reads -- otherwise every chained design reports as broken.
+
+    The half that matters is the third assertion: the finding does not vanish, it lands on the step
+    that now owns the work. A boundary that made a real gap disappear would be worse than no
+    boundary at all.
+    """
+    compute = _interest_step(output_type="Tran")
+    write = BatchStepDesign(
+        step_name="writeTransaction",
+        source_paragraphs=["1300-B-WRITE-TX"],
+        role="writer",
+        description="Writes the interest transaction record.",
+        input_type="Tran",
+        output_type="Tran",
+        guard_condition=None,
+    )
+    narrow = [_composite(*_BALANCE_AND_RATE)]
+    owned = frozenset(p for s in (compute, write) for p in s.source_paragraphs)
+
+    def check(step, **kwargs):
+        return unreachable_entities(
+            step, source_text=cbact04c_source, entities=entities, composites=narrow, **kwargs
+        )
+
+    # Undivided, the caller is charged with the callee's data.
+    assert check(compute) == ["Account", "CardXref"]
+    # Split, it is answerable only for what it reads itself.
+    assert check(compute, owned_elsewhere=owned) == []
+    # And the finding relocates rather than disappearing.
+    assert check(write, owned_elsewhere=owned) == ["Account", "CardXref"]
+
+
+def test_a_step_is_never_excluded_from_its_own_paragraphs(entities, cbact04c_source):
+    # `owned_elsewhere` is every paragraph the job claims, this step's included, so the subtraction
+    # matters: without it a step would stop at its own entry paragraph and analyse nothing.
+    step = _interest_step(output_type="Tran")
+    owned = frozenset({"1300-COMPUTE-INTEREST"})
+    assert unreachable_entities(
+        step,
+        source_text=cbact04c_source,
+        entities=entities,
+        composites=[_composite(*_BALANCE_AND_RATE)],
+        owned_elsewhere=owned,
+    ) == ["Account", "CardXref"], "a step must still read its own paragraphs"
