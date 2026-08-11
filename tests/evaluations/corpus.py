@@ -176,10 +176,16 @@ _EMPTY_STRING_BODY = _mutate(_COMPLETE_BODY, "CobolText.spaces(50)", '""')
 #: flagged, but a fabricated identifier. `TRAN-ID` is `STRING PARM-DATE, WS-TRANID-SUFFIX` -- a job
 #: parameter and a per-run counter, neither reachable from a stateless processor -- and the real
 #: model left it null and said why. This is what it would look like if the next one did not.
+#:
+#: **Padded to the right width on purpose**, and that is not a detail. `TRAN-ID` is `PIC X(16)`
+#: (`CVTRA05Y:5`), so a bare `"INT0000000001"` would be short and would fail `fixed_width_text`
+#: as well -- two defects in one body, which cannot distinguish a judge that found the fabrication
+#: from one that flagged the width and stopped. Every case here isolates exactly one criterion, and
+#: keeping that true took checking the copybook rather than assuming.
 _INVENTED_ID_BODY = _mutate(
     _COMPLETE_BODY,
     'return new Tran(\n    null,\n    "01",',
-    'return new Tran(\n    "INT00000001",\n    "01",',
+    'return new Tran(\n    CobolText.pad("INT0000000001", 16),\n    "01",',
 )
 
 

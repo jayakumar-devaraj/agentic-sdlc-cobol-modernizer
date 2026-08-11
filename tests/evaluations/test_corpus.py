@@ -124,8 +124,23 @@ def test_the_two_source_grounded_corruptions_really_changed_the_real_model_body(
     # And each changed the one thing it claims to have changed, nothing else.
     assert "CobolText.spaces(50)" not in _EMPTY_STRING_BODY
     assert "CobolText.spaces(10)" in _EMPTY_STRING_BODY, "only the PIC X(50) fields should change"
-    assert "INT00000001" in _INVENTED_ID_BODY
+    assert "INT0000000001" in _INVENTED_ID_BODY
     assert "CobolText.spaces(50)" in _INVENTED_ID_BODY, "the width defect must not leak in here"
+
+
+def test_the_invented_identifier_is_the_right_width_so_only_one_criterion_fires():
+    """Each case must isolate exactly one criterion, and this is the one that nearly did not.
+
+    `TRAN-ID` is `PIC X(16)` (`CVTRA05Y:5`). A fabricated value written as a bare short string would
+    be wrong *twice* -- invented and under-width -- and a judge that flagged only the width would
+    score as having caught it. Padding to 16 leaves the fabrication as the single defect.
+    """
+    from tests.evaluations.corpus import _INVENTED_ID_BODY
+
+    assert 'CobolText.pad("INT0000000001", 16)' in _INVENTED_ID_BODY
+    # The literal really is what PIC X(16) asks `CobolText.pad` to produce, so the padding call is
+    # not itself hiding a second defect.
+    assert len("INT0000000001") <= 16
 
 
 @pytest.mark.parametrize("case", UNFAITHFUL_CASES, ids=[c.name for c in UNFAITHFUL_CASES])
