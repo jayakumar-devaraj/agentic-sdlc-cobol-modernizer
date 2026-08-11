@@ -16,9 +16,12 @@ from cobol_modernizer.rendering.java_names import UnrenderableJavaNameError
 from cobol_modernizer.rendering.java_processor import (
     BEGIN_MARKER,
     END_MARKER,
+    MODEL_IMPORT_MARKER,
     GeneratedBodyForgeryError,
     NonDeterministicBodyError,
     UnrenderableImportError,
+    model_authored_line_numbers,
+    model_authored_line_range,
     render_processor,
 )
 
@@ -85,6 +88,93 @@ def test_import_order_does_not_leak_into_the_output():
 def test_duplicate_imports_collapse():
     source = _render(body_imports=["java.math.BigDecimal", "java.math.BigDecimal"])
     assert source.count("import java.math.BigDecimal;") == 1
+
+
+# --- G30: the file states which imports the model supplied ----------------------------------------
+
+
+def test_a_model_supplied_import_is_marked_as_model_authored():
+    """The artifact reports what the model wrote, in both regions rather than one.
+
+    Before this, the BEGIN/END markers covered the body and nothing covered the imports, so a
+    reviewer skimming for "what did a model produce here" got an incomplete answer -- and
+    `build_validator`, which had only the file to go on, got the same incomplete answer and
+    misattributed a model's bad import to this renderer.
+    """
+    source = _render(body_imports=["com.modernized.batch.cobol.CobolArithmetic"])
+    assert f"import com.modernized.batch.cobol.CobolArithmetic;  {MODEL_IMPORT_MARKER}" in source
+
+
+def test_the_framework_imports_this_renderer_adds_are_not_marked():
+    # The other half of the claim: marking everything would be the same defect inverted, handing a
+    # model responsibility for lines it never wrote.
+    source = _render(body_imports=["java.math.BigDecimal"])
+    for framework in (
+        "org.springframework.batch.infrastructure.item.ItemProcessor",
+        "org.springframework.stereotype.Component",
+    ):
+        assert f"import {framework};\n" in source + "\n"
+        assert f"import {framework};  {MODEL_IMPORT_MARKER}" not in source
+
+
+def test_an_import_the_renderer_would_have_emitted_anyway_is_not_marked():
+    """A model naming a framework import does not become answerable for it.
+
+    It is rendered unconditionally, so it would be in the file whether the model asked or not, and
+    a diagnostic on that line is this repo's to fix. Marking it would hand a model a defect it
+    could not have caused -- the exact error G30 was, pointing the other way.
+    """
+    source = _render(body_imports=["org.springframework.stereotype.Component"])
+    assert "import org.springframework.stereotype.Component;  " not in source
+
+
+def test_model_authored_line_numbers_covers_the_body_and_the_supplied_imports():
+    source = _render(body_imports=["java.math.BigDecimal"])
+    numbers = model_authored_line_numbers(source)
+    span = model_authored_line_range(source)
+
+    assert span is not None
+    assert set(range(span[0], span[1] + 1)) <= numbers, "the body must still be attributed"
+
+    lines = source.splitlines()
+    import_line = next(
+        n for n, text in enumerate(lines, start=1) if text.startswith("import java.math.BigDecimal;")
+    )
+    assert import_line in numbers, "the model's own import is not attributed to it"
+    # And the renderer's own lines are still this repo's.
+    package_line = next(n for n, text in enumerate(lines, start=1) if text.startswith("package "))
+    assert package_line not in numbers
+
+
+def test_attribution_is_unavailable_rather_than_empty_for_an_unmarked_file():
+    # Same posture as `model_authored_line_range`: a hand-written or pre-marker file means nobody
+    # knows, and the conservative reading of "nobody knows" is that nothing is the model's to rewrite.
+    assert model_authored_line_numbers("class Foo {}") == frozenset()
+
+
+def test_a_body_cannot_forge_import_attribution():
+    """The marker only means something on a line that really is an import statement.
+
+    A body is already entirely model-authored, so writing the marker inside one changes nothing --
+    but the check is written so that it *cannot* matter, rather than relying on that argument
+    holding after the next change. `_validated_imports` closes the other route: an import carrying a
+    comment is not a bare qualified name and is refused outright.
+    """
+    source = _render(body=f'String s = "x"; {MODEL_IMPORT_MARKER}\nreturn item;')
+    numbers = model_authored_line_numbers(source)
+    package_line = next(
+        n for n, text in enumerate(source.splitlines(), start=1) if text.startswith("package ")
+    )
+    assert package_line not in numbers
+
+    with pytest.raises(UnrenderableImportError):
+        _render(body_imports=[f"java.math.BigDecimal;  {MODEL_IMPORT_MARKER}"])
+
+
+def test_marking_keeps_the_file_deterministic():
+    forward = _render(body_imports=["java.math.BigDecimal", "com.modernized.batch.cobol.CobolText"])
+    reverse = _render(body_imports=["com.modernized.batch.cobol.CobolText", "java.math.BigDecimal"])
+    assert forward == reverse
 
 
 def test_the_framework_imports_are_always_present_even_with_no_body_imports():

@@ -49,7 +49,10 @@ from cobol_modernizer.nodes.modernization_engineer import (
     RepairContext,
     generate_processor,
 )
-from cobol_modernizer.rendering.java_processor import model_authored_line_range
+from cobol_modernizer.rendering.java_processor import (
+    model_authored_line_numbers,
+    model_authored_line_range,
+)
 from cobol_modernizer.rendering.java_records import render_composite, render_record
 from cobol_modernizer.tools.local_compiler import (
     CompileResult,
@@ -119,6 +122,26 @@ def _extract_body(java_source: str) -> str:
         return ""
     lines = java_source.splitlines()[span[0] - 1 : span[1]]
     return "\n".join(line.strip() for line in lines)
+
+
+def _extract_model_imports(java_source: str) -> tuple[str, ...]:
+    """The imports the model supplied, read back out of the rendered file (G30).
+
+    Recovered from the artifact rather than threaded through the loop as state, for the same reason
+    `_extract_body` is: the file is what compiled, so the file is what a repair should be shown. Two
+    copies of "what the model wrote" -- one in the source, one carried alongside -- is a pair that can
+    disagree, and the disagreement would surface as a repair aimed at a line that no longer says what
+    the prompt claims.
+    """
+    span = model_authored_line_range(java_source)
+    if span is None:
+        return ()
+    lines = java_source.splitlines()
+    return tuple(
+        lines[number - 1].strip().removeprefix("import ").split(";")[0].strip()
+        for number in sorted(model_authored_line_numbers(java_source))
+        if not span[0] <= number <= span[1]
+    )
 
 
 def materialize_target_project(output_dir: Path, template_dir: Path = TEMPLATE_DIR) -> bool:
@@ -299,6 +322,7 @@ def heal_step(
             diagnostics=verdict.model_region_errors,
             instruction=verdict.instruction,
             attempt=attempt + 1,
+            previous_imports=_extract_model_imports(java_source),
         )
 
     reason = (

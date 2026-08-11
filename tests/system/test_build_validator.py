@@ -148,6 +148,34 @@ def test_an_error_in_rendered_scaffolding_blocks_rather_than_asking_for_a_rewrit
     assert verdict.rendered_region_errors
 
 
+def test_a_deterministic_verdict_short_circuits_before_any_model_call():
+    """The *wiring*, not the helper — and a coverage delta is what found it missing.
+
+    `classify` has a direct test for every deterministic branch above. Nothing tested that
+    `validate_build` actually short-circuits on one, and until this change a single integration test
+    happened to cover that path: G30's case, which drove a rendered-region error through the real
+    entrypoint. Closing G30 made that case *heal* instead, so the early return silently lost its only
+    exercise — CI's coverage fell 98.84% → 98.73% and pointed straight at these lines.
+
+    G21's shape again: a helper with its own tests, and no test of the path to production. Worth
+    pinning through the real entrypoint rather than by calling `classify` once more, because the
+    property is about `validate_build` and it is economic as well as behavioural — a verdict this
+    node can reach on its own must never pay for a model call.
+    """
+
+    def advise(routing, system_prompt, user_content):
+        raise AssertionError("a deterministic verdict must not reach the model")
+
+    accepted = validate_build(_result(succeeded=True), {}, advise=advise)
+    assert accepted.outcome == "accepted"
+
+    # And the blocked half, which is the branch G30's test used to be the only cover for.
+    source = _render("return item;")
+    blocked = validate_build(_result(_error(1)), {REL: source}, advise=advise)
+    assert blocked.outcome == "blocked"
+    assert blocked.rendered_region_errors
+
+
 def test_errors_only_in_the_model_region_are_passed_to_the_model():
     # `None` means "deterministic checks could not decide" -- the one case worth a call.
     source = _render("return item;")
