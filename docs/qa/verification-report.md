@@ -1741,6 +1741,109 @@ repo's design**, not about the model:
 Three of these describe work no step currently owns. They are the natural input to whatever revisits
 `solution_architect`'s step decomposition.
 
+### Step 44 — the LLM-as-judge harness, verified as an instrument and not yet run as one
+
+**Stated first, because it is the thing most likely to be over-read.** This entry reports a
+**harness**, not a measurement of judge quality. No real judge call has been made. What follows is
+verified; *"a real model scores generated Java at N%"* is not claimed anywhere, and
+`tests/evaluations/test_judge_benchmark.py`'s own docstring says so.
+
+**What the gap was.** Every claim this repo makes about model-authored Java is spot-measured — the
+interest body at 10 of 10, `spec_critic` at 3 of 3, the write body compiling on attempt 1. Real
+evidence, none of it re-running, while the previous session changed generator prompts five times.
+`tests/evaluations/` had been a 0-byte `__init__.py` for 47 PRs (G9).
+
+**Why a judge rather than more oracles.** ADR-0021 wrote down its own ceiling: a hand-computed table
+tests *"arithmetic someone already understood"*, over one paragraph. There is no such table for the
+other 43 programs. So the judge is the proposed generalisation — and ADR-0024's decision is to
+calibrate it exactly where the oracle already answers, because that is the one place the claim is
+falsifiable.
+
+```
+./.venv/Scripts/python -m pytest tests/evaluations -q
+65 passed, 4 skipped in 0.14s
+```
+
+The 4 skips are this module's own benchmark. CI's run on this change reports **767 passed, 8 skipped,
+98.84%** — exactly +65 tests and +4 skips against the previous 702/4, and **coverage unchanged**,
+which is the expected reading rather than a lucky one: step 44 adds no `src/` code at all. The only
+non-test file it touches is `tests/conftest.py`.
+
+**The corpus is graded by a JVM where it can be.** Three of six cases are the exact body strings
+`tests/system/test_interest_equivalence.py` compiles and runs through real Maven against ADR-0021's
+literals — `interest_rounds` fails rows R1/R2/R5–R8, `interest_unguarded` fails R10,
+`interest_faithful` passes all ten. They are **imported** from that module, not copied, and a test
+asserts the cited test functions still exist so the citation cannot go stale. The other three are
+labelled `SOURCE` and checkable against the copybook by line, and the two grounds are reported
+separately rather than averaged — four agreements with this repo's reading must not outvote a
+disagreement with a real JVM.
+
+**Shown to discriminate before anything was billed**, the same discipline as step 45's
+`divideRounded` body. Three scripted judges through the real scoring code:
+
+| Scripted judge | detection | false positives | cases correct |
+|---|---|---|---|
+| perfect | 1.00 | 0.00 | 6 of 6 |
+| passes everything | **0.00** | 0.00 | 2 of 6 |
+| fails everything | 1.00 | **1.00** | **0 of 6** |
+
+The third row is the reason detection rate is not the metric on its own: failing every criterion
+catches all four defects and is worthless. § 4b of the feasibility assessment is why — human review
+runs three to four orders of magnitude above inference cost, so a spurious flag is expensive in the
+term that decides funding.
+
+**Mutation-tested, three of three caught.** Each mutation was applied to `judge.py`, the suite run,
+and the source restored:
+
+| Mutation | Test that caught it |
+|---|---|
+| leak the case name into the prompt | `test_the_prompt_never_leaks_what_the_case_expects` |
+| make the rubric depend on the case | `test_the_rubric_is_identical_for_every_case` |
+| never report a false positive | `test_a_judge_that_fails_everything_...is_still_wrong` |
+
+#### The finding: an ordinary `pytest` spent 67 seconds calling a real model
+
+The benchmark put its six judge calls in a **module-scoped** fixture. `tests/conftest.py` guards
+live tests in a **function-scoped autouse** fixture — and pytest sets higher-scoped fixtures up
+first, so the calls happened before the guard could skip anything. Measured, not theorised:
+`pytest tests/evaluations` took **67.56s** and ended in `ModelCallError`, with
+`COBOL_MODERNIZER_RUN_LIVE_CLI_TESTS` unset.
+
+That is precisely the accident `conftest.py`'s own docstring exists for — *"a test that quietly
+costs money and calls a live model is worse than one that fails"* — arriving by the one route a
+function-scoped guard structurally cannot cover.
+
+Fixed at the level of the defect class rather than the module: `pytest_collection_modifyitems` adds
+the skip at **collection** time, before any fixture of any scope runs, so the next live test needing
+a module-scoped fixture is protected without knowing any of this. After: **0.20s, 4 skipped, no
+calls.** Both directions are pinned by
+`test_the_live_opt_in_guard_skips_and_unskips_correctly` — the un-skip direction included, because
+verifying *that* by running the suite would cost exactly what the guard prevents, and a guard that
+skips unconditionally would look identical in CI.
+
+#### Two smaller findings, both from checking rather than assuming
+
+1. **`TRAN-ID` is `PIC X(16)`** (`CVTRA05Y:5`). The invented-identifier case as first written was
+   short *and* fabricated — two defects in one body, which cannot distinguish a judge that found the
+   fabrication from one that flagged the width and stopped. Padded to 16, so every case isolates
+   exactly one criterion.
+2. **The first leak test asserted the wrong property.** It checked the failing criterion's id was
+   absent from the prompt; that id appears in the rubric for *every* case, correctly. The property
+   that matters is that the rubric is **identical across cases** — a rubric narrowed to the criterion
+   a case violates would look like a token saving and would hand over the answer.
+
+**And the prompt ordering was wrong on the first pass.** Step facts sat ahead of the ~25k-token COBOL
+source, putting the large identical span behind a varying prefix — G13's shape and ADR-0017's
+correction, reintroduced in a new module. Reordered so all six cases share the rubric and the source
+as a genuine prefix, asserted by `test_all_six_cases_share_the_rubric_and_the_source_as_a_common_prefix`.
+
+**What is not verified.** No real judge call, so: no detection rate, no false-positive rate, no
+comparison between a cheap and an expensive judge, and no evidence that `claude-opus-5` is any good
+at this task. ADR-0015's `verified_for` gate does not cover it — pinning rather than routing bypasses
+that gate mechanically, which ADR-0024 states outright rather than leaving implicit. The first billed
+run is the measurement that would earn a listing, and it either clears the two derived bars in
+`test_judge_benchmark.py` or is a finding.
+
 ### Step 43 — the injected-error harness, and what it found on its first run
 
 **Why one demonstrated heal was not enough.** Step 42 showed the loop repairing a compile error.
@@ -2156,6 +2259,19 @@ generated, and nothing here claims otherwise.
   four programs. Neither gate is closed, so no claim is made about retrieval quality — there is
   nothing to measure yet. `--db-credentials-file` is unimplemented for the same reason: its only
   consumer sits behind those gates (ADR-0005's amendment note).
+- *(narrowed 2026-08-11, deliberately not closed — step 44 / ADR-0024)* The entry above ends **"the
+  LLM-as-judge harness that would close this is Milestone C4."** That harness now exists
+  (`tests/evaluations/`, G9 closed) and **it has never been run against a real model**, so the gap it
+  was written for is smaller and still open. What changed: there is now a committed corpus, a rubric
+  of four criteria each traceable to a real defect, and scoring shown to discriminate — a scripted
+  judge that passes everything scores 0.00 detection, one that fails everything scores 1.00 false
+  positives. What has not changed: **no number describes a real judge**, so nothing yet re-scores
+  generator output as prompts and models change; the thing the gap is about is the *running*, not the
+  building. Two further limits worth keeping visible rather than folding into a green tick — the
+  corpus scores `modernization_engineer`'s method bodies only, so **`solution_architect` has still
+  never been scored** (Open Issue 6, untouched by this work, and still blocked on there being no
+  golden unified design to score against); and six cases with two faithful ones is a floor that rules
+  out a judge flagging everything, not a measured false-positive rate.
 - *(historical, closed — kept because the original wording named the wrong cause)* The original
   form of this gap was that `_default_narrate`/`_default_critique`/`_default_architect` had never
   been invoked at all, with every test injecting a fake in their place, and it said to "revisit
