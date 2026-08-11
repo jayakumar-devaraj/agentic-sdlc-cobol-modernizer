@@ -1741,6 +1741,40 @@ repo's design**, not about the model:
 Three of these describe work no step currently owns. They are the natural input to whatever revisits
 `solution_architect`'s step decomposition.
 
+### Generating the write step — by splitting logic from wiring, not by rendering writers
+
+**`generate` renders `ItemProcessor`s only** (ADR-0019, reaffirmed by ADR-0023), so there were two
+ways to produce Java for `1300-B-WRITE-TX`: teach the renderer about `ItemWriter`s, or find the line
+inside the paragraph where business logic stops and infrastructure begins. The second is the one
+this repo's architecture already points at — render the mechanical, model the logic.
+
+**The paragraph is mostly per-item field population**: fourteen `MOVE`s and two `STRING`s. Three
+statements are not, and they are the ones that cannot be an `ItemProcessor`:
+
+| Not translatable here | Why |
+|---|---|
+| `ADD 1 TO WS-TRANID-SUFFIX` + `STRING PARM-DATE …` | a per-run counter and a job parameter |
+| `PERFORM Z-GET-DB2-FORMAT-TIMESTAMP` | a clock, into `REDEFINES` fields the matrix gates |
+| `WRITE FD-TRANFILE-REC` | the physical I/O |
+
+So the step is a `processor` named `completeTransaction`, and those three stay wiring. **Typing the
+whole paragraph as a `writer` would have left its field population ungenerated for the sake of three
+statements** — the same mistake as putting the guard in `source_paragraphs`: taking a boundary the
+COBOL draws and assuming the design must draw it in the same place.
+
+**Verified through `run_generate`**: both steps compile, `not_generated` is now empty, and the
+generated completion body contains `item.account().acctId()`, `item.cardXref().xrefCardNum()` and
+`CobolText.spaces(50)` — G26's two newly-reachable fields and G28's padding, exercised in generated
+Java rather than asserted about it.
+
+**The residual is unchanged and still stated**: `TRAN-ID` and the timestamps are `null` in the body,
+because a stateless processor has neither a run counter nor a clock. That is the same boundary G26
+recorded, now visible in the generated file rather than only in a gap register.
+
+**Not claimed:** that a *model* writes this body. The one above is scripted, injected through
+`author=`, and the module says so. What is verified is that the paragraph's logic is now something
+the pipeline produces at all.
+
 ### `1300-B-WRITE-TX` becomes its own step
 
 **The design decision G26 and G27 both left open, now made.** The interest paragraph performs the

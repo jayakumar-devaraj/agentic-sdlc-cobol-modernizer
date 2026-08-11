@@ -99,18 +99,50 @@ STEP = BatchStepDesign(
     guard_condition="IF DIS-INT-RATE NOT = 0",
 )
 
-#: `1300-B-WRITE-TX` as its own step. A `writer`, because it is where the record leaves the job --
-#: which also means `generate` reports it `not_generated` (ADR-0023) rather than rendering it. That
-#: is the honest state: the step exists, is owned, and its logic is declared as not yet produced.
-WRITE_STEP = BatchStepDesign(
-    step_name="writeTransaction",
+#: `1300-B-WRITE-TX`, split on the line between logic and wiring so the logic can be generated.
+#:
+#: The paragraph is mostly per-item field population -- fourteen `MOVE`s and two `STRING`s -- which
+#: is what an `ItemProcessor` is for. Three things in it are not: `ADD 1 TO WS-TRANID-SUFFIX` with
+#: `PARM-DATE` (a per-run counter and a job parameter), `Z-GET-DB2-FORMAT-TIMESTAMP` (a clock,
+#: into `REDEFINES` fields the construct matrix gates), and the `WRITE` itself. Those are
+#: infrastructure and stay wiring.
+#:
+#: So this is a `processor` and `generate` renders it. Typing the whole paragraph as a `writer`
+#: would leave its field population ungenerated for the sake of the three statements that are
+#: genuinely not translatable -- the same mistake as putting the guard in `source_paragraphs`:
+#: taking a boundary the COBOL draws and assuming the design must draw it in the same place.
+COMPLETE_STEP = BatchStepDesign(
+    step_name="completeTransaction",
     source_paragraphs=["1300-B-WRITE-TX"],
-    role="writer",
-    description="Completes and writes the interest transaction record.",
+    role="processor",
+    description="Populates the interest transaction record from the item and its context.",
     input_type="TranWithContext",
     output_type="Tran",
     guard_condition=None,
 )
+
+#: The completion step's body: faithful where it can be, explicitly `null` where the paragraph
+#: reads something no `ItemProcessor` has. `TRAN-ID` needs `PARM-DATE` and a per-run counter, and
+#: the timestamps need a clock -- the two fields G26 recorded as structurally out of reach.
+#:
+#: `MOVE SPACES TO TRAN-MERCHANT-NAME` is G28's case, and why `CobolText.spaces` exists: the field
+#: is `PIC X(50)`, so an empty string is not the same record on disk.
+_COMPLETE_BODY = """\
+com.modernized.batch.domain.Tran source = item.tran();
+return new Tran(
+    null,
+    "01",
+    new BigDecimal("5"),
+    "System",
+    "Int. for a/c " + item.account().acctId(),
+    source.tranAmt(),
+    BigDecimal.ZERO,
+    CobolText.spaces(50),
+    CobolText.spaces(50),
+    CobolText.spaces(10),
+    item.cardXref().xrefCardNum(),
+    null,
+    null);"""
 
 #: `Tran`'s components in declaration order, with the amount left as a `{}` slot. Written out rather
 #: than generated so this fixture reads as the Java it is.
@@ -165,6 +197,7 @@ _IMPORTS = [
     "com.modernized.batch.cobol.CobolArithmetic",
     f"{DEFAULT_DOMAIN_PACKAGE}.Tran",
     f"{DEFAULT_DOMAIN_PACKAGE}.TranWithContext",
+    "com.modernized.batch.cobol.CobolText",
 ]
 
 
@@ -200,7 +233,7 @@ def _design_json(tmp_path: Path, entry: ProgramDesignEntry, entities: list) -> P
                     program_name=PROGRAM,
                     description="Monthly interest calculation.",
                     domain_entities=[e.name for e in entities],
-                    steps=[STEP, WRITE_STEP],
+                    steps=[STEP, COMPLETE_STEP],
                 )
             ],
             rest_endpoints=[],
@@ -212,8 +245,16 @@ def _design_json(tmp_path: Path, entry: ProgramDesignEntry, entities: list) -> P
 
 
 def _author(body: str):
+    """Serves `body` for the interest step and `_COMPLETE_BODY` for the completion step.
+
+    Dispatching on the step matters now that the design has two processors: one scripted body for
+    both would put interest arithmetic in the completion step, and the compile failure would read
+    as a renderer defect rather than a defect in this fixture.
+    """
+
     def author(routing, system_prompt: str, user_content: str) -> str:
-        return json.dumps({"imports": _IMPORTS, "body": body, "notes": ""})
+        chosen = _COMPLETE_BODY if "Step: completeTransaction" in user_content else body
+        return json.dumps({"imports": _IMPORTS, "body": chosen, "notes": ""})
 
     return author
 
@@ -502,7 +543,7 @@ def test_the_zero_rate_guard_is_not_in_the_paragraph_the_step_names():
     assert not any("DIS-INT-RATE NOT" in line for line in source[paragraph : paragraph + 12])
 
 
-def test_the_write_step_reaches_the_pipeline_and_is_reported_not_dropped(
+def test_the_write_paragraphs_logic_is_generated_java(
     tmp_path, entry, entities, oracle
 ):
     """`1300-B-WRITE-TX` as its own step, end to end rather than merely declared.
@@ -523,11 +564,21 @@ def test_the_write_step_reaches_the_pipeline_and_is_reported_not_dropped(
         ),
     )
 
-    assert [o.step_name for o in outcome.not_generated] == ["writeTransaction"]
-    assert "1300-B-WRITE-TX" in outcome.not_generated[0].reason
-    # The processor still compiled, and a declared writer does not fail the run.
+    # Both are processors now, so nothing is left unrendered: the paragraph's field population is
+    # generated Java, and only the counter, the clock and the physical WRITE remain wiring.
+    assert outcome.not_generated == ()
     assert outcome.succeeded
-    assert [o.step_name for o in outcome.compiled] == ["computeInterest"]
+    assert sorted(o.step_name for o in outcome.compiled) == [
+        "completeTransaction",
+        "computeInterest",
+    ]
+
+    completion = next(o for o in outcome.compiled if o.step_name == "completeTransaction")
+    # G26's two fields, reachable at last -- and G28's padding, which is why an empty string here
+    # would be a different record on disk.
+    assert "item.account().acctId()" in completion.java_source
+    assert "item.cardXref().xrefCardNum()" in completion.java_source
+    assert "CobolText.spaces(50)" in completion.java_source
 
 
 # --- The renderer's refusals, which are the part worth covering ------------------------------------
