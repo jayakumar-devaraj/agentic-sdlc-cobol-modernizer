@@ -107,24 +107,53 @@ fails everything scores 1.0 detection **and** 1.0 false positives. Three mutatio
 itself — leaking the case name into the prompt, making the rubric case-dependent, never reporting a
 false positive — each fail the test that exists for them.
 
-**The judge's own fitness is unmeasured, and `verified_for` does not cover it.** ADR-0015 makes
-`verified_for` a hard gate: a model is eligible for a node because a benchmark says so. No model is
-verified for judging, and pinning rather than routing means this harness **bypasses that gate
-mechanically**. Stated plainly rather than left implicit, because the gate is load-bearing elsewhere.
-The justification is that the gate cannot apply to the instrument that produces the evidence it
-requires — that is circular — and the first billed run of this benchmark is precisely the measurement
-that would earn a listing. Until it happens, the judge is an unvalidated instrument and the harness
-says so in its own module docstring.
+**Measured 2026-08-11, and it took two runs.** *(This section replaced the original "not yet run"
+consequence when the benchmark was first executed.)* `claude-opus-5` scores **6 of 6**: detection
+**1.00** on both grounds — including both defects a real JVM catches — and a **0.00** false-positive
+rate. The core claim this ADR rests on therefore survives its first contact with a real model: the
+judge agrees with the oracle where both exist.
 
-**Not yet run.** As of this commit the benchmark has never made a real call. What is verified is the
-harness; what is not is any claim about how well a real judge scores. `docs/qa/verification-report.md`
-records that as an absence rather than implying otherwise, and the first run either clears the bars
-above or is a finding.
+**The first run failed, and that is the more useful half.** Detection was already 1.00, but the
+false-positive rate was 0.50: the judge flagged `fixed_width_text` on all three `computeInterest`
+bodies including the faithful one. **It was right on the facts.** That step builds a carrier `Tran`
+with `""` in a `PIC X(16)` field and `"Int."` in a `PIC X(100)` field. What makes those placeholders
+legitimate is that `completeTransaction` reads only `tranAmt` from that record and rebuilds every
+other field — a fact `design.json` holds in its step chain and **the judge was never given**. That is
+the fifth instance of this repo's recurring defect class, after G21, G24, G28 and G26: *a computed
+fact this repo holds and never hands over.*
+
+Two things were fixed and neither was the bar. `DOWNSTREAM_BY_STEP` supplies what becomes of a step's
+output, keyed by step so it cannot vary with the case and cannot leak which body is defective. And
+`interest_faithful`'s claim was narrowed: the oracle asserts on `tranAmt` and nothing else, so
+"passes 10 of 10" was never evidence of whole-record fidelity — calling it faithful on that basis was
+a conclusion generalised past its evidence. **Relaxing the false-positive bar was available and
+refused**; the bar did its job.
+
+**The fix was verified not to blunt the criterion**, which is the check that separates a real prompt
+gap from teaching to the test: `completion_empty_string` still fails `fixed_width_text`, because
+`completeTransaction` is terminal and a short string there is still a defect.
+
+**`verified_for` now records the judge, and it is a record rather than an eligibility grant.**
+ADR-0015 makes that field a hard gate on *routing*; `eval_judge` is deliberately not routed, so
+nothing can route to it and no `model_routing.yaml` entry exists. The listing is added because this
+file is where the repo keeps evidence that a model was measured doing a job, and this ADR committed
+to adding it once the measurement existed. The circularity noted above is resolved rather than
+waived: the instrument produced its evidence, and the evidence is now written down.
+
+**Still not measured: what it costs.** The two runs made 12 calls in ~90s each and **no cost figure
+was captured**, because nothing bound a `UsageAccumulator` around them. The harness now runs inside
+`collect_usage`, so the next run reports calls, tokens, cache reads and notional dollars — but no
+number is claimed here, and an estimate is not a measurement.
 
 **A cheaper judge is an open question, not a decision.** `spec_critic` earned its Haiku pin by being
 benchmarked against Opus on the same corrupted narration and matching it at 2.3× lower cost. The same
-comparison is exactly what this harness makes possible for judging, and it has not been spent. The
-Opus 5 pin is scaffolding that says it is scaffolding.
+comparison is exactly what this harness makes possible for judging, and it has not been spent — the
+two runs above are Opus only. The Opus 5 pin is scaffolding that says it is scaffolding, and the
+corpus now exists to settle it in one more run.
+
+**A 0.00 false-positive rate over two faithful cases is a floor, not a rate.** It rules out a judge
+that flags everything. It does not establish how often a real judge would flag correct output across
+44 programs, and the difference matters because § 4b makes that the number the economics turn on.
 
 **Six cases is a thin corpus, and two faithful ones is thinner.** The false-positive floor rules out
 a judge that flags everything; it does not measure a rate. Widening the corpus needs more bodies

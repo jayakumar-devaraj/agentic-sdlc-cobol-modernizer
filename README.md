@@ -270,7 +270,7 @@ Milestone C4.
 ./.venv/Scripts/python -m pytest --cov=cobol_modernizer --cov-report=term-missing --cov-fail-under=90
 ```
 
-767 tests passing (8 skipped — the opt-in live-CLI tests), 98.84% coverage — CI's own numbers from
+772 tests passing (8 skipped — the opt-in live-CLI tests), 98.84% coverage — CI's own numbers from
 the run on this change, not a local approximation of them. The Postgres-backed
 `tools/knowledge_store.py` suite is included and skips nothing there, because CI provides a real
 service container. The target template's own 20 Java tests are not in that
@@ -291,14 +291,19 @@ scoring with scripted judges.
 
 The corpus is graded by things that are not opinions: three of its six cases are the exact bodies
 `tests/system/test_interest_equivalence.py` runs through real Maven against the hand-computed oracle,
-so a judge that misses one has been shown to miss a defect a JVM catches. The benchmark that calls a
-real model is opt-in and **has not been run** — the harness is verified, the judge is not:
+so a judge that misses one has been shown to miss a defect a JVM catches.
+
+Measured 2026-08-11 (`docs/adr/0024`): `claude-opus-5` scores **6 of 6 — detection 1.00 on both
+grounds, false-positive rate 0.00**. That took two runs; the first flagged placeholder fields in a
+*carried* record as short written output, which was correct on the facts and fixed by giving the
+judge what `design.json` already knew about the step chain, not by relaxing the bar. The benchmark is
+opt-in because it spends real subscription quota (six calls):
 
 ```bash
 COBOL_MODERNIZER_RUN_LIVE_CLI_TESTS=1 ./.venv/Scripts/python -m pytest tests/evaluations/test_judge_benchmark.py -q -s
 ```
 
-That spends real subscription quota (six calls). Every other test in the repo is free.
+Every other test in the repo is free.
 
 ## Deployment / CI
 

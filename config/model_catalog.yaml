@@ -67,6 +67,21 @@ claude-opus-5:
   # hand-verified golden fixture.
   # spec_critic: matched Haiku's detection (3/3) but at 2.3x the cost, so it is eligible and simply
   # never selected for that node -- which is the selection function working, not a wasted entry.
+  #
+  # eval_judge: benchmarked 2026-08-11 (tests/evaluations/, ADR-0024) -- scored 6 of 6 on the
+  # committed corpus, detection 1.00 on both grounds and a 0.00 false-positive rate, catching both
+  # defects a real JVM catches via ADR-0021's oracle. **eval_judge is not a routed node**: the harness
+  # pins its model deliberately, because a yardstick that follows the routing config changes length
+  # when someone retunes an unrelated node. The listing is here anyway because this file is where
+  # this repo keeps the evidence that a model was measured doing a job, and ADR-0024 committed to
+  # recording it once the run happened. Nothing can route to it -- there is no model_routing.yaml
+  # entry for eval_judge -- so this is a record, not an eligibility grant.
+  #
+  # The run that earned it also failed first, and the failure is the more useful half: it flagged
+  # placeholder fields in a *carried* record as short written output, correctly on the facts. The
+  # fix was to hand the judge a fact design.json already held (what becomes of a step's output),
+  # not to relax the bar. A cheaper judge has NOT been benchmarked; see ADR-0024's open question.
   verified_for:
     - spec_extractor
     - spec_critic
+    - eval_judge

@@ -170,9 +170,35 @@ def _response(**verdicts: str) -> str:
 
 def test_a_well_formed_response_parses_to_every_criterion():
     parsed = parse_judge_response(_response(arithmetic_mode="fail"))
-    assert parsed["arithmetic_mode"] is Verdict.FAIL
-    assert parsed["guard_applied"] is Verdict.PASS
-    assert set(parsed) == {c.id for c in CRITERIA}
+    assert parsed.verdicts["arithmetic_mode"] is Verdict.FAIL
+    assert parsed.verdicts["guard_applied"] is Verdict.PASS
+    assert set(parsed.verdicts) == {c.id for c in CRITERIA}
+
+
+def test_the_rationale_is_kept_for_every_criterion():
+    """What the first billed run needed and did not have.
+
+    Verdicts alone cannot distinguish a judge that misread the code from a corpus that mislabelled
+    it, and that was the exact question left open when the benchmark first failed. Paying for a
+    second run to recover reasoning the first run already produced is the waste this prevents.
+    """
+    parsed = parse_judge_response(_response(arithmetic_mode="fail"))
+    assert set(parsed.rationales) == {c.id for c in CRITERIA}
+    assert parsed.rationales["arithmetic_mode"] == "because"
+
+
+def test_a_verdict_without_a_rationale_raises():
+    raw = json.dumps([{"criterion": c.id, "verdict": "pass"} for c in CRITERIA])
+    with pytest.raises(JudgeResponseParseError, match="no rationale"):
+        parse_judge_response(raw)
+
+
+def test_a_blank_rationale_is_not_a_rationale():
+    raw = json.dumps(
+        [{"criterion": c.id, "verdict": "pass", "rationale": "   "} for c in CRITERIA]
+    )
+    with pytest.raises(JudgeResponseParseError, match="no rationale"):
+        parse_judge_response(raw)
 
 
 def test_a_fenced_response_parses():
@@ -194,7 +220,9 @@ def test_a_broken_response_raises_rather_than_scoring(raw, match):
 
 
 def test_an_unrecognised_verdict_raises():
-    raw = json.dumps([{"criterion": c.id, "verdict": "maybe"} for c in CRITERIA])
+    raw = json.dumps(
+        [{"criterion": c.id, "verdict": "maybe", "rationale": "ok"} for c in CRITERIA]
+    )
     with pytest.raises(JudgeResponseParseError, match="unrecognised verdict"):
         parse_judge_response(raw)
 
@@ -205,15 +233,15 @@ def test_a_partial_answer_raises_instead_of_counting_as_passes():
     A judge that answers three criteria and skips the fourth, scored leniently, reports a clean run
     over a criterion nobody evaluated -- and the skipped one would tend to be the hardest.
     """
-    raw = json.dumps([{"criterion": CRITERIA[0].id, "verdict": "pass"}])
+    raw = json.dumps([{"criterion": CRITERIA[0].id, "verdict": "pass", "rationale": "ok"}])
     with pytest.raises(JudgeResponseParseError, match="did not answer"):
         parse_judge_response(raw)
 
 
 def test_answering_twice_for_one_criterion_raises():
     raw = json.dumps(
-        [{"criterion": c.id, "verdict": "pass"} for c in CRITERIA]
-        + [{"criterion": CRITERIA[0].id, "verdict": "fail"}]
+        [{"criterion": c.id, "verdict": "pass", "rationale": "ok"} for c in CRITERIA]
+        + [{"criterion": CRITERIA[0].id, "verdict": "fail", "rationale": "ok"}]
     )
     with pytest.raises(JudgeResponseParseError, match="twice"):
         parse_judge_response(raw)
