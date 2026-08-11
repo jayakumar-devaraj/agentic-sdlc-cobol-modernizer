@@ -28,6 +28,7 @@ from cobol_modernizer.graph.generate_pipeline import (
 from cobol_modernizer.nodes.solution_architect import build_domain_entities
 from cobol_modernizer.nodes.spec_critic import critique_spec
 from cobol_modernizer.nodes.spec_extractor import extract_spec
+from cobol_modernizer.tools.local_compiler import compile_project
 
 FIXTURE_ROOT = Path(__file__).resolve().parents[1] / "fixtures" / "tenant_repo_sample"
 TEMPLATE = Path(__file__).resolve().parents[2] / "templates" / "target-spring-boot-baseline"
@@ -216,3 +217,135 @@ def test_the_written_path_matches_what_the_compiler_reports(project, program_ent
     outcome = _heal(project, program_entry, entities, author, _advise(True))
     assert outcome.relative_path == processor_relative_path(PACKAGE, outcome.class_name)
     assert outcome.attempts == 2, "attribution worked, so the repair was actually attempted"
+
+
+# --- Step 43: the injected-error harness ------------------------------------------------------------
+#
+# Step 42 demonstrated the loop healing *one* compile error. One demonstrated heal is an anecdote:
+# it says the machinery works for the error that was tried, and nothing about the next one. This
+# turns it into a standing guarantee across error classes that differ in how the compiler reports
+# them -- which is what the loop's ability to act on a diagnostic actually depends on.
+#
+# **Every class below is one this platform really produced.** None is invented to be easy:
+#
+#   unknown_method   PR #28 -- a model assumed `CobolArithmetic`'s API rather than being told it.
+#   missing_import   Hit twice in one session (2026-08-11): a body constructing `Tran` by simple
+#                    name while the processor's signature is rendered fully-qualified, and the
+#                    rendered equivalence test constructing composite components it had not
+#                    imported. `cannot find symbol`, both times, from javac rather than review.
+#   unresolved_import  `_validated_imports` checks an import's *shape*, never its existence, so a
+#                    model may supply a fully-qualified name for a class that is not there. PR #32
+#                    found exactly this shipping in every processor -- the pre-Spring-Batch-6
+#                    `org.springframework.batch.item.ItemProcessor` package.
+#   wrong_return     The output type churned three times this session (TranCatBal -> Tran ->
+#                    TranWithContext); a body returning the previous shape is the natural mistake.
+
+_INJECTED_ERRORS: list[tuple[str, str, list[str]]] = [
+    ("unknown_method", "return CobolArithmetic.truncateTypo(item, 2);", BROKEN_IMPORTS),
+    ("missing_import", "Tran t = null; return item;", []),
+    ("unresolved_import", "return item;", ["com.modernized.batch.nowhere.NoSuchHelper"]),
+    ("wrong_return", 'return "not a BigDecimal";', []),
+]
+
+
+@pytest.mark.parametrize(("name", "body", "imports"), _INJECTED_ERRORS, ids=[e[0] for e in _INJECTED_ERRORS])
+def test_each_injected_error_class_produces_a_diagnostic_the_loop_can_act_on(
+    project, program_entry, entities, name, body, imports
+):
+    """A class the compiler reports but the parser cannot locate would never heal, silently.
+
+    `build_validator` blocks on a failure with no located diagnostic -- correctly, since there is
+    nothing to hand a model. So an error class that produced one would exhaust no attempts, report
+    `blocked`, and look identical to a design defect. Asserting *located and attributed* per class
+    is what makes the heal results below mean something.
+    """
+    author = _scripted_author((body, imports))
+    outcome = _heal(project, program_entry, entities, author, _advise(False), max_attempts=1)
+
+    assert not outcome.succeeded, f"{name} was supposed to fail to compile"
+    result = compile_project(project, goal="compile")
+    assert not result.succeeded
+    assert result.errors, f"{name} produced no structured diagnostic"
+    assert not result.has_unparsed_failure, f"{name} is invisible to the diagnostic parser"
+    assert any(
+        d.file.endswith(f"{outcome.class_name}.java") for d in result.errors
+    ), f"{name} is not attributed to the generated file, so no rewrite would be aimed at it"
+
+
+#: `unresolved_import` is excluded from the heal cases and has its own test below. Excluded on
+#: evidence, not convenience: the harness found that the loop **cannot** heal it, and why.
+_HEALABLE = [e for e in _INJECTED_ERRORS if e[0] != "unresolved_import"]
+
+
+@pytest.mark.parametrize(("name", "body", "imports"), _HEALABLE, ids=[e[0] for e in _HEALABLE])
+def test_the_loop_heals_every_injected_error_class(
+    project, program_entry, entities, name, body, imports
+):
+    """The standing guarantee step 42 could not give from a single example.
+
+    Scripted on both sides deliberately: what is under test is the **loop** -- that it compiles,
+    judges, re-prompts and recompiles for each class -- not whether a model can repair them. Those
+    are different claims, and conflating them is how a passing suite would come to stand for
+    something nobody measured.
+    """
+    author = _scripted_author((body, imports), (GOOD, []))
+    outcome = _heal(project, program_entry, entities, author, _advise(True))
+
+    assert outcome.succeeded, f"the loop failed to heal {name}"
+    assert outcome.attempts == 2, f"{name} healed in {outcome.attempts} attempts, expected 2"
+    assert compile_project(project, goal="compile").succeeded
+
+
+def test_a_model_supplied_import_that_does_not_resolve_is_refused_rather_than_repaired(
+    project, program_entry, entities
+):
+    """What the harness found on its first run, and the finding is about attribution (gap G30).
+
+    A model supplies the imports its body needs -- the renderer never reads the body, so it cannot
+    derive them. But those imports are *rendered* into the import block, outside the
+    `BEGIN/END model-authored` markers, and `build_validator` attributes a diagnostic by **line**.
+    So a bad import lands on line 3, is attributed to rendered scaffolding, and the loop refuses to
+    hand it back -- correctly by its own rule, and wrongly in substance: the model wrote it and a
+    rewrite would plainly fix it.
+
+    Two costs, and the second is worse. The step spends one attempt instead of two and stops. And
+    the blocked reason tells a reviewer *"That is a defect in this repo's renderer"*, which for this
+    class is **false** -- it misattributes a model's mistake to the code generator.
+
+    Pinned as the behaviour that exists rather than the behaviour that should. Changing where the
+    attribution line falls is a change to ADR-0020-era reasoning about which lines a model owns, and
+    that belongs in its own decision, not smuggled into a test harness.
+    """
+    author = _scripted_author(
+        ("return item;", ["com.modernized.batch.nowhere.NoSuchHelper"]), (GOOD, [])
+    )
+    outcome = _heal(project, program_entry, entities, author, _advise(True))
+
+    assert outcome.status == "blocked"
+    assert outcome.attempts == 1, "a blocked verdict must not spend the whole budget"
+    assert "rendered scaffolding" in outcome.reason
+    # The misattribution, asserted so the fix has a failing test waiting for it.
+    assert "renderer" in outcome.reason, "today's message blames the renderer for a model's import"
+
+
+def test_the_error_classes_are_genuinely_different_to_the_compiler(project, program_entry, entities):
+    """Four cases that produced one message would be one test wearing four names.
+
+    The harness is only worth its runtime if the classes exercise different diagnostics, so this
+    asserts the distinctness the parametrisation above quietly assumes.
+    """
+    messages = set()
+    for name, body, imports in _INJECTED_ERRORS:
+        shutil.rmtree(project / "target", ignore_errors=True)
+        _heal(
+            project,
+            program_entry,
+            entities,
+            _scripted_author((body, imports)),
+            _advise(False),
+            max_attempts=1,
+        )
+        errors = compile_project(project, goal="compile").errors
+        messages.add(errors[0].message)
+
+    assert len(messages) >= 2, f"the injected classes collapse to {len(messages)} diagnostic(s)"
