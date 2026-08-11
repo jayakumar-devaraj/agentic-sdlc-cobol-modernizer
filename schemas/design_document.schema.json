@@ -196,6 +196,18 @@
           "title": "Java Type",
           "type": "string"
         },
+        "length": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Length"
+        },
         "precision": {
           "anyOf": [
             {
