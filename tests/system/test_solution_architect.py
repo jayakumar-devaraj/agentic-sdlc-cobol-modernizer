@@ -16,7 +16,12 @@ from pathlib import Path
 
 import pytest
 
-from cobol_modernizer.core.contracts import ProgramDesignEntry
+from cobol_modernizer.core.contracts import (
+    BatchStepDesign,
+    CompositeComponent,
+    CompositeType,
+    ProgramDesignEntry,
+)
 from cobol_modernizer.nodes.solution_architect import (
     SolutionArchitectParseError,
     _derive_entity_name,
@@ -24,9 +29,11 @@ from cobol_modernizer.nodes.solution_architect import (
     build_architect_prompt,
     build_domain_entities,
     design_solution,
+    unreachable_entities,
 )
 from cobol_modernizer.nodes.spec_critic import critique_spec
 from cobol_modernizer.nodes.spec_extractor import extract_spec
+from cobol_modernizer.tools.tenant_repo import resolve_program
 
 FIXTURE_ROOT = Path(__file__).parent.parent / "fixtures" / "tenant_repo_sample"
 ALL_PROGRAMS = ["CBACT04C", "CBCUS01C", "CBACT01C", "CBTRN02C"]
@@ -452,3 +459,98 @@ def test_composites_are_optional(all_program_entries):
     entry = next(e for e in all_program_entries if e.program_name == "CBACT04C")
     design = design_solution(FIXTURE_ROOT, [entry], architect=_architect_with([]))
     assert design.composite_types == []
+
+
+# --- G26's systemic half: types that resolve but cannot be populated -------------------------------
+
+
+def _interest_step(**overrides):
+    kwargs = {
+        "step_name": "computeInterest",
+        "source_paragraphs": ["1300-COMPUTE-INTEREST"],
+        "role": "processor",
+        "description": "Computes monthly interest.",
+        "input_type": "TranCatBalWithRate",
+        "output_type": "Tran",
+        "guard_condition": "IF DIS-INT-RATE NOT = 0",
+    }
+    kwargs.update(overrides)
+    return BatchStepDesign(**kwargs)
+
+
+def _composite(*components):
+    return CompositeType(
+        name="TranCatBalWithRate",
+        components=[CompositeComponent(field_name=f, entity_name=e) for f, e in components],
+    )
+
+
+_BALANCE_AND_RATE = (("balance", "TranCatBal"), ("disclosureGroup", "DisGroup"))
+_WITH_CONTEXT = (*_BALANCE_AND_RATE, ("account", "Account"), ("cardXref", "CardXref"))
+
+
+@pytest.fixture(scope="module")
+def cbact04c_source():
+    return resolve_program(FIXTURE_ROOT, "CBACT04C").source_text
+
+
+@pytest.fixture(scope="module")
+def entities(all_program_entries):
+    """The real merged entities, so the vocabulary below is the one a real design carries."""
+    return build_domain_entities(FIXTURE_ROOT, all_program_entries)
+
+
+def test_the_check_flags_exactly_what_the_model_could_not_reach(entities, cbact04c_source):
+    """G26 as it actually occurred, reproduced against the real COBOL.
+
+    This is the composite the design had when a real model was asked to build a `Tran` from it. It
+    resolved -- every type name was declared -- and the model still could not reach `ACCT-ID` or
+    `XREF-CARD-NUM`, left both `null`, and named the paragraph that produces them. Resolution
+    passing while this fails is the whole gap.
+    """
+    missing = unreachable_entities(
+        _interest_step(),
+        source_text=cbact04c_source,
+        entities=entities,
+        composites=[_composite(*_BALANCE_AND_RATE)],
+    )
+    assert missing == ["Account", "CardXref"]
+
+
+def test_widening_the_composite_clears_it(entities, cbact04c_source):
+    # The fix PR #40 made, now checkable rather than argued: with those two components the step's
+    # COBOL reads nothing its types cannot reach.
+    missing = unreachable_entities(
+        _interest_step(),
+        source_text=cbact04c_source,
+        entities=entities,
+        composites=[_composite(*_WITH_CONTEXT)],
+    )
+    assert missing == []
+
+
+def test_the_check_follows_perform_which_is_where_the_evidence_is(entities, cbact04c_source):
+    """The load-bearing detail: the fields are not in the paragraph the step names.
+
+    `1300-COMPUTE-INTEREST` performs `1300-B-WRITE-TX`, and the moves live there. A check reading
+    only the named paragraph finds nothing wrong with the design that produced the defect -- so
+    this asserts the difference directly rather than trusting that following PERFORM mattered.
+    """
+    from cobol_modernizer.parsing.field_references import reachable_paragraphs
+
+    reached = reachable_paragraphs(cbact04c_source, ["1300-COMPUTE-INTEREST"])
+    assert "1300-B-WRITE-TX" in reached, "PERFORM was not followed"
+    assert "XREF-CARD-NUM" in reached["1300-B-WRITE-TX"]
+    assert "XREF-CARD-NUM" not in reached["1300-COMPUTE-INTEREST"]
+
+
+def test_a_plain_entity_step_is_handled_without_a_composite(entities, cbact04c_source):
+    # Most steps take an entity, not a composite. Reaching for `composites_by_name` first must not
+    # make those unanalysable.
+    missing = unreachable_entities(
+        _interest_step(input_type="TranCatBal", output_type="TranCatBal"),
+        source_text=cbact04c_source,
+        entities=entities,
+        composites=[],
+    )
+    assert "DisGroup" in missing, "a balance-only step cannot reach the rate it multiplies by"

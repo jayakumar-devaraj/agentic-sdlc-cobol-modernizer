@@ -25,6 +25,7 @@ happened yet to calibrate against (this dev environment has no Anthropic API cre
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from datetime import UTC, datetime
 from typing import Literal
 
@@ -424,13 +425,20 @@ def build_design_document(
     programs: list[ProgramDesignEntry],
     unified_design: UnifiedDesign | None = None,
     cost: RunCost | None = None,
+    design_gate_items: Sequence[GateItem] = (),
 ) -> DesignDocument:
-    """Build a `DesignDocument`, deriving `gate_items` from `programs` so the two can't drift apart."""
+    """Build a `DesignDocument`, deriving `gate_items` from `programs` so the two can't drift apart.
+
+    `design_gate_items` carries facts that are properties of the *design* rather than of any
+    program's extraction -- today, output types whose data the step cannot reach (G26). They are
+    passed in rather than derived here because deriving them needs the tenant's COBOL source, which
+    this module deliberately does not read.
+    """
     return DesignDocument(
         schema_version=SCHEMA_VERSION,
         generated_at=datetime.now(UTC),
         programs=programs,
-        gate_items=build_gate_items(programs),
+        gate_items=[*build_gate_items(programs), *design_gate_items],
         unified_design=unified_design,
         cost=cost,
     )
