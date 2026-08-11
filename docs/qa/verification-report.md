@@ -1764,6 +1764,11 @@ falsifiable.
 65 passed, 4 skipped in 0.14s
 ```
 
+The 4 skips are this module's own benchmark. CI's run on this change reports **767 passed, 8 skipped,
+98.84%** — exactly +65 tests and +4 skips against the previous 702/4, and **coverage unchanged**,
+which is the expected reading rather than a lucky one: step 44 adds no `src/` code at all. The only
+non-test file it touches is `tests/conftest.py`.
+
 **The corpus is graded by a JVM where it can be.** Three of six cases are the exact body strings
 `tests/system/test_interest_equivalence.py` compiles and runs through real Maven against ADR-0021's
 literals — `interest_rounds` fails rows R1/R2/R5–R8, `interest_unguarded` fails R10,
