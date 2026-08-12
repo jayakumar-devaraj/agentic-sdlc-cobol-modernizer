@@ -35,10 +35,12 @@ from pathlib import Path
 
 from cobol_modernizer.core.complexity import ComplexityTier
 from cobol_modernizer.core.contracts import (
+    BatchJobDesign,
     BatchStepDesign,
     CompositeType,
     DesignDocument,
     DomainEntity,
+    JobParameter,
     ProgramDesignEntry,
     UnifiedDesign,
 )
@@ -122,6 +124,30 @@ def _extract_body(java_source: str) -> str:
         return ""
     lines = java_source.splitlines()[span[0] - 1 : span[1]]
     return "\n".join(line.strip() for line in lines)
+
+
+class UnresolvedJobParameterError(Exception):
+    """A step names a job parameter its job does not declare (ADR-0026).
+
+    Joins the `UnsupportedPicConstructError` family: an unambiguous case that fails loudly rather
+    than being guessed past. Rendering the constructor argument anyway would produce a class Spring
+    instantiates with `null` -- a processor that compiles, starts, and writes a record with a hole
+    in it, which is the shape of defect this repo exists to refuse.
+    """
+
+
+def _resolve_job_parameters(
+    job: BatchJobDesign, step: BatchStepDesign
+) -> list[JobParameter]:
+    """The parameters `step` declares, looked up in `job`'s declarations."""
+    declared = {parameter.name: parameter for parameter in job.job_parameters}
+    missing = [name for name in step.job_parameters if name not in declared]
+    if missing:
+        raise UnresolvedJobParameterError(
+            f"step {step.step_name!r} consumes job parameter(s) {missing} that job "
+            f"{job.job_name!r} does not declare; declared: {sorted(declared)}"
+        )
+    return [declared[name] for name in step.job_parameters]
 
 
 def _extract_model_imports(java_source: str) -> tuple[str, ...]:
@@ -225,6 +251,7 @@ def heal_step(
     *,
     package: str,
     composites: list[CompositeType] | None = None,
+    job_parameters: list[JobParameter] | None = None,
     input_type: str,
     output_type: str,
     tier: ComplexityTier = ComplexityTier.COMPLEX,
@@ -265,6 +292,7 @@ def heal_step(
             entities,
             package=package,
             composites=composites,
+            job_parameters=job_parameters,
             input_type=input_type,
             output_type=output_type,
             tier=tier,
@@ -506,6 +534,11 @@ def run_generate(
                     entities,
                     package=package,
                     composites=list(design.composite_types),
+                    # Only the parameters this step declares it consumes (ADR-0026), resolved
+                    # against the job's own declarations. A step naming one the job does not
+                    # declare is a design defect, and `_resolve_job_parameters` raises rather
+                    # than rendering a constructor argument nothing will ever bind.
+                    job_parameters=_resolve_job_parameters(job, step),
                     input_type=types[0],
                     output_type=types[1],
                     max_attempts=max_attempts,

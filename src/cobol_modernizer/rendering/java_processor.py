@@ -27,7 +27,7 @@ import re
 import textwrap
 from collections.abc import Sequence
 
-from cobol_modernizer.core.contracts import BatchStepDesign
+from cobol_modernizer.core.contracts import BatchStepDesign, JobParameter
 from cobol_modernizer.rendering.java_names import require_java_identifier
 
 logger = logging.getLogger(__name__)
@@ -238,6 +238,39 @@ def model_authored_line_numbers(java_source: str) -> frozenset[int]:
     return frozenset(numbers)
 
 
+def _render_job_parameters(
+    parameters: Sequence[JobParameter], *, class_name: str
+) -> tuple[str, str]:
+    """`(fields + constructor, class annotations)` for the job parameters this step consumes.
+
+    **Why a constructor rather than field injection** (ADR-0026). The values are final for the life
+    of the step, and a constructor makes that structural rather than conventional -- a body cannot
+    reassign what it was handed. It also keeps the class constructible in a unit test without a
+    Spring context, which is what lets the determinism check below run the processor twice directly.
+
+    `@StepScope` is what makes `#{jobParameters[...]}` resolve at all: a singleton `@Component` is
+    created before any job runs, so the expression would have nothing to read.
+    """
+    if not parameters:
+        return "", "@Component"
+
+    fields = "\n".join(
+        f"    private final {p.java_type} {p.name};" for p in parameters
+    )
+    args = ", ".join(
+        f'@Value("#{{jobParameters[\'{p.name}\']}}") {p.java_type} {p.name}' for p in parameters
+    )
+    assignments = "\n".join(f"        this.{p.name} = {p.name};" for p in parameters)
+    block = f"""
+{fields}
+
+    public {class_name}({args}) {{
+{assignments}
+    }}
+"""
+    return block, "@Component\n@StepScope"
+
+
 def render_processor(
     step: BatchStepDesign,
     *,
@@ -248,6 +281,7 @@ def render_processor(
     body: str,
     body_imports: Sequence[str] = (),
     authored_by: str,
+    job_parameters: Sequence[JobParameter] = (),
 ) -> str:
     """Render an `ItemProcessor` for `step`, wrapping the model-authored `body`.
 
@@ -280,6 +314,11 @@ def render_processor(
         "org.springframework.batch.infrastructure.item.ItemProcessor",
         "org.springframework.stereotype.Component",
     ]
+    if job_parameters:
+        framework_imports += [
+            "org.springframework.batch.core.configuration.annotation.StepScope",
+            "org.springframework.beans.factory.annotation.Value",
+        ]
     supplied = set(_validated_imports(body_imports))
     # Marked only where the model is *solely* responsible. An import it happened to name that this
     # renderer emits anyway is one the renderer would have written unprompted, so making the model
@@ -292,6 +331,9 @@ def render_processor(
     )
 
     paragraphs = ", ".join(step.source_paragraphs) or "(none recorded)"
+    parameter_block, class_annotations = _render_job_parameters(
+        job_parameters, class_name=class_name
+    )
     source = f"""\
 package {package};
 
@@ -308,9 +350,9 @@ package {package};
  * design.json and is identical for identical input. Only the marked region was written by a
  * model ({authored_by}) and needs review as generated code.
  */
-@Component
+{class_annotations}
 public class {class_name} implements ItemProcessor<{input_type}, {output_type}> {{
-
+{parameter_block}
     @Override
     public {output_type} process({input_type} item) throws Exception {{
         {BEGIN_MARKER} ({authored_by}; from {paragraphs}) ---

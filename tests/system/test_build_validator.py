@@ -300,6 +300,38 @@ def test_a_rendered_processor_actually_compiles(project):
     assert result.succeeded, "\n".join(e.render() for e in result.errors)
 
 
+def test_a_processor_taking_job_parameters_actually_compiles(project):
+    """The same check as above, for the shape ADR-0026 introduced — and for the same reason.
+
+    `@StepScope` and `@Value` are framework imports this renderer emits unconditionally, exactly like
+    `ItemProcessor` was when it silently pointed at a package Spring Batch 6 had moved. A rendered
+    package name is a claim about a jar, and the only thing that settles it is `javac`. Written
+    before trusting the rendering, not after.
+    """
+    from cobol_modernizer.core.contracts import JobParameter
+
+    source = render_processor(
+        STEP,
+        package="com.modernized.batch.processor",
+        class_name="PassThroughProcessor",
+        input_type="java.math.BigDecimal",
+        output_type="java.math.BigDecimal",
+        body="return item;",
+        authored_by="test",
+        job_parameters=[
+            JobParameter(
+                name="parmDate",
+                java_type="String",
+                description="The run date, from JCL.",
+                source_cobol="PARM-DATE",
+            )
+        ],
+    )
+    _write(project, source)
+    result = compile_project(project, goal="compile")
+    assert result.succeeded, "\n".join(e.render() for e in result.errors)
+
+
 def test_a_real_body_error_is_attributed_to_the_model_and_reaches_triage(project):
     source = _render(
         "return CobolArithmetic.truncateTypo(item, 2);",

@@ -44,6 +44,7 @@ from cobol_modernizer.core.contracts import (
     BatchStepDesign,
     CompositeType,
     DomainEntity,
+    JobParameter,
     ProgramDesignEntry,
 )
 from cobol_modernizer.core.guardrails import wrap_untrusted_cobol
@@ -227,6 +228,45 @@ def render_program_field_facts(resolved: ResolvedProgram) -> str:
     return "\n".join(lines)
 
 
+def render_job_parameter_facts(parameters: list[JobParameter]) -> str:
+    """The invocation facts this step is given as fields (ADR-0026, gap G29).
+
+    **The counterpart to a refusal.** `NonDeterministicBodyError` stops a body reading a clock, and
+    until this existed the model was told *don't* with nothing offered instead -- so the fields
+    stayed `null` and the refusal was a dead end. These are the values it may read.
+
+    Rendered as Java fields rather than as COBOL names, unlike `render_program_field_facts`: these
+    really are accessible identifiers in the generated class, and naming them any other way would
+    invite a call to something that does not exist.
+    """
+    if not parameters:
+        return ""
+    lines = [
+        "### Job parameters available to this step",
+        "",
+        (
+            "Supplied to the processor's constructor and available as **final fields**. They are "
+            "properties of the invocation, not of the item: identical for every record in a run."
+        ),
+        "",
+    ]
+    for parameter in parameters:
+        provenance = f" (COBOL: {parameter.source_cobol})" if parameter.source_cobol else ""
+        lines.append(
+            f"- `{parameter.java_type} {parameter.name}` -- {parameter.description}{provenance}"
+        )
+    lines += [
+        "",
+        (
+            "**Read these rather than a clock or the environment.** A body that calls `now()`, "
+            "`System.getenv`, `Math.random` or `UUID.randomUUID()` is refused outright: a batch "
+            "record must be identical across two runs over the same input, including a restart "
+            "that reprocesses a chunk."
+        ),
+    ]
+    return "\n".join(lines)
+
+
 def render_step_facts(
     step: BatchStepDesign, *, input_type: str, output_type: str
 ) -> str:
@@ -326,6 +366,7 @@ def build_engineer_prompt(
     input_type: str,
     output_type: str,
     composites: list[CompositeType] | None = None,
+    job_parameters: list[JobParameter] | None = None,
     repair: RepairContext | None = None,
 ) -> str:
     """Stable content first, the per-step instruction last.
@@ -356,6 +397,12 @@ def build_engineer_prompt(
     program_facts = render_program_field_facts(resolved)
     source = wrap_untrusted_cobol(resolved.source_text, source_label=program_entry.program_name)
     step_facts = render_step_facts(step, input_type=input_type, output_type=output_type)
+    # Job parameters travel with the step facts rather than with the domain records: they vary per
+    # step (a step declares which it consumes), so putting them in the stable prefix would break the
+    # shared-prefix property `build_engineer_prompt` exists to hold.
+    parameter_facts = render_job_parameter_facts(list(job_parameters or []))
+    if parameter_facts:
+        step_facts = f"{step_facts}\n\n{parameter_facts}"
     prompt = (
         f"{target_api}\n\n{domain_facts}\n\n{program_facts}\n\n"
         f"{narration}\n\n{source}\n\n{step_facts}"
@@ -419,6 +466,7 @@ def generate_processor(
     *,
     package: str,
     composites: list[CompositeType] | None = None,
+    job_parameters: list[JobParameter] | None = None,
     input_type: str,
     output_type: str,
     tier: ComplexityTier = ComplexityTier.COMPLEX,
@@ -463,6 +511,7 @@ def generate_processor(
         input_type=input_type,
         output_type=output_type,
         composites=composites,
+        job_parameters=job_parameters,
         repair=repair,
     )
 
@@ -489,6 +538,7 @@ def generate_processor(
         body=body,
         body_imports=imports,
         authored_by=routing.model,
+        job_parameters=job_parameters or [],
     )
 
     if notes.strip():

@@ -14,6 +14,14 @@
           "title": "Job Name",
           "type": "string"
         },
+        "job_parameters": {
+          "default": [],
+          "items": {
+            "$ref": "#/$defs/JobParameter"
+          },
+          "title": "Job Parameters",
+          "type": "array"
+        },
         "program_name": {
           "title": "Program Name",
           "type": "string"
@@ -56,6 +64,14 @@
         "input_type": {
           "title": "Input Type",
           "type": "string"
+        },
+        "job_parameters": {
+          "default": [],
+          "items": {
+            "type": "string"
+          },
+          "title": "Job Parameters",
+          "type": "array"
         },
         "output_type": {
           "title": "Output Type",
@@ -303,6 +319,42 @@
         "line_number"
       ],
       "title": "InjectionFlag",
+      "type": "object"
+    },
+    "JobParameter": {
+      "description": "One property of an invocation rather than of an item (ADR-0026, gap G29).\n\n**Why this is a declared fact and not something a body reads.** A stateless `ItemProcessor` has\nno access to when it ran or what it was invoked with, and a real model given no alternative\nreached for `LocalDateTime.now()` -- which compiles, reads correctly, and makes the same input\nproduce a different record on every run. `NonDeterministicBodyError` refuses that; this is what\nit refuses *in favour of*.\n\n`source_cobol` names where the value comes from in the program, so a reviewer can check the\ndeclaration against the source rather than trust it. `CBACT04C`'s `PARM-DATE` is the\nunambiguous case: it is in the `LINKAGE SECTION` and arrives via\n`PROCEDURE DIVISION USING EXTERNAL-PARMS`, so it is a job parameter in the COBOL too.",
+      "properties": {
+        "description": {
+          "title": "Description",
+          "type": "string"
+        },
+        "java_type": {
+          "title": "Java Type",
+          "type": "string"
+        },
+        "name": {
+          "title": "Name",
+          "type": "string"
+        },
+        "source_cobol": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Source Cobol"
+        }
+      },
+      "required": [
+        "name",
+        "java_type",
+        "description"
+      ],
+      "title": "JobParameter",
       "type": "object"
     },
     "PicFieldType": {
@@ -792,7 +844,7 @@
       "type": "array"
     },
     "schema_version": {
-      "default": "3.0.0",
+      "default": "3.1.0",
       "title": "Schema Version",
       "type": "string"
     },

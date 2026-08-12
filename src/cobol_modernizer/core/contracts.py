@@ -116,6 +116,12 @@ class BatchStepDesign(BaseModel):
     #: file opens and the account update too. A model given the paragraph translated it faithfully
     #: and still produced a processor that emits a transaction record COBOL never writes.
     guard_condition: str | None
+    #: Names of the `BatchJobDesign.job_parameters` this step consumes (ADR-0026). Declared per step
+    #: rather than injected wholesale so a constructor carries what that step needs and no more --
+    #: ADR-0020's posture that a step declares what it needs, applied to invocation facts instead of
+    #: types. Optional with an empty default; see `BatchJobDesign.job_parameters` for why an empty
+    #: list is a statement here where a `null` guard would not have been.
+    job_parameters: list[str] = []
 
 
 class CompositeComponent(BaseModel):
@@ -144,6 +150,30 @@ class CompositeType(BaseModel):
     components: list[CompositeComponent]
 
 
+class JobParameter(BaseModel):
+    """One property of an invocation rather than of an item (ADR-0026, gap G29).
+
+    **Why this is a declared fact and not something a body reads.** A stateless `ItemProcessor` has
+    no access to when it ran or what it was invoked with, and a real model given no alternative
+    reached for `LocalDateTime.now()` -- which compiles, reads correctly, and makes the same input
+    produce a different record on every run. `NonDeterministicBodyError` refuses that; this is what
+    it refuses *in favour of*.
+
+    `source_cobol` names where the value comes from in the program, so a reviewer can check the
+    declaration against the source rather than trust it. `CBACT04C`'s `PARM-DATE` is the
+    unambiguous case: it is in the `LINKAGE SECTION` and arrives via
+    `PROCEDURE DIVISION USING EXTERNAL-PARMS`, so it is a job parameter in the COBOL too.
+    """
+
+    name: str
+    java_type: str
+    description: str
+    #: The COBOL field or construct this stands in for, for provenance. `null` where there is no
+    #: single one -- the run timestamp stands in for `FUNCTION CURRENT-DATE`, which ADR-0026 records
+    #: as a deliberate divergence rather than an equivalence.
+    source_cobol: str | None = None
+
+
 class BatchJobDesign(BaseModel):
     """One program's Spring Batch job design -- one per Track C program, LLM-authored."""
 
@@ -151,6 +181,12 @@ class BatchJobDesign(BaseModel):
     job_name: str
     domain_entities: list[str]
     steps: list[BatchStepDesign]
+    #: Invocation-level facts this job's steps may consume (ADR-0026). **Optional with an empty
+    #: default, deliberately unlike ADR-0022's required `guard_condition`**: a guard needed `null`
+    #: to be distinguishable from "nobody checked", whereas `[]` already says *this job takes none*
+    #: and has no silent state to be confused with. Additive, so schema 3.0.0 -> 3.1.0 rather than
+    #: a breaking bump.
+    job_parameters: list[JobParameter] = []
 
 
 class RestEndpointDesign(BaseModel):
@@ -217,7 +253,7 @@ class UnifiedDesign(BaseModel):
 
 #: design.json's own envelope version -- bump this on any breaking change to DesignDocument's
 #: shape, e.g. once solution_architect gives `unified_design` a real type.
-SCHEMA_VERSION = "3.0.0"
+SCHEMA_VERSION = "3.1.0"
 
 #: A rule_confidence entry scoring below this becomes a `low_confidence_rule` GateItem. See the
 #: module docstring -- a tentative default, not a benchmarked number.
