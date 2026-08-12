@@ -113,6 +113,16 @@ consequence when the benchmark was first executed.)* `claude-opus-5` scores **6 
 rate. The core claim this ADR rests on therefore survives its first contact with a real model: the
 judge agrees with the oracle where both exist.
 
+> **Corrected 2026-08-12 — the paragraph above describes one sample, and the instrument is not
+> deterministic.** A third run, same model, same corpus, same prompt, same effort, scored **4 of 6
+> with a 0.50 false-positive rate**. Detection stayed 1.00 on both grounds — the claim this ADR
+> actually rests on held — but *"a 0.00 false-positive rate"* was never a property of the judge, only
+> of that run, and it is restated here rather than edited away because the overclaim is the lesson.
+> **Pillar 22's crossing was withdrawn on this evidence** (audit R2.27). What the run also showed is
+> that the disagreements were **substantively correct**: `TRAN-SOURCE` is `PIC X(10)` and the real
+> PR #44 body writes the bare 6-character `"System"`, so a body this corpus labels faithful is not.
+> Second time the judge has beaten the corpus — see the consequence on corpus purity below.
+
 **The first run failed, and that is the more useful half.** Detection was already 1.00, but the
 false-positive rate was 0.50: the judge flagged `fixed_width_text` on all three `computeInterest`
 bodies including the faithful one. **It was right on the facts.** That step builds a carrier `Tran`
@@ -154,6 +164,23 @@ corpus now exists to settle it in one more run.
 **A 0.00 false-positive rate over two faithful cases is a floor, not a rate.** It rules out a judge
 that flags everything. It does not establish how often a real judge would flag correct output across
 44 programs, and the difference matters because § 4b makes that the number the economics turn on.
+
+**The false-positive bar treats the corpus as ground truth, and the corpus is not** *(added
+2026-08-12)*. Twice now the judge has "failed" a body this corpus calls faithful and been right about
+the code — the carrier record's placeholder fields, and `TRAN-SOURCE`'s missing padding. A metric
+that scores an instrument against a fallible reference reports the reference's errors as the
+instrument's. The corpus therefore has to declare, per case, **which criteria it is a clean specimen
+for**: the interest bodies are `ORACLE`-grounded for `arithmetic_mode` and `guard_applied` and are
+genuinely impure for the width and invention criteria, because they carry an intermediate record
+whose placeholder fields are real. Counting a flag on a criterion a case genuinely violates as a
+false positive is a measurement error, not a judge error.
+
+**Haiku is not eligible on the evidence available** *(2026-08-12)*. It broke the response contract —
+prose before the JSON array — so `parse_judge_response` raised and it was never scored. **The parser
+was deliberately not loosened to accommodate it**: that would be teaching to the test, and a strict
+parse exists because a malformed response means the measurement did not happen. What this records is
+contract-following, not judging quality, and the distinction is stated so nobody reads it as
+"Haiku judges worse".
 
 **Six cases is a thin corpus, and two faithful ones is thinner.** The false-positive floor rules out
 a judge that flags everything; it does not measure a rate. Widening the corpus needs more bodies

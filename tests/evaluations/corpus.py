@@ -168,9 +168,20 @@ def _mutate(body: str, anchor: str, replacement: str) -> str:
     return mutated
 
 
+#: **The real PR #44 body has a width defect of its own, and the judge found it before this corpus
+#: did.** `TRAN-SOURCE` is `PIC X(10)` (`CVTRA05Y:8`) and the body writes the bare 6-character
+#: `"System"`. That corrects a claim made about that PR -- it was recorded as having padded *every*
+#: alphanumeric field; it padded `TRAN-DESC` and the three merchant fields and left this one short.
+#:
+#: So the clean baseline is the padded variant, and every `completion_*` case below derives from it.
+#: Deriving them from the raw body instead would give each of them **two** defects -- the one it is
+#: named for and this one -- and a case that violates two criteria cannot distinguish a judge that
+#: found the intended defect from one that found the other.
+_PADDED_COMPLETE_BODY = _mutate(_COMPLETE_BODY, '    "System",', '    CobolText.pad("System", 10),')
+
 #: G28's defect, reintroduced into the body that fixed it. `TRAN-MERCHANT-NAME` and its neighbour are
 #: `PIC X(50)`, so this writes an empty string where the COBOL writes fifty blanks.
-_EMPTY_STRING_BODY = _mutate(_COMPLETE_BODY, "CobolText.spaces(50)", '""')
+_EMPTY_STRING_BODY = _mutate(_PADDED_COMPLETE_BODY, "CobolText.spaces(50)", '""')
 
 #: G26's defect, in the form the architecture is least able to survive: not a null left behind and
 #: flagged, but a fabricated identifier. `TRAN-ID` is `STRING PARM-DATE, WS-TRANID-SUFFIX` -- a job
@@ -183,7 +194,7 @@ _EMPTY_STRING_BODY = _mutate(_COMPLETE_BODY, "CobolText.spaces(50)", '""')
 #: from one that flagged the width and stopped. Every case here isolates exactly one criterion, and
 #: keeping that true took checking the copybook rather than assuming.
 _INVENTED_ID_BODY = _mutate(
-    _COMPLETE_BODY,
+    _PADDED_COMPLETE_BODY,
     'return new Tran(\n    null,\n    "01",',
     'return new Tran(\n    CobolText.pad("INT0000000001", 16),\n    "01",',
 )
@@ -230,6 +241,18 @@ class EvalCase:
     #: Exactly one, deliberately: a case that is wrong in two ways cannot distinguish a judge that
     #: found the defect from one that flags everything.
     failing_criterion: str | None
+    #: Criteria this body **genuinely violates as well**, incidentally, and is therefore not a clean
+    #: specimen for. Excluded from false-positive counting.
+    #:
+    #: **Why this exists, and it is a correction rather than an accommodation.** The false-positive
+    #: metric scores the judge against this corpus, so a fallible corpus reports its own errors as
+    #: the judge's. Twice the judge failed a body labelled faithful and was right about the code --
+    #: the interest carrier's placeholder fields, and `TRAN-SOURCE`'s missing padding. Counting a
+    #: flag on a criterion a case really does violate is a **measurement error, not a judge error**.
+    #:
+    #: This is not a licence to silence disagreements: every entry names a property checkable against
+    #: the copybook, and a case may never list the criterion it is *supposed* to fail.
+    impure_criteria: tuple[str, ...]
     ground: Ground
     #: The specific evidence for `failing_criterion`, citable by a reviewer. For `ORACLE` cases this
     #: names the rows a real Maven run fails.
@@ -243,6 +266,11 @@ CASES: tuple[EvalCase, ...] = (
         body=_CORRECT_BODY,
         imports=tuple(_IMPORTS),
         failing_criterion=None,
+        # The interest bodies build an intermediate carrier `Tran` -- `""` in `PIC X(16)`, `"Int."`
+        # in `PIC X(100)` -- whose fields `completeTransaction` rebuilds. Those are real short values,
+        # checkable against CVTRA05Y, so a judge flagging them is right about the code even though
+        # they are discarded. Not clean specimens for these two; still exact for the oracle pair.
+        impure_criteria=("fixed_width_text", "no_invented_values"),
         ground=Ground.ORACLE,
         evidence=(
             "passes all 10 oracle rows under real Maven "
@@ -260,6 +288,11 @@ CASES: tuple[EvalCase, ...] = (
         body=_ROUNDING_BODY,
         imports=tuple(_IMPORTS),
         failing_criterion="arithmetic_mode",
+        # The interest bodies build an intermediate carrier `Tran` -- `""` in `PIC X(16)`, `"Int."`
+        # in `PIC X(100)` -- whose fields `completeTransaction` rebuilds. Those are real short values,
+        # checkable against CVTRA05Y, so a judge flagging them is right about the code even though
+        # they are discarded. Not clean specimens for these two; still exact for the oracle pair.
+        impure_criteria=("fixed_width_text", "no_invented_values"),
         ground=Ground.ORACLE,
         evidence=(
             "`divideRounded` is HALF_UP; fails oracle rows R1, R2, R5, R6, R7, R8 under real Maven "
@@ -272,6 +305,11 @@ CASES: tuple[EvalCase, ...] = (
         body=_ALWAYS_WRITES_BODY,
         imports=tuple(_IMPORTS),
         failing_criterion="guard_applied",
+        # The interest bodies build an intermediate carrier `Tran` -- `""` in `PIC X(16)`, `"Int."`
+        # in `PIC X(100)` -- whose fields `completeTransaction` rebuilds. Those are real short values,
+        # checkable against CVTRA05Y, so a judge flagging them is right about the code even though
+        # they are discarded. Not clean specimens for these two; still exact for the oracle pair.
+        impure_criteria=("fixed_width_text", "no_invented_values"),
         ground=Ground.ORACLE,
         evidence=(
             "emits a zero-amount transaction where COBOL writes no record; fails oracle row R10 "
@@ -279,15 +317,34 @@ CASES: tuple[EvalCase, ...] = (
         ),
     ),
     EvalCase(
-        name="completion_faithful",
+        name="completion_short_source",
         step=COMPLETE_STEP,
         body=_COMPLETE_BODY,
         imports=tuple(_IMPORTS),
-        failing_criterion=None,
+        failing_criterion="fixed_width_text",
+        impure_criteria=(),
         ground=Ground.SOURCE,
         evidence=(
-            "the real Opus 5 body from PR #44, which padded every alphanumeric field and left the "
-            "two unreachable fields null"
+            "**the real PR #44 body, and the judge found this before the corpus did.** TRAN-SOURCE "
+            "is PIC X(10) (CVTRA05Y:8) and it writes the bare 6-character `\"System\"`. It corrects "
+            "the claim made about that PR -- it padded TRAN-DESC and the three merchant fields and "
+            "left this one short, so `padded every alphanumeric field` was wrong. Worth keeping as a "
+            "case in its own right: a width defect a real model actually produced, next to "
+            "`completion_empty_string`'s synthetic one"
+        ),
+    ),
+    EvalCase(
+        name="completion_faithful",
+        step=COMPLETE_STEP,
+        body=_PADDED_COMPLETE_BODY,
+        imports=tuple(_IMPORTS),
+        failing_criterion=None,
+        impure_criteria=(),
+        ground=Ground.SOURCE,
+        evidence=(
+            "the real Opus 5 body from PR #44 with its one width defect corrected -- TRAN-SOURCE "
+            "padded to PIC X(10). The correction is the corpus's, not the model's, and it is here "
+            "rather than in the raw body because a faithful case has to actually be faithful"
         ),
     ),
     EvalCase(
@@ -296,6 +353,7 @@ CASES: tuple[EvalCase, ...] = (
         body=_EMPTY_STRING_BODY,
         imports=tuple(_IMPORTS),
         failing_criterion="fixed_width_text",
+        impure_criteria=(),
         ground=Ground.SOURCE,
         evidence=(
             "TRAN-MERCHANT-NAME is PIC X(50) in CVTRA05Y, so `\"\"` is 50 bytes short of what "
@@ -308,6 +366,7 @@ CASES: tuple[EvalCase, ...] = (
         body=_INVENTED_ID_BODY,
         imports=tuple(_IMPORTS),
         failing_criterion="no_invented_values",
+        impure_criteria=(),
         ground=Ground.SOURCE,
         evidence=(
             "TRAN-ID is `STRING PARM-DATE, WS-TRANID-SUFFIX` -- a job parameter and a per-run "

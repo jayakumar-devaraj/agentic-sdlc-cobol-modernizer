@@ -24,9 +24,11 @@ reading of the COBOL rather than against a machine, and turning that reading int
 would quietly promote an interpretation to ground truth -- which is the check-that-cannot-fail
 pattern this package was built to avoid.
 
-**Never executed as of this commit.** The harness, its preconditions and its scoring are all verified;
-what has not happened is a real judge producing a number. `docs/qa/verification-report.md` says so
-rather than implying otherwise, and the first run either passes these bars or is a finding.
+**Every candidate faces the same bars, which is the point of parametrising rather than reporting.**
+`verified_for` is a gate, not a scoreboard: a model that misses a defect a real JVM catches is not
+eligible to be this judge, so a failing candidate fails the suite and is then removed from
+`CANDIDATE_JUDGES` with the evidence written down -- exactly as both Sonnets were struck off
+`spec_extractor`. A benchmark that merely printed scores would let an ineligible model drift into use.
 """
 
 from __future__ import annotations
@@ -39,36 +41,51 @@ import pytest
 from cobol_modernizer.core.model_client import collect_usage
 from cobol_modernizer.tools.tenant_repo import resolve_program
 from tests.evaluations.corpus import CASES, Ground
-from tests.evaluations.judge import JUDGE_MODEL, BenchmarkSummary, judge_case
+from tests.evaluations.judge import (
+    CANDIDATE_JUDGES,
+    BenchmarkSummary,
+    adjudicator_for,
+    judge_case,
+)
 
 FIXTURE_ROOT = Path(__file__).resolve().parents[1] / "fixtures" / "tenant_repo_sample"
 
 pytestmark = pytest.mark.live_claude_cli
 
 
-@pytest.fixture(scope="module")
-def summary() -> BenchmarkSummary:
-    """One judge call per case -- six calls, sharing everything up to the step facts.
+@pytest.fixture(scope="module", params=CANDIDATE_JUDGES, ids=lambda m: m.split("-")[1])
+def summary(request) -> BenchmarkSummary:
+    """One judge call per case, per candidate model -- six calls each.
 
-    Module-scoped so the whole benchmark costs six calls rather than six per assertion. That is not
+    Module-scoped so a whole benchmark costs six calls rather than six per assertion. That is not
     only about money: a per-test call would let two assertions disagree because they scored different
     responses, and a flaky benchmark is one nobody trusts enough to act on.
+
+    **Parametrised over `CANDIDATE_JUDGES`, and every candidate faces the same bars.** That is the
+    `verified_for` discipline rather than a report card: a model that misses a defect a real JVM
+    catches is not eligible to be this judge, and the test failing is the finding — not a broken
+    suite. A candidate that fails is removed from the list with the evidence recorded, exactly as
+    both Sonnets were for `spec_extractor`.
     """
+    model = request.param
     source = resolve_program(FIXTURE_ROOT, "CBACT04C").source_text
     # `collect_usage` so the instrument reports what it cost to run. An evaluation harness whose own
     # price is unknown is awkward in a repo whose § 4b argument is about cost per unit of review --
     # and the first two runs of this benchmark could not say, because nothing bound an accumulator.
     with collect_usage() as usage:
-        results = tuple(judge_case(case, source) for case in CASES)
-    rendered = BenchmarkSummary(results=results)
+        results = tuple(
+            judge_case(case, source, adjudicate=adjudicator_for(model)) for case in CASES
+        )
+    rendered = BenchmarkSummary(results=results, model=model)
+    print(f"\n\n===== {model} =====")
     print(
-        f"\n\n{usage.model_calls} calls  in={usage.input_tokens}  out={usage.output_tokens}  "
+        f"{usage.model_calls} calls  in={usage.input_tokens}  out={usage.output_tokens}  "
         f"cache_read={usage.cache_read_input_tokens}  "
         f"notional=${usage.notional_cost_usd if usage.notional_cost_usd is not None else 0.0:.4f}"
     )
     # Printed so a real run leaves the artifact the verification report needs, whether or not the
     # assertions below pass. A benchmark that fails and prints nothing has to be run twice.
-    print(f"\n\nJudge: {JUDGE_MODEL}\n\n{rendered.render()}\n")
+    print(f"\n{rendered.render()}\n")
     print(
         f"oracle-grounded detection: {rendered.detection_rate(ground=Ground.ORACLE):.2f}  "
         f"source-grounded detection: {rendered.detection_rate(ground=Ground.SOURCE):.2f}  "
@@ -93,7 +110,7 @@ def test_the_judge_catches_every_defect_a_real_jvm_already_catches(summary):
         if result.case.ground is Ground.ORACLE and result.caught is False
     ]
     assert not missed, (
-        f"{JUDGE_MODEL} missed {missed}, which real Maven catches against ADR-0021's oracle. A judge "
+        f"{summary.model} missed {missed}, which real Maven catches against ADR-0021's oracle. A judge "
         f"that misses a defect where an oracle exists has no claim on the programs where none does"
     )
 
@@ -105,7 +122,7 @@ def test_the_judge_does_not_flag_a_body_that_is_correct(summary):
         if result.case.failing_criterion is None and result.false_positives
     }
     assert not flagged, (
-        f"{JUDGE_MODEL} failed criteria on bodies with no defect: {flagged}. Every spurious flag is "
+        f"{summary.model} failed criteria on bodies with no defect: {flagged}. Every spurious flag is "
         f"a body routed to human review, which section 4b puts three to four orders of magnitude "
         f"above inference cost"
     )

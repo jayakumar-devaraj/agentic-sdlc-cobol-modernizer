@@ -1741,6 +1741,64 @@ repo's design**, not about the model:
 Three of these describe work no step currently owns. They are the natural input to whatever revisits
 `solution_architect`'s step decomposition.
 
+### The judge comparison — and a pillar crossing withdrawn
+
+**The headline: `claude-opus-5` is not deterministic on this corpus, and the previous entry's
+"6 of 6 / 0.00" was one sample of it.**
+
+```
+COBOL_MODERNIZER_RUN_LIVE_CLI_TESTS=1 pytest tests/evaluations/test_judge_benchmark.py -q -s
+1 failed, 3 passed, 4 errors in 245.84s
+```
+
+| Run | Result | False positives |
+|---|---|---|
+| PR #49, run 2 | 6 of 6 | **0.00** |
+| This run | **4 of 6** | **0.50** |
+
+Same model, same corpus, same prompt, same effort. Detection stayed **1.00 on both grounds** — the
+claim ADR-0024 actually rests on held — but the false-positive figure did not, and
+`completion_faithful` and `interest_rounds` both moved.
+
+**Pillar 22 is reverted ✅ → 🟡 on this** (audit R2.27). R2.22's criterion, *"a real run clears the two
+derived bars"*, cannot distinguish an instrument that clears them from one that clears them
+sometimes. One sample of a non-deterministic instrument is not a measurement, and the criterion
+should have said **reproducibly**.
+
+#### The judge was right again, which is the more useful half
+
+Rationales are retained now (that fix paid for itself immediately). On `completion_faithful`:
+
+> *"TRAN-SOURCE (PIC X(10)) is written as the bare 6-character literal `"System"` rather than
+> blank-padded to 10, and `"01"` is only correct by coincidence of width."*
+
+`CVTRA05Y:8` declares `05 TRAN-SOURCE PIC X(10)`, and the real PR #44 body writes `"System"` — six
+characters. **The judge is correct and the corpus label is wrong.** This also corrects a claim made
+about that PR: it was recorded as having *"padded every alphanumeric field, going further than the
+scripted body"*. It padded `TRAN-DESC` and the three merchant fields, and left `TRAN-SOURCE` short.
+
+Second time the judge has found a real defect in a body this corpus certifies — after the carrier
+record in run 1. **The consequence is methodological**: the false-positive bar scores the judge
+against the corpus, so a fallible corpus reports its own errors as the judge's. Cases must declare
+which criteria they are clean specimens *for*, which is the fix applied below.
+
+#### Haiku: ineligible on this run, for a contract reason rather than a judging one
+
+It emitted prose before the JSON array — *"Looking at this translation... I'll evaluate each
+criterion"* — so `parse_judge_response` raised and all four of its tests errored at fixture setup. It
+was never scored, and no cost figure exists for it because the fixture raised before reporting.
+
+**The parser was deliberately not loosened.** Extracting the first JSON array from surrounding prose
+would have made Haiku pass, and that is teaching to the test: a strict parse exists because a
+malformed response means the measurement did not happen. What this measures is contract-following,
+and it is recorded as that rather than as judging quality.
+
+#### The first real cost figure this harness has produced
+
+**$0.9406 for 6 Opus calls** — `in=12, out=4502, cache_read=40665`. Almost every input token came from
+cache, which is the stable-prefix ordering working as ADR-0017 predicted. The estimate offered before
+the run was $0.40–1.00; the actual sits at the top of it, and is recorded rather than the estimate.
+
 ### G27's generation half — the account break as a second pass (ADR-0027)
 
 **What the gap was.** `ADD WS-MONTHLY-INT TO WS-TOTAL-INT` accumulates per account and
