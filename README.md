@@ -270,7 +270,7 @@ Milestone C4.
 ./.venv/Scripts/python -m pytest --cov=cobol_modernizer --cov-report=term-missing --cov-fail-under=90
 ```
 
-796 tests passing (8 skipped — the opt-in live-CLI tests), 98.87% coverage — CI's own numbers from
+809 tests passing (12 skipped — the opt-in live-CLI tests), 98.87% coverage — CI's own numbers from
 the run on this change, not a local approximation of them. The Postgres-backed
 `tools/knowledge_store.py` suite is included and skips nothing there, because CI provides a real
 service container. The target template's own 20 Java tests are not in that
@@ -293,11 +293,17 @@ The corpus is graded by things that are not opinions: three of its six cases are
 `tests/system/test_interest_equivalence.py` runs through real Maven against the hand-computed oracle,
 so a judge that misses one has been shown to miss a defect a JVM catches.
 
-Measured 2026-08-11 (`docs/adr/0024`): `claude-opus-5` scores **6 of 6 — detection 1.00 on both
-grounds, false-positive rate 0.00**. That took two runs; the first flagged placeholder fields in a
-*carried* record as short written output, which was correct on the facts and fixed by giving the
-judge what `design.json` already knew about the step chain, not by relaxing the bar. The benchmark is
-opt-in because it spends real subscription quota (six calls):
+Measured across three runs (`docs/adr/0024`): `claude-opus-5` holds **detection 1.00 on both
+grounds** — it has never missed a defect a real JVM catches — and its **false-positive rate is not
+stable**, scoring 0.00 on one run and 0.50 on another over the identical corpus. The judge is not
+deterministic, so no single run is a measurement of it.
+
+Its disagreements have twice turned out to be **correct about the code** rather than about the judge:
+a carried record's placeholder fields, and `TRAN-SOURCE` written unpadded into a `PIC X(10)`. Cases
+therefore declare which criteria they are clean specimens for, because a metric that scores an
+instrument against a fallible reference reports the reference's errors as the instrument's. The
+benchmark is opt-in because it spends real subscription quota — **six calls per candidate model,
+$0.9406 measured for Opus**:
 
 ```bash
 COBOL_MODERNIZER_RUN_LIVE_CLI_TESTS=1 ./.venv/Scripts/python -m pytest tests/evaluations/test_judge_benchmark.py -q -s
