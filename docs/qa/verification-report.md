@@ -1741,6 +1741,81 @@ repo's design**, not about the model:
 Three of these describe work no step currently owns. They are the natural input to whatever revisits
 `solution_architect`'s step decomposition.
 
+### G27's generation half — the account break as a second pass (ADR-0027)
+
+**What the gap was.** `ADD WS-MONTHLY-INT TO WS-TOTAL-INT` accumulates per account and
+`1050-UPDATE-ACCOUNT` posts the total on each account break. A stateless `ItemProcessor` cannot hold
+that total and Spring Batch's chunk boundaries do not align with COBOL's breaks, so ADR-0023 reported
+the step `not_generated` rather than rendering something that looked right. This is the other half.
+
+**Reading the COBOL surfaced three things the gap's summary did not say**, and each shaped the answer:
+the break **assumes its input is grouped by account and never checks**; the flush is **offset by one
+plus a second flush at EOF** (getting that wrong loses the last account's interest silently, by the
+full amount); and `1050-UPDATE-ACCOUNT` is three concerns, only two of which are translated logic —
+the `REWRITE` is persistence.
+
+**The decision is to stop holding the state rather than to manage it.** If the item arriving at the
+processor is already one account with its interest already summed, there is no cross-item state and
+the generated body is exactly COBOL's two statements. **The sum is provably the same number**:
+`WS-TOTAL-INT` accumulates `WS-MONTHLY-INT`, every `WS-MONTHLY-INT` is written to `TRAN-AMT`, and both
+happen inside `1300-COMPUTE-INTEREST` under the same `IF DIS-INT-RATE NOT = 0` guard — so they cannot
+diverge, and `SUM(tran_amt)` per account *is* `WS-TOTAL-INT`. That equality is what makes this a
+re-ordering rather than a re-implementation, and it is why (d) beat a stateful writer on correctness
+rather than on convenience.
+
+```
+JAVA_HOME=... pytest tests/system/test_account_break_posting.py -q
+4 passed in 46.99s
+```
+
+`run_generate` renders the step and reports **`compiled`, with `not_generated` empty** — the direct
+inverse of ADR-0023's finding, where this step reported `not_generated` with its paragraph named and
+produced no Java. The faithful body then passes **4 of 4** JUnit cases under `mvn verify`: the total
+is *added* to the balance, both cycle totals are cleared, a negative total posts as a decrease
+(`dailytran` really carries negative amounts), and every untouched field survives — the last because a
+body that rebuilt the record from defaults would satisfy the arithmetic and silently blank the account.
+
+#### The finding: the discrimination check was vacuous on its first run
+
+The two wrong bodies — one that forgets the cycle reset, one that uses `MOVE` where COBOL says `ADD`
+— were asserted with `assert not result.succeeded`. **That is worthless, and it passed while
+rejecting nothing.** The build was failing for every body, correct and incorrect alike, because the
+template's Testcontainers test could not pull `postgres:16-alpine`; a build that breaks for any
+reason satisfies "did not succeed".
+
+Worth recording plainly because of where it happened: this module's own docstring claimed it was
+*shown to discriminate before it is trusted*, and the check backing that claim could not fail. The
+pattern is the one this repo has now hit six times, and this is the first instance authored **inside
+the safeguard against it**.
+
+Closed by **attributing the failure** rather than observing one: surefire's per-class summary is
+parsed, and the assertion is that `PostAccountInterestTest` itself reported failures. The positive
+test asserts the class **ran 4 cases** for the same reason — a run where it silently did not execute
+would otherwise read as green. And the template's stack test is removed from the throwaway copy,
+since it is the `template-build` CI job's business and leaving it in makes every result here depend on
+a Docker daemon.
+
+#### Two options refused, on the record
+
+A **stateful `ItemWriter`** is the literal translation and fails on the two things COBOL never had to
+survive — a chunk boundary landing mid-account, and a restart replaying one — besides breaking
+ADR-0019's processor-only scope. **Making the item an account group** is architecturally the better
+answer and is **blocked on the contract**: a group's output carries many transactions, and
+`CompositeType.components` names one entity each with no cardinality, which is the array support
+ADR-0019 scopes out. ADR-0027 does not foreclose it.
+
+**Recorded divergence.** COBOL interleaves posting with transaction writing in one pass; this posts
+in a second pass after all transactions exist. Final state is identical; intermediate state is not,
+and pass 2 is meaningless unless pass 1 completed. **Neither is idempotent across runs** — `ADD ... TO
+ACCT-CURR-BAL` posts again if re-run, exactly as COBOL's `REWRITE` does — stated so "restart-safe" is
+not read as "re-runnable".
+
+**Not claimed.** No real model has written this body; it is scripted, and what is verified is that the
+pipeline generates the step and that the check has teeth. The aggregating reader is infrastructure and
+is **not generated** — the same line PR #44 drew inside `1300-B-WRITE-TX` and ADR-0026 drew for job
+parameters. **The round-trip metric does not move**: `TRAN-ID` is still unpopulated by ADR-0026's
+decision, so `CBACT04C`'s transaction record remains incomplete.
+
 ### G29's open half — job parameters reach a rendered processor (ADR-0026)
 
 **The dead end this closes.** PR #45 made `LocalDateTime.now()` in a generated body a refusal, and
