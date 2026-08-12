@@ -1741,6 +1741,92 @@ repo's design**, not about the model:
 Three of these describe work no step currently owns. They are the natural input to whatever revisits
 `solution_architect`'s step decomposition.
 
+### G29's open half — job parameters reach a rendered processor (ADR-0026)
+
+**The dead end this closes.** PR #45 made `LocalDateTime.now()` in a generated body a refusal, and
+supplied nothing to read instead — so the model was told *don't* with no alternative, and
+`1300-B-WRITE-TX`'s timestamps stayed `null`. Its logic was otherwise generated and correct (PR #44).
+
+**Read from the source rather than assumed**, the three missing fields turned out not to be one
+problem: `PARM-DATE` is `PIC X(10)` in the **LINKAGE SECTION**, arriving via
+`PROCEDURE DIVISION USING EXTERNAL-PARMS` — a job parameter in the COBOL too; `DB2-FORMAT-TS` is
+`FUNCTION CURRENT-DATE` read **per record**; `WS-TRANID-SUFFIX` is `PIC 9(06) VALUE 0` incremented
+per written transaction. `TRAN-ID` is `STRING PARM-DATE, WS-TRANID-SUFFIX` — 10 + 6, exactly filling
+`PIC X(16)` — so it needs the first and the third.
+
+#### The `@StepScope` package was verified by javac, not by memory
+
+```
+pytest tests/system/test_build_validator.py -k job_parameters_actually_compiles
+1 passed in 10.55s
+```
+
+`org.springframework.batch.core.configuration.annotation.StepScope` **does** resolve in Spring
+Batch 6.0.4. Checked before trusting it, because this is precisely where PR #32 was bitten: the
+renderer carried the pre-6 `ItemProcessor` package, every generated processor had an unresolvable
+import, and only compiling one showed it. A rendered package name is a claim about a jar.
+
+#### The claim G29 exists for, run rather than argued
+
+```
+pytest tests/system/test_job_parameter_determinism.py -q
+2 passed in 47.12s          # `mvn verify` — compiles the processor and runs 3 JUnit cases
+```
+
+A real processor is rendered with an injected `runTimestamp`, a JUnit test is rendered around it, and
+both go through real Maven. Green means: the `@StepScope`/`@Value` shape is legal, the injected value
+is readable **from inside the model-authored region**, and the output is stable across instances and
+across calls.
+
+**Shown to discriminate before being trusted**, the discipline step 45 established with its
+`divideRounded` body. Two instances with the *same* parameter must agree; two with *different*
+parameters must **disagree**. Without that third case the first two are vacuous — a body that ignored
+the parameter, or a renderer that silently dropped it, would pass a same-input equality check
+perfectly.
+
+#### Two decisions, both recorded rather than slipped in
+
+**The run timestamp is one per run, and that is a divergence.** COBOL reads the clock per record with
+millisecond precision, so a run spanning a millisecond boundary stamps records differently; one
+supplied instant collapses that. Taken because PR #45's standing rule is that a batch record must be
+reproducible across runs and restarts — but recorded in ADR-0026 as a **known divergence with a
+stated cost**, in ADR-0021's manner, not as an equivalence. It binds at the first byte-for-byte
+record comparison.
+
+**The per-run counter is scoped out, not faked.** An `AtomicLong` is one line away, compiles, reads
+correctly, and is wrong: Spring Batch reprocesses a chunk on restart, so it advances where COBOL's —
+reinitialised to `VALUE 0` — repeats its sequence, and partitioning interleaves it. A real model
+flagged exactly this, unprompted, in the run that produced G29. So `TRAN-ID` stays unpopulated with a
+declared reason rather than holding a plausible wrong value.
+
+#### Also pinned
+
+A step naming a job parameter its job does not declare raises `UnresolvedJobParameterError` rather
+than rendering a constructor argument Spring would bind to `null` — a processor that compiles,
+starts, and writes a record with a hole in it. The resolving case is asserted alongside it, so the
+refusal is not simply *"this never works"*.
+
+A step consuming **no** job parameters renders exactly as before — `@Component`, no `@StepScope`, no
+constructor. Asserted, because a renderer that always emitted the annotation would be invisible until
+someone wondered why every processor was step-scoped.
+
+#### The coverage delta, chased again — and it was the prompt
+
+The local run fell to 98.63%, and the uncovered lines were `render_job_parameter_facts` in full:
+**written, wired, and executed by no test.** G21's shape a sixth time, and the worst place for it —
+a model never told the parameters exist reaches for a clock, `NonDeterministicBodyError` refuses it,
+the field stays null, and the loop is stuck exactly where it started. Closed by asserting through
+the real `build_engineer_prompt` rather than the helper, which is the lesson G21 cost two attempts
+to learn.
+
+CI's run on the change: **792 passed, 8 skipped, 98.87%** — above the 98.85% it started from.
+
+**Not claimed.** No real model has written a body against an injected parameter — the body here is
+scripted, and what is verified is the mechanism. `TRAN-ID` remains unpopulated, so `CBACT04C`'s
+transaction record is still incomplete and **the round-trip metric does not move**. G27's accumulator
+is untouched: `1050-UPDATE-ACCOUNT` needs cross-item state, the same stateless-processor limit reached
+from the other side.
+
 ### G30 closed — the loop repairs a model's own import, and stops blaming the renderer
 
 **The gap, restated as what it actually was.** Step 43's harness found that `unresolved_import` would

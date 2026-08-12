@@ -300,6 +300,47 @@ def test_the_loop_heals_every_injected_error_class(
     assert compile_project(project, goal="compile").succeeded
 
 
+def test_a_step_naming_a_job_parameter_its_job_does_not_declare_fails_loudly():
+    """ADR-0026, and it joins the `UnsupportedPicConstructError` family for a specific reason.
+
+    Rendering the constructor argument anyway would produce a class Spring instantiates with `null`
+    -- a processor that compiles, starts, and writes a record with a hole in it. That is the shape
+    this repo refuses everywhere else, and it is worse here than a missing type would be, because
+    nothing downstream would report it.
+    """
+    from cobol_modernizer.core.contracts import BatchJobDesign, JobParameter
+    from cobol_modernizer.graph.generate_pipeline import (
+        UnresolvedJobParameterError,
+        _resolve_job_parameters,
+    )
+
+    declared = JobParameter(name="parmDate", java_type="String", description="d")
+    step = BatchStepDesign(
+        step_name="s",
+        source_paragraphs=["P"],
+        role="processor",
+        description="d",
+        input_type="A",
+        output_type="B",
+        guard_condition=None,
+        job_parameters=["parmDate", "runTimestamp"],
+    )
+    job = BatchJobDesign(
+        program_name="CBACT04C",
+        job_name="interestJob",
+        domain_entities=[],
+        steps=[step],
+        job_parameters=[declared],
+    )
+
+    with pytest.raises(UnresolvedJobParameterError, match="runTimestamp"):
+        _resolve_job_parameters(job, step)
+
+    # And the resolving case, so the refusal is not simply "this never works".
+    step_ok = step.model_copy(update={"job_parameters": ["parmDate"]})
+    assert _resolve_job_parameters(job, step_ok) == [declared]
+
+
 def test_reading_model_imports_back_out_of_an_unmarked_file_yields_nothing():
     """The "attribution unavailable" case, which the G30 fix introduced and nothing covered.
 

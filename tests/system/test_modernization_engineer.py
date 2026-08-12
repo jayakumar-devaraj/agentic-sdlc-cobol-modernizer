@@ -255,6 +255,84 @@ def test_an_unguarded_step_says_so_rather_than_saying_nothing(program_entry, ent
     assert "return `null`" not in prompt
 
 
+def test_job_parameters_reach_the_real_prompt_not_just_the_helper(
+    program_entry, entities, resolved
+):
+    """ADR-0026, asserted through the real builder — the G21 lesson, sixth application.
+
+    Found by CI's coverage, not by review: `render_job_parameter_facts` was written and wired and
+    **no test executed it**, which is the exact shape that let `render_program_field_facts` ship
+    unreachable. The helper is not the thing that matters; the prompt is. A model that is never told
+    the parameters exist reaches for a clock, which is the whole defect G29 names — and
+    `NonDeterministicBodyError` would then refuse it with no alternative, leaving the field null and
+    the loop stuck.
+    """
+    from cobol_modernizer.core.contracts import JobParameter
+
+    step = STEP.model_copy(update={"job_parameters": ["runTimestamp"]})
+    prompt = build_engineer_prompt(
+        step,
+        entities,
+        program_entry,
+        resolved,
+        input_type="A",
+        output_type="B",
+        job_parameters=[
+            JobParameter(
+                name="runTimestamp",
+                java_type="String",
+                description="The run's DB2-format instant.",
+                source_cobol=None,
+            )
+        ],
+    )
+
+    assert "Job parameters available to this step" in prompt
+    assert "`String runTimestamp`" in prompt
+    assert "The run's DB2-format instant." in prompt
+    # And the counterpart to the refusal, without which the model has a rule and no alternative.
+    assert "rather than a clock" in prompt
+
+
+def test_a_job_parameters_cobol_provenance_reaches_the_prompt(
+    program_entry, entities, resolved
+):
+    # `PARM-DATE` is a real COBOL field in the LINKAGE SECTION, so a reviewer can check the
+    # declaration against the source. The run timestamp has no such field and deliberately carries
+    # none -- ADR-0026 records it as a divergence, and a fabricated provenance would hide that.
+    from cobol_modernizer.core.contracts import JobParameter
+
+    step = STEP.model_copy(update={"job_parameters": ["parmDate"]})
+    prompt = build_engineer_prompt(
+        step,
+        entities,
+        program_entry,
+        resolved,
+        input_type="A",
+        output_type="B",
+        job_parameters=[
+            JobParameter(
+                name="parmDate",
+                java_type="String",
+                description="Run date from JCL.",
+                source_cobol="PARM-DATE",
+            )
+        ],
+    )
+    assert "(COBOL: PARM-DATE)" in prompt
+
+
+def test_a_prompt_for_a_step_taking_no_job_parameters_is_unchanged(
+    program_entry, entities, resolved
+):
+    # Same reasoning as the composites case below: most steps consume nothing from the invocation,
+    # and a heading that says nothing costs every prompt in the run and breaks the shared prefix.
+    prompt = build_engineer_prompt(
+        STEP, entities, program_entry, resolved, input_type="A", output_type="B"
+    )
+    assert "Job parameters available to this step" not in prompt
+
+
 def test_a_prompt_without_composites_is_unchanged(program_entry, entities, resolved):
     # Most steps take a plain entity. The composite section must not appear then, or every prompt
     # pays for a heading that says nothing -- and the shared prefix is the thing caching depends on.

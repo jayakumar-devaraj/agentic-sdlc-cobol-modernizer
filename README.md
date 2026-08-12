@@ -270,7 +270,7 @@ Milestone C4.
 ./.venv/Scripts/python -m pytest --cov=cobol_modernizer --cov-report=term-missing --cov-fail-under=90
 ```
 
-783 tests passing (8 skipped — the opt-in live-CLI tests), 98.85% coverage — CI's own numbers from
+792 tests passing (8 skipped — the opt-in live-CLI tests), 98.87% coverage — CI's own numbers from
 the run on this change, not a local approximation of them. The Postgres-backed
 `tools/knowledge_store.py` suite is included and skips nothing there, because CI provides a real
 service container. The target template's own 20 Java tests are not in that

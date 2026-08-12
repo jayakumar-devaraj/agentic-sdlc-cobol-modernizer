@@ -90,6 +90,43 @@ def test_duplicate_imports_collapse():
     assert source.count("import java.math.BigDecimal;") == 1
 
 
+def test_a_step_taking_no_job_parameters_renders_exactly_as_before():
+    """The common case must not pay for ADR-0026.
+
+    Most steps consume nothing from the invocation, and a `@StepScope` bean is more expensive and
+    more surprising than a singleton. Asserted rather than assumed because the change is in the
+    shared template path — a renderer that always emitted the annotation would be invisible until
+    someone wondered why every processor was step-scoped.
+    """
+    source = _render(body_imports=[])
+    assert "@Component" in source
+    assert "@StepScope" not in source
+    assert "@Value" not in source
+    assert "public ComputeMonthlyInterestProcessor(" not in source
+
+
+def test_a_step_taking_job_parameters_gets_them_as_final_fields():
+    from cobol_modernizer.core.contracts import JobParameter
+
+    source = _render(
+        job_parameters=[
+            JobParameter(
+                name="parmDate",
+                java_type="String",
+                description="Run date from JCL.",
+                source_cobol="PARM-DATE",
+            )
+        ]
+    )
+    assert "@StepScope" in source
+    assert "private final String parmDate;" in source
+    assert "@Value(\"#{jobParameters['parmDate']}\") String parmDate" in source
+    assert "this.parmDate = parmDate;" in source
+    # The framework imports the annotations need are rendered, not left to the model.
+    assert "import org.springframework.batch.core.configuration.annotation.StepScope;" in source
+    assert "import org.springframework.beans.factory.annotation.Value;" in source
+
+
 # --- G30: the file states which imports the model supplied ----------------------------------------
 
 
