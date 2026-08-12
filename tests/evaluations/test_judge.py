@@ -305,13 +305,44 @@ def test_a_judge_that_fails_everything_scores_perfect_detection_and_is_still_wro
 
 
 def test_a_judge_that_finds_the_defect_and_invents_another_is_not_correct():
+    # `guard_applied` deliberately: `interest_rounds` applies its guard correctly and does not list
+    # that criterion as impure, so a `fail` on it is a genuine false positive. Using
+    # `fixed_width_text` here would not be -- the carrier record really is short, which is what
+    # `impure_criteria` records.
     case = CASES_BY_NAME["interest_rounds"]
+    result = score_case(
+        case, parse_judge_response(_response(arithmetic_mode="fail", guard_applied="fail"))
+    )
+    assert result.caught is True
+    assert result.false_positives == ("guard_applied",)
+    assert not result.correct
+
+
+def test_a_criterion_a_case_genuinely_violates_is_not_counted_against_the_judge():
+    """The correction the second billed run forced, in one assertion.
+
+    The interest bodies carry an intermediate `Tran` with `""` in a `PIC X(16)` field. A judge that
+    flags that is **right about the code**, and counting it as a false positive would report the
+    corpus's impurity as the judge's error -- which is what the second Opus run did.
+    """
+    case = CASES_BY_NAME["interest_rounds"]
+    assert "fixed_width_text" in case.impure_criteria
     result = score_case(
         case, parse_judge_response(_response(arithmetic_mode="fail", fixed_width_text="fail"))
     )
-    assert result.caught is True
-    assert result.false_positives == ("fixed_width_text",)
-    assert not result.correct
+    assert result.false_positives == ()
+    assert result.correct
+
+
+@pytest.mark.parametrize("case", CASES, ids=[c.name for c in CASES])
+def test_a_case_can_never_declare_its_own_defect_impure(case):
+    """The guard that stops `impure_criteria` becoming a way to hide a miss.
+
+    Excluding a criterion from false-positive counting is a statement about the *specimen*. Allowing
+    a case to exclude the criterion it exists to fail would let a defect be marked unscoreable, which
+    is the one thing this field must never be able to do.
+    """
+    assert case.failing_criterion not in case.impure_criteria
 
 
 def test_a_faithful_case_is_never_counted_as_a_miss():

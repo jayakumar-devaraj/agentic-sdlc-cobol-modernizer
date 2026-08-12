@@ -284,16 +284,22 @@ class CaseResult:
     def false_positives(self) -> tuple[str, ...]:
         """Criteria the judge failed that this case does not violate.
 
-        Every case in the corpus isolates exactly one defect, so any *other* `FAIL` is the judge
-        flagging correct code. That is the number § 4b of the feasibility assessment says decides the
-        economics: human review is three to four orders of magnitude above inference cost, so a judge
-        that cries wolf sends work to the expensive place. A harness that only counted misses would
-        rate such a judge perfect.
+        That is the number § 4b of the feasibility assessment says decides the economics: human
+        review is three to four orders of magnitude above inference cost, so a judge that cries wolf
+        sends work to the expensive place. A harness that only counted misses would rate such a judge
+        perfect.
+
+        **`impure_criteria` are excluded, and that is a correction rather than an excuse.** This
+        metric scores the judge against the corpus, so a criterion a case genuinely violates would
+        otherwise be counted as the judge's error when it is the corpus's. Twice the judge failed a
+        body labelled faithful and was right about the code. A case may never list the criterion it
+        is supposed to fail, so this cannot hide a miss -- only a known impurity.
         """
+        excluded = {self.case.failing_criterion, *self.case.impure_criteria}
         return tuple(
             criterion_id
             for criterion_id, verdict in sorted(self.verdicts.items())
-            if verdict is Verdict.FAIL and criterion_id != self.case.failing_criterion
+            if verdict is Verdict.FAIL and criterion_id not in excluded
         )
 
     @property
@@ -311,15 +317,40 @@ def score_case(case: EvalCase, answer: JudgeAnswer) -> CaseResult:
     return CaseResult(case=case, answer=answer)
 
 
-def _default_adjudicate(system_prompt: str, user_content: str) -> str:
-    return call_model(
-        _NODE_NAME,
-        JUDGE_MODEL,
-        system_prompt,
-        user_content,
-        effort=JUDGE_EFFORT,
-        backend="claude_cli",
-    ).text
+#: Models this corpus is used to compare. The pin above is the one in force; these are the ones a
+#: benchmark run measures against it.
+#:
+#: **`spec_critic`'s precedent is the whole reason this list exists.** ADR-0004 assigned it a cheaper
+#: tier and flagged the choice to revisit empirically; the revisit ran the same corrupted narration
+#: past both models and found Haiku matched Opus's detection at 2.3x lower cost, which is what turned
+#: an assumption into a pin. ADR-0024 says outright that this judge's Opus pin is scaffolding until
+#: the same measurement exists here.
+CANDIDATE_JUDGES = ("claude-opus-5", "claude-haiku-4-5-20251001")
+
+
+def adjudicator_for(model: str) -> AdjudicateFn:
+    """A live adjudicator bound to `model` -- the seam a benchmark parametrises over.
+
+    The model is passed rather than read from `JUDGE_MODEL` so that comparing candidates does not
+    require mutating the pin. A benchmark that had to reassign the module constant would leave the
+    instrument in a different state depending on which test ran last, which is exactly the drift the
+    pin exists to prevent.
+    """
+
+    def adjudicate(system_prompt: str, user_content: str) -> str:
+        return call_model(
+            _NODE_NAME,
+            model,
+            system_prompt,
+            user_content,
+            effort=JUDGE_EFFORT,
+            backend="claude_cli",
+        ).text
+
+    return adjudicate
+
+
+_default_adjudicate = adjudicator_for(JUDGE_MODEL)
 
 
 def judge_case(
@@ -342,6 +373,11 @@ class BenchmarkSummary:
     """
 
     results: tuple[CaseResult, ...]
+    #: Which judge produced these. Carried on the summary rather than tracked by the caller, because
+    #: a result without its model is not a measurement of anything -- and once the benchmark compares
+    #: candidates, an assertion message naming the *pinned* model while reporting a candidate's score
+    #: is worse than no message.
+    model: str = ""
 
     def _subset(
         self, *, ground: Ground | None = None, defective: bool | None = None
