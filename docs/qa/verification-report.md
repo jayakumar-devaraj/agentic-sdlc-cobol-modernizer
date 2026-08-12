@@ -1810,6 +1810,17 @@ A step consuming **no** job parameters renders exactly as before — `@Component
 constructor. Asserted, because a renderer that always emitted the annotation would be invisible until
 someone wondered why every processor was step-scoped.
 
+#### The coverage delta, chased again — and it was the prompt
+
+The local run fell to 98.63%, and the uncovered lines were `render_job_parameter_facts` in full:
+**written, wired, and executed by no test.** G21's shape a sixth time, and the worst place for it —
+a model never told the parameters exist reaches for a clock, `NonDeterministicBodyError` refuses it,
+the field stays null, and the loop is stuck exactly where it started. Closed by asserting through
+the real `build_engineer_prompt` rather than the helper, which is the lesson G21 cost two attempts
+to learn.
+
+CI's run on the change: **792 passed, 8 skipped, 98.87%** — above the 98.85% it started from.
+
 **Not claimed.** No real model has written a body against an injected parameter — the body here is
 scripted, and what is verified is the mechanism. `TRAN-ID` remains unpopulated, so `CBACT04C`'s
 transaction record is still incomplete and **the round-trip metric does not move**. G27's accumulator
