@@ -6,6 +6,18 @@
 the metric was adopted and never stated: **what would have to be true for `0 of 4` to become
 `1 of 4`?**
 
+> **How this gets decided, because it is the first ADR here to be Proposed rather than Accepted.**
+> The pull request carrying this file **is** the decision request: approving it accepts the decision,
+> requesting changes rejects or amends it, and the Status line is flipped to `Accepted` (or
+> `Rejected`, with the reasoning kept) on this branch **before** merge. So `main` only ever holds
+> settled ADRs, and the approval lives in the repository's own audit trail rather than in a
+> conversation.
+>
+> Worth stating once: every other ADR here was written `Accepted` because it recorded a decision
+> already taken while building. This one asks for a decision that has not been taken, which is why it
+> needed a mechanism at all — and a platform whose thesis is durable human approval gates had none
+> for its own decisions.
+
 Depends on [ADR-0021](0021-a-hand-computed-oracle-for-the-interest-equivalence-test.md), whose
 refused option (a) turns out to be the binding constraint, and on
 [ADR-0019](0019-postgresql-persistence-and-a-bounded-generate-scope-for-card-service.md)'s
