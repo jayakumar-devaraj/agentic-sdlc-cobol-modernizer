@@ -2,9 +2,16 @@
 
 ## Status
 
-**Proposed** (2026-08-12). Does not close a gap. It answers a question that has been implicit since
-the metric was adopted and never stated: **what would have to be true for `0 of 4` to become
-`1 of 4`?**
+**Accepted** (2026-08-12), via the decision request in PR #54 — the first ADR here to be approved
+rather than recorded after the fact. Does not close a gap. It answers a question that has been
+implicit since the metric was adopted and never stated: **what would have to be true for `0 of 4` to
+become `1 of 4`?**
+
+**One thing acceptance does *not* settle**, flagged so the spike does not decide it by default:
+whether the comparison against the recorded oracle is **byte-for-byte or field-for-field**. Finding 4
+argues byte-fidelity is where the work has been heading; the decision here is to obtain the oracle,
+and the first thing the spike must do is state which comparison it performs and why. A spike that
+diffs whole files without saying so has answered the question by accident.
 
 > **How this gets decided, because it is the first ADR here to be Proposed rather than Accepted.**
 > The pull request carrying this file **is** the decision request: approving it accepts the decision,
