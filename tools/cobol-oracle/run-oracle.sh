@@ -1,102 +1,85 @@
 #!/bin/sh
 # Produce CBACT04C's own output, once, so it can be committed as a fixture (ADR-0028).
 #
-# Runs inside the pinned image (see Dockerfile). Everything here is deliberately explicit rather
-# than convenient: the value of the oracle is that a reader can see exactly what produced it.
+# **Two stages, and the first is not optional.** The shipped tcatbal.txt is the *pre-posting* state:
+# CBTRN02C writes it with `ADD DALYTRAN-AMT TO TRAN-CAT-BAL` (audit R2.9). Run CBACT04C against it
+# directly and every TRAN-CAT-BAL is zero, so every interest amount is zero and the oracle would pass
+# for any implementation returning zero -- measured, not predicted: the first run of this script did
+# exactly that. So stage 1 posts the daily transactions, and stage 2 computes interest on the result.
 #
-# Expects, mounted read-only:
-#   /src   the tenant repo's app/ tree (cbl, cpy, data/ASCII)
-# Writes:
-#   /out   the oracle and its provenance
+# Both programs run UNMODIFIED. Everything here is conversion of the corpus's *text representation*
+# into the record formats the programs were written against, never a change to a program.
+#
+# Expects, mounted read-only:  /src   the tenant repo's app/ tree (cbl, cpy, data/ASCII)
+#                              /co    this directory
+# Writes:                      /out   the oracle and its provenance
 set -eu
 
 SRC=/src
 OUT=/out
+CO=/co
 WORK=/work
 
 mkdir -p "$OUT" "$WORK/idx"
-
-# --- compile -----------------------------------------------------------------------------------
-# CBACT04C is compiled as a *module* (-m) because it is CALLed by the driver, not run directly.
-# -std=ibm because this is IBM Enterprise COBOL source; GnuCOBOL's default dialect is its own, and
-# the difference is exactly the kind of thing an oracle must not silently absorb.
 cd "$WORK"
-cobc -m -std=ibm -I "$SRC/cpy" "$SRC/cbl/CBACT04C.cbl"
-cobc -x -std=ibm "$SRC/../tools/cobol-oracle/RUNCB04.cbl" -o runcb04
-cobc -x -std=ibm "$SRC/../tools/cobol-oracle/LOADIDX.cbl" -o loadidx
 
-# --- load: flat text -> indexed ------------------------------------------------------------------
-# Four of CBACT04C's five files are ORGANIZATION IS INDEXED and the corpus ships flat text, so the
-# program cannot be pointed at the data as it ships. See LOADIDX.cbl.
+# --- compile ------------------------------------------------------------------------------------
+# The two tenant programs are compiled as modules (-m) because CBACT04C is CALLed by a driver.
+# -std=ibm because this is IBM Enterprise COBOL source; GnuCOBOL's own dialect is the default, and
+# the difference is exactly what an oracle must not silently absorb.
+cobc -m -std=ibm -I "$SRC/cpy" "$SRC/cbl/CBACT04C.cbl"
+cobc -x -std=ibm -I "$SRC/cpy" "$SRC/cbl/CBTRN02C.cbl" -o cbtrn02c
+cobc -x -std=ibm "$CO/RUNCB04.cbl"  -o runcb04
+cobc -x -std=ibm "$CO/LOADIDX.cbl"  -o loadidx
+cobc -x -std=ibm "$CO/DALYCONV.cbl" -o dalyconv
+
+# --- file mapping -------------------------------------------------------------------------------
+# Every ASSIGN is an environment name; CLAUDE.md forbids machine paths in committed files.
 export dd_TCBIN="$SRC/data/ASCII/tcatbal.txt"
 export dd_XRFIN="$SRC/data/ASCII/cardxref.txt"
 export dd_ACCIN="$SRC/data/ASCII/acctdata.txt"
 export dd_DISIN="$SRC/data/ASCII/discgrp.txt"
+export dd_DLYIN="$SRC/data/ASCII/dailytran.txt"
 
-export dd_TCATBALF="$WORK/idx/tcatbal"
+export dd_TCATBALF="$WORK/idx/tcatbal"      # shared: CBTRN02C writes it, CBACT04C reads it
 export dd_XREFFILE="$WORK/idx/cardxref"
-export dd_ACCTFILE="$WORK/idx/acctdata"
+export dd_ACCTFILE="$WORK/idx/acctdata"     # shared: both programs rewrite it
 export dd_DISCGRP="$WORK/idx/discgrp"
-export dd_TRANSACT="$OUT/transact.dat"
+export dd_DALYTRAN="$WORK/dailytran.seq"
+export dd_TRANFILE="$WORK/idx/tranmaster"   # CBTRN02C's transaction master (OPEN OUTPUT)
+export dd_DALYREJS="$OUT/dalyrejs.txt"
+export dd_TRANSACT="$OUT/transact.dat"      # CBACT04C's interest transactions -- the oracle
 
+# --- load: the corpus's text into the record formats the programs expect --------------------------
 ./loadidx
+./dalyconv
 
-# --- run the unmodified program ------------------------------------------------------------------
-# COB_FILE_FORMAT is left at its default on purpose: nothing here should coax the runtime into a
-# behaviour the program did not ask for.
+# --- stage 1: post the daily transactions (CBTRN02C) ---------------------------------------------
+# This is what turns tcatbal from the pre-posting state into balances interest can be computed on.
+echo "--- stage 1: CBTRN02C ---"
+./cbtrn02c || echo "CBTRN02C returned non-zero: $?"
+
+# --- stage 2: compute interest (CBACT04C), unmodified --------------------------------------------
+echo "--- stage 2: CBACT04C ---"
 ./runcb04 || echo "CBACT04C returned non-zero: $?"
 
-# --- capture the account file too ----------------------------------------------------------------
-# CBACT04C REWRITEs ACCOUNT-FILE, so the posted balances are an output as much as the transaction
-# file is. Unloaded back to flat text so the fixture is diffable and reviewable.
-cat > unload.cbl <<'UNLOAD'
-       IDENTIFICATION DIVISION.
-       PROGRAM-ID. UNLOAD.
-       ENVIRONMENT DIVISION.
-       INPUT-OUTPUT SECTION.
-       FILE-CONTROL.
-           SELECT ACC-IN ASSIGN TO ACCTFILE
-                  ORGANIZATION IS INDEXED
-                  ACCESS MODE IS SEQUENTIAL
-                  RECORD KEY IS ACC-KEY.
-           SELECT ACC-OUT ASSIGN TO ACCOUT
-                  ORGANIZATION IS LINE SEQUENTIAL.
-       DATA DIVISION.
-       FILE SECTION.
-       FD  ACC-IN.
-       01  ACC-REC.
-           05 ACC-KEY  PIC X(11).
-           05 ACC-DATA PIC X(289).
-       FD  ACC-OUT.
-       01  ACC-O       PIC X(300).
-       WORKING-STORAGE SECTION.
-       01  WS-EOF PIC X VALUE "N".
-       PROCEDURE DIVISION.
-       MAIN-PARA.
-           OPEN INPUT ACC-IN
-           OPEN OUTPUT ACC-OUT
-           PERFORM UNTIL WS-EOF = "Y"
-              READ ACC-IN
-                 AT END MOVE "Y" TO WS-EOF
-                 NOT AT END
-                    MOVE ACC-REC TO ACC-O
-                    WRITE ACC-O
-              END-READ
-           END-PERFORM
-           CLOSE ACC-IN ACC-OUT
-           GOBACK.
-UNLOAD
-cobc -x -std=ibm unload.cbl -o unload
-export dd_ACCOUT="$OUT/acctdata-posted.txt"
-./unload
+# --- unload the rewritten account file ------------------------------------------------------------
+# CBACT04C REWRITEs ACCOUNT-FILE, so posted balances are an output as much as the transactions are.
+# Written as fixed-length SEQUENTIAL, not LINE SEQUENTIAL: the first version of this script used
+# LINE SEQUENTIAL and GnuCOBOL trimmed trailing spaces, so a 300-byte record came out ~113 bytes and
+# every field after the last non-blank was lost.
+cobc -x -std=ibm "$CO/UNLOADAC.cbl" -o unloadac
+export dd_ACCOUT="$OUT/acctdata-posted.dat"
+./unloadac
 
-# --- provenance ----------------------------------------------------------------------------------
+# --- provenance ------------------------------------------------------------------------------------
 # ADR-0028 requires the fixture to carry what produced it. Written by the run, not by hand, so it
 # cannot drift from the artifact beside it.
 {
   echo "# CBACT04C oracle - provenance"
   echo
-  echo "Produced by tools/cobol-oracle/run-oracle.sh inside the pinned image."
+  echo "Produced by tools/cobol-oracle/run-oracle.sh inside the pinned image (see Dockerfile)."
+  echo "**Both tenant programs run unmodified.** Only the corpus's text representation is converted."
   echo
   echo "- cobc: $(cobc --version | head -1)"
   echo "- indexed handler: $(cobc --info | grep -i 'indexed file handler' | tr -s ' ')"
@@ -104,22 +87,30 @@ export dd_ACCOUT="$OUT/acctdata-posted.txt"
   echo "- PARM-DATE: 2026-08-12 (fixed; see RUNCB04.cbl)"
   echo "- generated: $(date -u +%Y-%m-%dT%H:%M:%SZ)"
   echo
+  echo "## Pipeline"
+  echo "1. CBTRN02C posts dailytran into tcatbal (the shipped tcatbal is the PRE-posting state)."
+  echo "2. CBACT04C computes interest on the posted balances and writes transact.dat."
+  echo
   echo "## Input blob hashes (sha256)"
-  for f in tcatbal cardxref acctdata discgrp; do
+  for f in tcatbal cardxref acctdata discgrp dailytran; do
     echo "- $f.txt  $(sha256sum "$SRC/data/ASCII/$f.txt" | cut -d' ' -f1)"
   done
   echo
   echo "## Output"
-  echo "- transact.dat          $(wc -c < "$OUT/transact.dat") bytes"
-  echo "- acctdata-posted.txt   $(wc -c < "$OUT/acctdata-posted.txt") bytes"
+  for f in transact.dat acctdata-posted.dat dalyrejs.txt; do
+    [ -f "$OUT/$f" ] && echo "- $f  $(wc -c < "$OUT/$f") bytes  sha256 $(sha256sum "$OUT/$f" | cut -d' ' -f1)"
+  done
   echo
   echo "## Known-unverified against IBM Enterprise COBOL"
-  echo "GnuCOBOL is not the tenant's compiler. Three behaviours are NOT corroborated by the"
-  echo "hand-derived oracle in ADR-0021 and must be treated as findings rather than failures"
-  echo "if they disagree: FUNCTION CURRENT-DATE formatting, STRING ... DELIMITED BY SIZE padding"
-  echo "at the edges, and the sign of zero. The interest arithmetic IS corroborated -- it matches"
-  echo "ADR-0021's hand-computed values independently."
+  echo "GnuCOBOL is not the tenant's compiler. These are NOT corroborated by ADR-0021's"
+  echo "hand-derived values and must be read as findings rather than failures if they disagree:"
+  echo "FUNCTION CURRENT-DATE formatting; STRING ... DELIMITED BY SIZE padding at the edges;"
+  echo "the sign of zero; and the zoned-decimal sign representation on REWRITE -- the first run"
+  echo "turned an input overpunch of 940{ into 9400, identical in value and different in bytes,"
+  echo "which is why ADR-0029 compares fields rather than bytes."
+  echo
+  echo "The interest arithmetic IS independently corroborated: it must match ADR-0021's"
+  echo "hand-computed table, which was derived from the COBOL by a human without running it."
 } > "$OUT/PROVENANCE.md"
 
 echo "--- done ---"
-cat "$OUT/PROVENANCE.md"
