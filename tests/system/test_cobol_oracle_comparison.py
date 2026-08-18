@@ -321,3 +321,55 @@ def test_the_fixture_carries_its_provenance():
     # The producing programs are inputs too; without their hashes an edited program leaves a stale
     # fixture with no signal.
     assert "CBACT04C.cbl" in text and "CBTRN02C.cbl" in text
+
+
+# --- the comparison's input, captured because it exists only inside the run ------------------------
+
+TCATBAL_POSTED = ORACLE_DIR / "tcatbal-posted.dat"
+TCATBAL_RECORD_LEN = 50
+TCATBAL_POSTED_RECORDS = 94
+
+
+def test_the_posted_input_fixture_exists_and_is_whole():
+    """The state *between* the two stages, without which nothing can be compared.
+
+    The shipped `tcatbal.txt` is the pre-posting state (audit R2.9); CBTRN02C overwrites it and
+    CBACT04C computes interest on the result. Those balances existed only inside the container. A
+    candidate started from the shipped file instead would compute zero interest and fail against this
+    oracle for a reason that has nothing to do with the code under test.
+    """
+    raw = TCATBAL_POSTED.read_bytes()
+    assert len(raw) % TCATBAL_RECORD_LEN == 0
+    assert len(raw) // TCATBAL_RECORD_LEN == TCATBAL_POSTED_RECORDS
+
+
+def test_the_posted_input_is_not_the_shipped_pre_posting_state():
+    """94 records, not the 50 that were loaded -- and the difference is real program behaviour.
+
+    CBTRN02C creates a balance row whenever a daily transaction posts to an (account, type, category)
+    combination that has none: exactly 44 of them, so 50 + 44 = 94. Asserting the 50 I assumed failed
+    immediately; asserting nothing would have shipped a fixture missing 44 of its 94 rows.
+    """
+    raw = TCATBAL_POSTED.read_bytes().decode("latin-1")
+    balances = {
+        raw[i * TCATBAL_RECORD_LEN + 17 : i * TCATBAL_RECORD_LEN + 28]
+        for i in range(TCATBAL_POSTED_RECORDS)
+    }
+    assert len(balances) == TCATBAL_POSTED_RECORDS, (
+        "posted balances should all differ; a repeat suggests a bad unload"
+    )
+    # Exactly one row is still zero, which is why exactly one interest amount is 0.00.
+    assert sum(1 for b in balances if b == "0000000000{") == 1
+
+
+def test_the_guard_is_exercised_by_this_data():
+    """94 balance rows produce 50 transactions, so `IF DIS-INT-RATE NOT = 0` really fires.
+
+    Worth pinning: a candidate ignoring the guard would emit 94 records and fail the record-count
+    check, which means this fixture tests ADR-0022's guard against real data rather than against the
+    single hand-written row the oracle table carries.
+    """
+    posted = TCATBAL_POSTED.stat().st_size // TCATBAL_RECORD_LEN
+    written = len(load_oracle())
+    assert (posted, written) == (TCATBAL_POSTED_RECORDS, 50)
+    assert written < posted, "if every balance produced a transaction the guard would be untested"

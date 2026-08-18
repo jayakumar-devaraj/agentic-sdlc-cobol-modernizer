@@ -118,6 +118,23 @@ cobc -x -std=ibm "$CO/UNLOADAC.cbl" -o unloadac
 export dd_ACCOUT="$OUT/acctdata-posted.dat"
 ./unloadac
 
+# --- unload the POSTED tcatbal, which is the comparison's input ------------------------------------
+# The balances CBACT04C computed interest from exist only inside this run: the shipped tcatbal.txt is
+# the pre-posting state, and stage 1 wrote over it. Without capturing them, anything compared against
+# this oracle would have to start from zeros, compute zero interest, and fail for a reason that is
+# not about the code under test -- a red result that looks like a translation defect and is really a
+# fixture nobody captured.
+cobc -x -std=ibm "$CO/UNLOADTC.cbl" -o unloadtc
+export dd_TCBOUT="$OUT/tcatbal-posted.dat"
+./unloadtc | tee -a load.log
+# **94, not 50, and the count assertion is what found that.** CBTRN02C does not only update existing
+# balance rows -- it CREATES a row whenever a daily transaction posts to an (account, type, category)
+# combination that has none, logging "TCATBAL record not found ... Creating." It creates exactly 44,
+# so 50 loaded + 44 created = 94. Asserting the number I assumed would have been true (50) failed
+# immediately; asserting nothing would have shipped a fixture missing 44 of its 94 rows, and the
+# comparison built on it would have failed against records the candidate was never given.
+expect_count "TCATBALF unloaded" 94
+
 # --- provenance ------------------------------------------------------------------------------------
 # ADR-0028 requires the fixture to carry what produced it. Written by the run, not by hand, so it
 # cannot drift from the artifact beside it.
@@ -137,6 +154,9 @@ export dd_ACCOUT="$OUT/acctdata-posted.dat"
   echo "1. CBTRN02C posts dailytran into tcatbal (the shipped tcatbal is the PRE-posting state)."
   echo "2. CBACT04C computes interest on the posted balances and writes transact.dat."
   echo
+  echo "tcatbal-posted.dat is the state *between* the two stages -- the input any"
+  echo "candidate implementation must start from to be comparable with transact.dat."
+  echo
   echo "## Input blob hashes (sha256)"
   for f in tcatbal cardxref acctdata discgrp dailytran; do
     echo "- $f.txt  $(sha256sum "$SRC/data/ASCII/$f.txt" | cut -d' ' -f1)"
@@ -153,7 +173,7 @@ export dd_ACCOUT="$OUT/acctdata-posted.dat"
   echo "- CBTRN02C: $(grep -h TRANSACTIONS stage1.log | tr -s ' ' | paste -sd'; ' -)"
   echo
   echo "## Output"
-  for f in transact.dat acctdata-posted.dat dalyrejs.txt; do
+  for f in transact.dat acctdata-posted.dat tcatbal-posted.dat dalyrejs.txt; do
     [ -f "$OUT/$f" ] && echo "- $f  $(wc -c < "$OUT/$f") bytes  sha256 $(sha256sum "$OUT/$f" | cut -d' ' -f1)"
   done
   echo
