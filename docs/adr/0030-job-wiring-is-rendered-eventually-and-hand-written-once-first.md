@@ -2,7 +2,7 @@
 
 ## Status
 
-**Proposed** (2026-08-18). Addresses gap **G31**. Decided through this pull request, per the
+**Accepted** (2026-08-18), via the decision request in PR #57. Addresses gap **G31**. Decided through this pull request, per the
 mechanism [ADR-0028](0028-what-the-round-trip-metric-requires-and-why-it-has-not-moved.md)
 established: approving accepts, requesting changes rejects or amends, and the Status flips before
 merge.
