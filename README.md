@@ -67,7 +67,12 @@ What that does **not** yet amount to: it is **one `COMPUTE` of one program**, no
 `CBACT04C` is also a rate lookup, a `'DEFAULT'` fallback, a per-account accumulation and an account
 update, and generating a stateful control-break writer is out of scope (ADR-0019). Nothing has been
 written to the real `card-service` repository. **No program round-trips** — COBOL to compiling Java
-to a passing differential test — and that count is `0 of 4`. Step 40a's loader
+to a passing differential test — and that count is `0 of 4`. What changed is that the missing half is
+now the *test*, not the code: `tests/fixtures/golden/CBACT04C/oracle/` holds what the **unmodified**
+`CBACT04C` wrote under GnuCOBOL over the shipped corpus (`docs/adr/0028`), reproduced by
+`tools/cobol-oracle/`, and `docs/adr/0029`'s field-level comparison is built and shown to
+discriminate. It has no generated-Java candidate to compare yet, because nothing renders readers,
+writers or job configuration — so the generated project cannot run as a batch job. Step 40a's loader
 (`tools/data_loader.py`) reads CardDemo's fixed-width files into PostgreSQL with
 `pic_mapper`-derived types; its finding that every `TRAN-CAT-BAL` in the shipped data is zero turned
 out to be a property of *that* file rather than the corpus — `dailytran.txt` carries 299 distinct
@@ -75,10 +80,13 @@ signed amounts, and the zeros are the state before posting has run.
 **Retrieval is not wired**: `tools/knowledge_store.py` is a real,
 tested pgvector storage layer with no production caller, because embeddings need a second vendor
 this environment has no credential for — and because nobody has shown retrieval would help a
-four-program corpus (`docs/adr/0016` decides both halves of that). And **output quality is only
-spot-measured**: real `design` runs against real models have happened, and two benchmarks scored
-their output by hand, but that is four programs' worth of evidence, not a standing evaluation
-harness.
+four-program corpus (`docs/adr/0016` decides both halves of that). And **output quality is evaluated by an
+instrument that is not yet reliable**: `tests/evaluations/` scores model-authored bodies against a
+committed corpus (`docs/adr/0024`), and across three billed runs `claude-opus-5` has never missed a
+defect a real JVM catches — but its false-positive rate is *not stable*, scoring 0.00 on one run and
+0.50 on another over identical input. Twice its disagreements turned out to be correct about the
+code rather than about the judge, so the corpus now declares which criteria each case is a clean
+specimen for.
 
 ### How this repo fits in the platform
 
