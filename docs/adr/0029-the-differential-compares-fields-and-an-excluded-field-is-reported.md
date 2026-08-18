@@ -2,7 +2,7 @@
 
 ## Status
 
-**Proposed** (2026-08-12). Settles the two questions
+**Accepted** (2026-08-12), via the decision request in PR #55. Settles the two questions
 [ADR-0028](0028-what-the-round-trip-metric-requires-and-why-it-has-not-moved.md) accepted without
 answering, and does so **before** the spike rather than by it — a spike that diffs whole files
 without saying so has decided the first question by accident, which is the drift ADR-0028's finding 4
