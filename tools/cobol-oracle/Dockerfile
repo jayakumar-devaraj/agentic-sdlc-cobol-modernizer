@@ -9,7 +9,10 @@
 # argument is that ADR-0021 refused a COBOL runtime on objections about running it *continuously*,
 # and that none of them apply to running it once. The artifact is the oracle; this is scaffolding
 # that produced it, kept so the oracle can be regenerated and its provenance checked.
-FROM ubuntu:24.04
+# Pinned by digest: `ubuntu:24.04` is a moving tag, and an oracle regenerated against a different
+# gnucobol build is a different oracle. The BDB assertion below catches a missing handler; only the
+# digest catches a changed compiler.
+FROM ubuntu@sha256:561618e2c15bf2397621dd04f96926663a3b5616c189cf7e38db7e82f5c538ea
 
 RUN apt-get update -qq \
  && DEBIAN_FRONTEND=noninteractive apt-get install -y -qq --no-install-recommends gnucobol3 \

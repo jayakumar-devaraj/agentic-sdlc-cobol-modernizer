@@ -37,7 +37,7 @@
                   ORGANIZATION IS INDEXED
                   ACCESS MODE  IS SEQUENTIAL
                   RECORD KEY   IS XRF-O-CARD
-                  ALTERNATE RECORD KEY IS XRF-O-ACCT WITH DUPLICATES
+                  ALTERNATE RECORD KEY IS XRF-O-ACCT
                   FILE STATUS  IS ST-OUT.
 
            SELECT ACC-IN  ASSIGN TO ACCIN
@@ -124,6 +124,7 @@
                     PERFORM CHECK-OUT
                     ADD 1 TO WS-COUNT
               END-READ
+              PERFORM CHECK-IN
            END-PERFORM
            CLOSE TCB-IN TCB-OUT
            MOVE WS-COUNT TO WS-DISP
@@ -148,6 +149,7 @@
                     PERFORM CHECK-OUT
                     ADD 1 TO WS-COUNT
               END-READ
+              PERFORM CHECK-IN
            END-PERFORM
            CLOSE XRF-IN XRF-OUT
            MOVE WS-COUNT TO WS-DISP
@@ -168,6 +170,7 @@
                     PERFORM CHECK-OUT
                     ADD 1 TO WS-COUNT
               END-READ
+              PERFORM CHECK-IN
            END-PERFORM
            CLOSE ACC-IN ACC-OUT
            MOVE WS-COUNT TO WS-DISP
@@ -188,13 +191,18 @@
                     PERFORM CHECK-OUT
                     ADD 1 TO WS-COUNT
               END-READ
+              PERFORM CHECK-IN
            END-PERFORM
            CLOSE DIS-IN DIS-OUT
            MOVE WS-COUNT TO WS-DISP
            DISPLAY "DISCGRP  loaded: " WS-DISP.
 
       * A load that half-worked would produce an oracle nobody could
-      * trust, so every status is checked and any failure stops the run.
+      * trust, so every status is checked and any failure stops the run --
+      * including inside the READ loops. Without that, a status that is
+      * neither 00 nor 10 runs neither the AT END nor the NOT AT END
+      * branch, WS-EOF is never set, and the PERFORM UNTIL spins forever:
+      * the container hangs where it should have failed loudly.
        CHECK-IN.
            IF ST-IN NOT = "00" AND ST-IN NOT = "10"
               DISPLAY "INPUT FILE STATUS " ST-IN

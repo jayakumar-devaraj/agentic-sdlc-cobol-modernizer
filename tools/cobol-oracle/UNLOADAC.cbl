@@ -34,7 +34,7 @@
        01  ST-IN        PIC XX.
        01  ST-OUT       PIC XX.
        01  WS-EOF       PIC X VALUE "N".
-       01  WS-COUNT     PIC 9(06).
+       01  WS-COUNT     PIC 9(06) VALUE 0.
        01  WS-DISP      PIC Z(05)9.
        PROCEDURE DIVISION.
        MAIN-PARA.

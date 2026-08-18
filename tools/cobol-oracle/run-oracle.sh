@@ -32,6 +32,7 @@ cobc -x -std=ibm -I "$SRC/cpy" "$SRC/cbl/CBTRN02C.cbl" -o cbtrn02c
 cobc -x -std=ibm "$CO/RUNCB04.cbl"  -o runcb04
 cobc -x -std=ibm "$CO/LOADIDX.cbl"  -o loadidx
 cobc -x -std=ibm "$CO/DALYCONV.cbl" -o dalyconv
+cobc -x -std=ibm "$CO/ORACHK.cbl"   -o orachk
 
 # --- file mapping -------------------------------------------------------------------------------
 # Every ASSIGN is an environment name; CLAUDE.md forbids machine paths in committed files.
@@ -50,18 +51,63 @@ export dd_TRANFILE="$WORK/idx/tranmaster"   # CBTRN02C's transaction master (OPE
 export dd_DALYREJS="$OUT/dalyrejs.txt"
 export dd_TRANSACT="$OUT/transact.dat"      # CBACT04C's interest transactions -- the oracle
 
+# --- dialect check, before anything is produced ---------------------------------------------------
+# ORACHK compares GnuCOBOL's own COMPUTE against ADR-0021's hand-derived table and returns non-zero
+# on any mismatch. It runs first and inside the pipeline deliberately: an oracle produced by a
+# compiler that disagrees with the hand-derivation on truncation is worse than no oracle, and a
+# check that only a human ever ran is a check that stops being run.
+echo "--- dialect check: ORACHK vs ADR-0021 ---"
+./orachk
+
 # --- load: the corpus's text into the record formats the programs expect --------------------------
-./loadidx
-./dalyconv
+# Counts are asserted, not just displayed. A truncated input would otherwise convert fewer records,
+# post fewer transactions, and still yield a full-looking 50-record oracle with under-posted
+# balances -- wrong in a way every stage exits 0 on.
+./loadidx | tee load.log
+./dalyconv | tee -a load.log
+
+expect_count() {
+  want="$2"
+  got=$(grep -E "^$1" load.log | tr -dc '0-9')
+  if [ "$got" != "$want" ]; then
+    echo "ABORT: $1 processed ${got:-none} records, expected $want" >&2
+    exit 1
+  fi
+}
+expect_count "TCATBALF loaded"    50
+expect_count "XREFFILE loaded"    50
+expect_count "ACCTFILE loaded"    50
+expect_count "DISCGRP  loaded"    51
+expect_count "DALYTRAN converted" 300
 
 # --- stage 1: post the daily transactions (CBTRN02C) ---------------------------------------------
 # This is what turns tcatbal from the pre-posting state into balances interest can be computed on.
 echo "--- stage 1: CBTRN02C ---"
-./cbtrn02c || echo "CBTRN02C returned non-zero: $?"
+# The exit code is *bounded*, not swallowed and not blindly trusted. The original script used
+# `|| echo`, which let any failure through -- a partially-posted run would have produced an oracle
+# that looked perfect. Removing it revealed that CBTRN02C exits 4 on this data even though it
+# completes normally: 300 processed, 43 rejected, every output written. 4 is a warning-level code and
+# its precise meaning here is NOT established, so it is allowed explicitly and anything else aborts.
+#
+# The real check is the line below it: the program reports how many transactions it processed, and
+# that is asserted. A count is evidence about the work done; an exit code is evidence about how the
+# runtime felt about it.
+set +e
+./cbtrn02c | tee stage1.log
+rc=${PIPESTATUS:-$?}
+set -e
+case "$rc" in
+  0|4) ;;
+  *) echo "ABORT: CBTRN02C returned $rc (only 0 and 4 are known-good)" >&2; exit 1 ;;
+esac
+grep -q "TRANSACTIONS PROCESSED :000000300" stage1.log || {
+  echo "ABORT: CBTRN02C did not process all 300 daily transactions" >&2; exit 1; }
 
 # --- stage 2: compute interest (CBACT04C), unmodified --------------------------------------------
 echo "--- stage 2: CBACT04C ---"
-./runcb04 || echo "CBACT04C returned non-zero: $?"
+./runcb04 | tee stage2.log
+grep -q "END OF EXECUTION OF PROGRAM CBACT04C" stage2.log || {
+  echo "ABORT: CBACT04C did not reach normal end" >&2; exit 1; }
 
 # --- unload the rewritten account file ------------------------------------------------------------
 # CBACT04C REWRITEs ACCOUNT-FILE, so posted balances are an output as much as the transactions are.
@@ -95,6 +141,16 @@ export dd_ACCOUT="$OUT/acctdata-posted.dat"
   for f in tcatbal cardxref acctdata discgrp dailytran; do
     echo "- $f.txt  $(sha256sum "$SRC/data/ASCII/$f.txt" | cut -d' ' -f1)"
   done
+  echo
+  echo "### Producing programs"
+  echo "The COBOL is as much an input as the data. Without these, an edit to a tenant program"
+  echo "leaves this fixture stale with no signal, and a later mismatch reads as a Java defect."
+  for f in CBACT04C CBTRN02C; do
+    echo "- $f.cbl  $(sha256sum "$SRC/cbl/$f.cbl" | cut -d' ' -f1)"
+  done
+  echo "- ORACHK: $(./orachk | tail -1)"
+  echo "- CBTRN02C exit code: $rc (0 and 4 accepted; see run-oracle.sh)"
+  echo "- CBTRN02C: $(grep -h TRANSACTIONS stage1.log | tr -s ' ' | paste -sd'; ' -)"
   echo
   echo "## Output"
   for f in transact.dat acctdata-posted.dat dalyrejs.txt; do
