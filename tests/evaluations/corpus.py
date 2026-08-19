@@ -168,20 +168,30 @@ def _mutate(body: str, anchor: str, replacement: str) -> str:
     return mutated
 
 
-#: **The real PR #44 body has a width defect of its own, and the judge found it before this corpus
-#: did.** `TRAN-SOURCE` is `PIC X(10)` (`CVTRA05Y:8`) and the body writes the bare 6-character
-#: `"System"`. That corrects a claim made about that PR -- it was recorded as having padded *every*
-#: alphanumeric field; it padded `TRAN-DESC` and the three merchant fields and left this one short.
+#: **The direction of this mutation flipped, and the flip is the record of a defect being fixed.**
 #:
-#: So the clean baseline is the padded variant, and every `completion_*` case below derives from it.
-#: Deriving them from the raw body instead would give each of them **two** defects -- the one it is
-#: named for and this one -- and a case that violates two criteria cannot distinguish a judge that
-#: found the intended defect from one that found the other.
-_PADDED_COMPLETE_BODY = _mutate(_COMPLETE_BODY, '    "System",', '    CobolText.pad("System", 10),')
+#: `TRAN-SOURCE` is `PIC X(10)` (`CVTRA05Y:8`) and the real PR #44 body wrote the bare 6-character
+#: `"System"` -- a defect the judge found before this corpus did, correcting the claim that that PR
+#: padded *every* alphanumeric field. While that defect was still in the shared fixture, this line
+#: derived the clean baseline by padding it.
+#:
+#: The round-trip differential then failed fifty records on it against COBOL's own output, so the
+#: fixture now ships padded and **the historical defect is what has to be reconstructed**. Same two
+#: bodies, same two cases; only which one is derived has changed. CI caught the inversion at import
+#: time, because `_mutate` refuses an anchor that no longer matches rather than silently producing a
+#: faithful body labelled defective.
+#:
+#: Every other `completion_*` case derives from the padded body. Deriving them from the short one
+#: would give each **two** defects -- the one it is named for and this one -- and a case that
+#: violates two criteria cannot distinguish a judge that found the intended defect from one that
+#: found the other.
+_SHORT_SOURCE_COMPLETE_BODY = _mutate(
+    _COMPLETE_BODY, '    CobolText.pad("System", 10),', '    "System",'
+)
 
 #: G28's defect, reintroduced into the body that fixed it. `TRAN-MERCHANT-NAME` and its neighbour are
 #: `PIC X(50)`, so this writes an empty string where the COBOL writes fifty blanks.
-_EMPTY_STRING_BODY = _mutate(_PADDED_COMPLETE_BODY, "CobolText.spaces(50)", '""')
+_EMPTY_STRING_BODY = _mutate(_COMPLETE_BODY, "CobolText.spaces(50)", '""')
 
 #: G26's defect, in the form the architecture is least able to survive: not a null left behind and
 #: flagged, but a fabricated identifier. `TRAN-ID` is `STRING PARM-DATE, WS-TRANID-SUFFIX` -- a job
@@ -194,7 +204,7 @@ _EMPTY_STRING_BODY = _mutate(_PADDED_COMPLETE_BODY, "CobolText.spaces(50)", '""'
 #: from one that flagged the width and stopped. Every case here isolates exactly one criterion, and
 #: keeping that true took checking the copybook rather than assuming.
 _INVENTED_ID_BODY = _mutate(
-    _PADDED_COMPLETE_BODY,
+    _COMPLETE_BODY,
     'return new Tran(\n    null,\n    "01",',
     'return new Tran(\n    CobolText.pad("INT0000000001", 16),\n    "01",',
 )
@@ -319,14 +329,15 @@ CASES: tuple[EvalCase, ...] = (
     EvalCase(
         name="completion_short_source",
         step=COMPLETE_STEP,
-        body=_COMPLETE_BODY,
+        body=_SHORT_SOURCE_COMPLETE_BODY,
         imports=tuple(_IMPORTS),
         failing_criterion="fixed_width_text",
         impure_criteria=(),
         ground=Ground.SOURCE,
         evidence=(
             "**the real PR #44 body, and the judge found this before the corpus did.** TRAN-SOURCE "
-            "is PIC X(10) (CVTRA05Y:8) and it writes the bare 6-character `\"System\"`. It corrects "
+            "is PIC X(10) (CVTRA05Y:8) and it writes the bare 6-character `\"System\"`. Reconstructed "
+            "here since the shared fixture was corrected, and it corrects "
             "the claim made about that PR -- it padded TRAN-DESC and the three merchant fields and "
             "left this one short, so `padded every alphanumeric field` was wrong. Worth keeping as a "
             "case in its own right: a width defect a real model actually produced, next to "
@@ -336,15 +347,16 @@ CASES: tuple[EvalCase, ...] = (
     EvalCase(
         name="completion_faithful",
         step=COMPLETE_STEP,
-        body=_PADDED_COMPLETE_BODY,
+        body=_COMPLETE_BODY,
         imports=tuple(_IMPORTS),
         failing_criterion=None,
         impure_criteria=(),
         ground=Ground.SOURCE,
         evidence=(
             "the real Opus 5 body from PR #44 with its one width defect corrected -- TRAN-SOURCE "
-            "padded to PIC X(10). The correction is the corpus's, not the model's, and it is here "
-            "rather than in the raw body because a faithful case has to actually be faithful"
+            "padded to PIC X(10). The correction was the corpus's first and the shared fixture's "
+            "since the round trip failed fifty records on it; a faithful case has to actually be "
+            "faithful"
         ),
     ),
     EvalCase(

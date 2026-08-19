@@ -128,6 +128,12 @@ COMPLETE_STEP = BatchStepDesign(
 #: `MOVE SPACES TO TRAN-MERCHANT-NAME` is G28's case, and why `CobolText.spaces` exists: the field
 #: is `PIC X(50)`, so an empty string is not the same record on disk.
 #:
+#: `TRAN-SOURCE` is padded for the same reason, and that correction has three independent sources:
+#: the eval judge flagged the bare `"System"` in the real PR #44 body (audit R2.27), the copybook
+#: says `PIC X(10)` (`CVTRA05Y:8`), and the round-trip differential then failed fifty records on it
+#: against COBOL's own output -- the first defect the round trip found that no other check here
+#: could, since the equivalence test asserts on `tranAmt` alone.
+#:
 #: The `ACCT-ID` formatting is a correction **the model made to this fixture**, not the reverse.
 #: `STRING 'Int. for a/c ', ACCT-ID DELIMITED BY SIZE` takes an unsigned 11-digit *display* field,
 #: so it contributes all eleven zero-padded positions. This body originally concatenated the bare
@@ -138,7 +144,7 @@ return new Tran(
     null,
     "01",
     new BigDecimal("5"),
-    "System",
+    CobolText.pad("System", 10),
     CobolText.pad("Int. for a/c " + String.format("%011d",
         item.account().acctId().toBigInteger()), 100),
     source.tranAmt(),

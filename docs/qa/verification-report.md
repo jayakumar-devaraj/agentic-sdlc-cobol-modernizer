@@ -2674,6 +2674,182 @@ already established.
 
 **Suite after the change**: `pytest tests/system/test_cobol_oracle_comparison.py -q` → **21 passed**.
 
+### The round trip, run — generated logic inside hand-written wiring
+
+**What ran.** `tests/system/test_hand_written_round_trip.py` generates `CBACT04C`'s two processors
+through `run_generate`, copies the hand-written wiring from `tests/fixtures/handwritten/CBACT04C/`
+into the generated project, and builds and runs it with real Maven over the oracle's own inputs
+(`tcatbal-posted.dat`, `acctdata-stage1.dat`, plus the corpus's untouched `discgrp.txt` and
+`cardxref.txt`). The job writes each generated `Tran` as JSON; the Python differential
+(`docs/adr/0029`) compares it field-for-field against `transact.dat`.
+
+```
+JAVA_HOME=... pytest tests/system/test_hand_written_round_trip.py -q
+3 passed in 69.58s
+```
+
+**The result, with the qualifiers that belong to it.** **500 of 500 comparable fields matched across
+50 records; 3 fields excluded by ADR-0026** (`TRAN-ID` and both timestamps). `describe_result`
+renders it as *"500 of 500 fields matched; 3 excluded by decision; wiring hand-written (ADR-0030),
+bodies scripted rather than model-authored"*, and that string exists so the number cannot travel
+without them. **This is not "the platform generated a working program."** The wiring — reader,
+writer, two step beans, job bean — is hand-written, because nothing renders it (G31); and the method
+bodies are step 45's scripted fixtures, so what a *model* would write remains an open question
+needing a live call.
+
+**It found a defect on its first run, and no other check here could have.** `TRAN-SOURCE` is
+`PIC X(10)` (`CVTRA05Y:8`) and the completion body wrote a bare `"System"`, so **fifty records
+disagreed on that field while every amount matched**:
+
+```
+record 0 TRAN-SOURCE: got 'System' want 'System    '
+... 450 of 500 fields matched
+```
+
+The eval judge flagged that same body defect in PR #44 (audit R2.27) and the copybook had said so
+all along — but the equivalence test asserts on `tranAmt` alone, so nothing in the suite could fail
+on it until a whole record was compared against COBOL's own. Third independent agreement on one
+defect, and the first one that a machine could act on.
+
+**The guard is exercised by the run, not asserted about it.** 94 balance rows go in and 50 records
+come out, because `IF DIS-INT-RATE NOT = 0` is running in generated Java. The record-count check
+happens before the field comparison, so "the job wrote nothing" cannot present as fifty mismatches.
+
+**Three defects found only by running it**, each costing one Maven cycle and each recorded in the
+wiring's `README.md` as a finding rather than a fix:
+
+1. `BatchApplication` component-scans `com.modernized.batch`, so the hand-written `@Configuration`
+   joined the context of every Spring Boot test in the generated project and `BaselineStackTest`
+   failed to load. ADR-0030's first bound arriving through a side door — the wiring is now gated
+   behind a `handwritten-wiring` profile.
+2. `TaskExecutorJobOperator` refuses to initialise without a `JobRegistry`.
+3. `MapJobRegistry` registers every `Job` bean itself, so registering the job explicitly throws
+   `DuplicateJobException` — "register the thing you built" is the obvious shape and it is wrong.
+
+**What the stopgap is for.** ADR-0030's third bound requires every fact the wiring needed that
+`design.json` lacks to be recorded, so the eventual renderer starts from practice rather than a
+design session. Five are listed in `tests/fixtures/handwritten/CBACT04C/README.md`: no byte offsets
+or record lengths (only widths, and contiguity happens to hold for these four copybooks); no
+statement of where data comes from or how the four composite components join; no store for the step
+chain's intermediate type; the `'DEFAULT'` rate fallback and abend-on-missing-lookup are business
+rules left to wiring; and the Spring Batch 6 facts above.
+
+**Still true after this run**: `0 of 4 programs round-trip`. The candidate exists and matches, and
+the two things standing between this and the metric are a rendered wiring layer (G31) and a
+model-authored body.
+
+### The same round trip, with a model writing the bodies
+
+**The run.**
+
+```
+COBOL_MODERNIZER_RUN_LIVE_CLI_TESTS=1 JAVA_HOME=... \
+  pytest tests/system/test_hand_written_round_trip.py -q -s -k live
+1 passed in 164.37s
+```
+
+```
+live round trip: 500 of 500 fields matched; 3 excluded by decision;
+  wiring hand-written (ADR-0030), bodies model-authored
+  steps and attempts: {'computeInterest': 1, 'completeTransaction': 1}
+  2 model call(s), 7563 tokens, notional cost 0.5766754
+```
+
+**What is now established.** Two `claude-opus-5`-authored method bodies, placed in hand-written
+wiring, produce **every comparable field of all fifty transaction records exactly as the unmodified
+`CBACT04C` wrote them under GnuCOBOL**. Both compiled on the first attempt — the heal loop did not
+run — and the differential is the one ADR-0029 built and demonstrated to fail on a one-cent change,
+a short alphanumeric and a record-count mismatch.
+
+**Identical to the scripted run in everything but the bodies.** Same design, same wiring, same
+inputs, same comparison, one shared `wire_build_and_run`. That is deliberate: if any of those
+differed, a disagreement between the two runs would not be attributable to the model.
+
+**The notes are the other half of the result.** The model flagged three gaps unprompted, and every
+one of them is a decision this repo had already recorded:
+
+1. **`ADD WS-MONTHLY-INT TO WS-TOTAL-INT` is not implemented**, because a stateless `ItemProcessor`
+   has nowhere to hold an accumulator that spans an account's records, and *"reproducing it here with
+   a field would be order- and restart-dependent"*. That is ADR-0027's reasoning, arrived at
+   independently.
+2. **`TRAN-ID`, `TRAN-ORIG-TS`, `TRAN-PROC-TS` are job-level facts, not item-level ones** — a run
+   parameter, a monotonic counter and a clock read — and *"reading a clock or a counter inside
+   process() would make the same input produce different records across runs and across a chunk
+   restart"*. That is ADR-0026 and `NonDeterministicBodyError`, restated by the model that would have
+   tripped them.
+3. **It emitted PIC-width spaces rather than empty strings** for fields it could not fill, and said
+   so. G28's lesson, applied without being asked for that field.
+
+It also stated the arithmetic reasoning explicitly: the product is exact at scale 4, the division is
+the only lossy step, and it truncates *"since the `COMPUTE` has no `ROUNDED`"* — ADR-0021's semantic,
+volunteered.
+
+**What this does not establish**, and the list is short and specific:
+
+- **The wiring is still hand-written** (G31). Nothing renders readers, writers, steps or jobs, so
+  what ran is generated logic inside a human's scaffolding.
+- **Only half of `CBACT04C`'s output is compared.** The program writes transactions *and* rewrites
+  the account file; this compares `transact.dat` and not `acctdata-posted.dat`. The account posting
+  step (ADR-0027) is not in this job, which the model's first note independently identifies.
+- **One program, one run.** ADR-0024's lesson about the judge applies here too: one sample of an
+  instrument is not a measurement of its reliability, though unlike the judge this one is checked
+  against a fixed oracle rather than against itself.
+
+**Cost, recorded because this repo records it**: `$0.5766754` notional for 2 calls / 7,563 tokens,
+inside a `RunBudget(max_model_calls=8)` ceiling that was never approached.
+
+### The account half, and a divergence pinned rather than smoothed
+
+**Half of `CBACT04C`'s output was still unmeasured.** It writes interest transactions *and* rewrites
+the account master; the first round trip compared `transact.dat` only. ADR-0027's
+`postAccountInterest` step now runs as a third step in the same hand-written job, over items whose
+interest is already summed by an aggregating reader, and its output is compared against
+`acctdata-posted.dat`.
+
+**The result: `598 of 600` fields, and nothing excluded.** The transaction record gives up `TRAN-ID`
+and both timestamps by ADR-0026; the account record gives up nothing, so every one of its twelve
+fields has to match by being right rather than by being skipped.
+
+**The two that differ are one defect, and it is COBOL's.**
+
+| field | candidate | COBOL |
+|---|---|---|
+| `ACCT-CURR-BAL` (record 49) | 2060.06 | 2041.30 |
+| `ACCT-CURR-CYC-CREDIT` (record 49) | 0 | 1549.30 |
+
+`CBACT04C`'s loop is `PERFORM UNTIL END-OF-FILE = 'Y'` with `PERFORM 1050-UPDATE-ACCOUNT` in the
+`ELSE` of `IF END-OF-FILE = 'N'`, so that branch never runs and the last account is never posted --
+the defect PR #59's cross-artifact identity found. The paragraph does exactly three things (add the
+interest, zero the cycle credit, zero the cycle debit) and **the divergence set is exactly its write
+set**, minus the field that was already zero. The balance difference is `18.76`, which is precisely
+that account's interest read off the transaction oracle.
+
+**The cheap option was available and refused.** Making the reader skip the last account would have
+turned this green by encoding a bug, and the number would then describe the wiring rather than the
+generated logic. `assert_account_half_matches_except_the_last` pins the shape instead: one record,
+fields confined to that paragraph's writes, balance difference equal to the uncredited interest. A
+second diverging account, a different field, or a different amount all fail.
+
+**Both halves, with model-authored bodies:**
+
+```
+COBOL_MODERNIZER_RUN_LIVE_CLI_TESTS=1 JAVA_HOME=...   pytest tests/system/test_hand_written_round_trip.py -q -s -k live
+
+live round trip: 500 of 500 fields matched; 3 excluded by decision;
+  wiring hand-written (ADR-0030), bodies model-authored
+  steps and attempts: {'computeInterest': 1, 'completeTransaction': 1, 'postAccountInterest': 1}
+  account half: 598 of 600 fields matched; 0 excluded by decision
+  3 model call(s), 9802 tokens, notional cost 0.7626982
+```
+
+All three bodies compiled on the first attempt. Session total for both live runs: **$1.339**.
+
+**The third body's notes flagged something the first run's did not**: that `1300-COMPUTE-INTEREST`
+unconditionally performs `1300-B-WRITE-TX`, so it included that paragraph's field moves and said
+*"if the design intended `1300-B-WRITE-TX` to be a separate step, this body needs to be split"* --
+which is exactly the split PR #43 made. The comparison is unaffected because `completeTransaction`
+rebuilds every field, but the model located a design ambiguity from the COBOL alone.
+
 ## Not yet covered (honest gaps, not silently skipped)
 
 - *(corrected 2026-08-08 — this entry was stale, not merely incomplete)* This previously read

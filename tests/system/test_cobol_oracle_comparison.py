@@ -56,6 +56,27 @@ TRAN_LAYOUT: tuple[tuple[str, int, int, int | None], ...] = (
 
 TRAN_RECORD_LEN = 350
 
+#: `CVACT01Y`'s ACCOUNT-RECORD, 300 bytes -- the *other* file `CBACT04C` writes. `1050-UPDATE-ACCOUNT`
+#: rewrites it, so a round trip that compares only `transact.dat` leaves half the program's
+#: observable output unmeasured.
+#:
+#: **No field is excluded.** Every one of these is producible by the generated pipeline, which is why
+#: the account half is the stricter of the two comparisons despite being the smaller record.
+ACCOUNT_LAYOUT: tuple[tuple[str, int, int, int | None], ...] = (
+    ("ACCT-ID", 0, 11, 0),
+    ("ACCT-ACTIVE-STATUS", 11, 1, None),
+    ("ACCT-CURR-BAL", 12, 12, 2),
+    ("ACCT-CREDIT-LIMIT", 24, 12, 2),
+    ("ACCT-CASH-CREDIT-LIMIT", 36, 12, 2),
+    ("ACCT-OPEN-DATE", 48, 10, None),
+    ("ACCT-EXPIRAION-DATE", 58, 10, None),
+    ("ACCT-REISSUE-DATE", 68, 10, None),
+    ("ACCT-CURR-CYC-CREDIT", 78, 12, 2),
+    ("ACCT-CURR-CYC-DEBIT", 90, 12, 2),
+    ("ACCT-ADDR-ZIP", 102, 10, None),
+    ("ACCT-GROUP-ID", 112, 10, None),
+)
+
 #: Fields the generated pipeline cannot produce, each with the decision that says so.
 #: **A field may not be added here without an ADR that makes it unproducible.**
 EXCLUSIONS: dict[str, str] = {
@@ -127,6 +148,20 @@ def load_oracle() -> list[dict[str, FieldValue]]:
     ]
 
 
+def load_account_oracle() -> list[dict[str, FieldValue]]:
+    """The account file `CBACT04C` left behind, parsed with `ACCOUNT_LAYOUT`."""
+    raw = (ORACLE_DIR / "acctdata-posted.dat").read_bytes().decode("latin-1")
+    if len(raw) % 300:
+        raise ValueError(f"account oracle is not a whole number of records: {len(raw)} bytes")
+    return [
+        {
+            name: FieldValue(name, raw[i + off : i + off + width], scale)
+            for name, off, width, scale in ACCOUNT_LAYOUT
+        }
+        for i in range(0, len(raw), 300)
+    ]
+
+
 @dataclass(frozen=True)
 class ComparisonResult:
     """What ADR-0029 requires a result to carry: matches, mismatches, and what was excluded."""
@@ -149,22 +184,32 @@ class ComparisonResult:
 
 
 def compare(
-    candidate: list[dict[str, FieldValue]], oracle: list[dict[str, FieldValue]]
+    candidate: list[dict[str, FieldValue]],
+    oracle: list[dict[str, FieldValue]],
+    layout: tuple[tuple[str, int, int, int | None], ...] = TRAN_LAYOUT,
+    exclusions: dict[str, str] | None = None,
 ) -> ComparisonResult:
-    """Field-for-field, skipping only what `EXCLUSIONS` names."""
+    """Field-for-field, skipping only what `exclusions` names.
+
+    `layout` and `exclusions` are parameters rather than constants because `CBACT04C` writes **two**
+    files -- the interest transactions and the rewritten account master -- and comparing one of them
+    measures half the program. The semantics are identical for both: full declared width, exclusions
+    citing a decision, record framing out of scope.
+    """
+    exclusions = EXCLUSIONS if exclusions is None else exclusions
     if len(candidate) != len(oracle):
         return ComparisonResult(
             compared=0,
             matched=0,
             mismatches=(f"record count {len(candidate)} != oracle {len(oracle)}",),
-            excluded=tuple(EXCLUSIONS),
+            excluded=tuple(exclusions),
         )
 
     compared = matched = 0
     mismatches: list[str] = []
     for index, (got, want) in enumerate(zip(candidate, oracle)):
-        for name, *_ in TRAN_LAYOUT:
-            if name in EXCLUSIONS:
+        for name, *_ in layout:
+            if name in exclusions:
                 continue
             compared += 1
             if got[name].value == want[name].value:
@@ -173,7 +218,7 @@ def compare(
                 mismatches.append(
                     f"record {index} {name}: got {got[name].value!r} want {want[name].value!r}"
                 )
-    return ComparisonResult(compared, matched, tuple(mismatches), tuple(EXCLUSIONS))
+    return ComparisonResult(compared, matched, tuple(mismatches), tuple(exclusions))
 
 
 # --- the fixture is real -------------------------------------------------------------------------
