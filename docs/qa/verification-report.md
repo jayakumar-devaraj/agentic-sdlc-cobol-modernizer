@@ -2960,6 +2960,42 @@ where it knows least. Pinned by a test, alongside a case proving it is not silen
 appears as a declaration with no entity -- `WRITE ... FROM` is the writer side's fact and is not
 parsed yet. The renderer itself is stage 3; nothing here renders a reader.
 
+### G31 stage 3a — the record layout, checked against three independent derivations
+
+**Finding F1, answered.** `DomainField` carried a width and no position, so a reader built from the
+design had to assume fields are contiguous from byte zero. That held for the four copybooks the
+hand-written wiring used **by luck** -- every `FILLER` in them is trailing -- and is false the moment
+one sits in the middle. `DomainField.byte_offset` and `DomainEntity.record_length` now carry it
+(schema **3.3.0**), computed by `parsing/record_layout.py`.
+
+**Offsets are computed over every declaration, `FILLER` included**, which is what makes an interior
+`FILLER` a non-event rather than a mis-slice of everything after it. Group items contribute nothing:
+they own their children's bytes, and counting them would double every byte underneath.
+
+**The verification is the part worth reading.** These numbers are not asserted against numbers this
+module invented -- three independent derivations already existed:
+
+1. `TRAN_LAYOUT` and `ACCOUNT_LAYOUT` in the differential, hand-written, and **validated by COBOL's
+   own output**: the comparison built on them matches `transact.dat` 500 of 500 and
+   `acctdata-posted.dat` 598 of 600. Wrong offsets could not have produced that.
+2. The copybooks' own `RECLN` comments, read out of the file rather than restated in the test.
+3. The hand-written wiring's Java constants, which the round trip runs through real Maven.
+
+All three agree with the computed layout, field for field.
+
+**Refusals**: `USAGE COMP`/`COMP-3` (two digits per byte, so sizing it as digits would misplace
+every following field -- no record in this corpus has one, which is why the refusal needed a test),
+and any record containing a field `pic_mapper` rejects. **Refused whole, never partial**: a layout
+missing one width is not incomplete, it is wrong for every field that follows.
+
+**Verification**: `pytest tests/system/test_record_layout.py -q` -> **16 passed**,
+`parsing/record_layout.py` at **100%**.
+
+**One test corrected in passing.** Stage 2's `test_the_schema_version_records_the_addition` pinned
+`SCHEMA_VERSION == "3.2.0"` and broke on the very next additive change -- a test that fails for
+being right teaches people to edit tests. It now asserts the published schema carries
+`file_access_paths` and that the version has moved past the release that introduced it.
+
 ## Not yet covered (honest gaps, not silently skipped)
 
 - *(corrected 2026-08-08 — this entry was stale, not merely incomplete)* This previously read

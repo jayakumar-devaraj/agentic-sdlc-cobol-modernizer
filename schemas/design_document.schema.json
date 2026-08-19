@@ -176,6 +176,18 @@
           "title": "Name",
           "type": "string"
         },
+        "record_length": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Record Length"
+        },
         "source_copybook": {
           "title": "Source Copybook",
           "type": "string"
@@ -200,6 +212,18 @@
     "DomainField": {
       "description": "One field of a `DomainEntity`, reusing `pic_mapper`'s deterministic output verbatim.\n\n`java_field_name` and the entity's own `name` are direct, mechanical transforms of the COBOL\nname (kebab-case to camelCase/PascalCase, `-RECORD` suffix stripped from the entity name) --\nnot a business-semantic rename. See ADR-0010 decision 2 for why: a human-readable name is a\njudgment call for the LLM-authored parts of `UnifiedDesign` to make, not this deterministic\nfield.",
       "properties": {
+        "byte_offset": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Byte Offset"
+        },
         "cobol_field_name": {
           "title": "Cobol Field Name",
           "type": "string"
@@ -950,7 +974,7 @@
       "type": "array"
     },
     "schema_version": {
-      "default": "3.2.0",
+      "default": "3.3.0",
       "title": "Schema Version",
       "type": "string"
     },

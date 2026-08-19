@@ -68,6 +68,7 @@ from cobol_modernizer.parsing.file_control import (
     extract_file_declarations,
     extract_record_bindings,
 )
+from cobol_modernizer.parsing.record_layout import compute_record_layouts
 from cobol_modernizer.prompts_registry_client.loader import prompt_path
 from cobol_modernizer.tools.pic_mapper import PicMapping
 from cobol_modernizer.tools.tenant_repo import resolve_program
@@ -188,7 +189,7 @@ def _derive_entity_name(copybook_name: str, copybook_source: str) -> str:
     return entity_name_from_record(match.group(1))
 
 
-def _domain_field(mapping: PicMapping) -> DomainField:
+def _domain_field(mapping: PicMapping, *, byte_offset: int | None = None) -> DomainField:
     return DomainField(
         java_field_name=_to_camel_case(mapping.field_name),
         cobol_field_name=mapping.field_name,
@@ -197,6 +198,7 @@ def _domain_field(mapping: PicMapping) -> DomainField:
         scale=mapping.scale,
         signed=mapping.signed,
         length=mapping.string_length,
+        byte_offset=byte_offset,
     )
 
 
@@ -230,12 +232,24 @@ def build_domain_entities(
                 continue  # e.g. CODATECN: zero successfully-mapped fields, not a domain entity
 
             if source_label not in entities:
+                # The record's byte layout, computed from the same copybook the fields came from
+                # (G31 finding F1). A copybook holds one `01` record, so the first layout is the
+                # one these fields belong to; a source that yields none leaves offsets unset rather
+                # than guessed.
+                layouts = compute_record_layouts(resolved.copybook_sources[source_label])
+                layout = layouts[0] if layouts else None
                 entities[source_label] = DomainEntity(
                     name=_derive_entity_name(source_label, resolved.copybook_sources[source_label]),
                     source_copybook=source_label,
+                    record_length=layout.record_length if layout else None,
                     used_by_programs=[],
                     fields=[
-                        _domain_field(mapping)
+                        _domain_field(
+                            mapping,
+                            byte_offset=(
+                                layout.offset_of(mapping.field_name) if layout else None
+                            ),
+                        )
                         for mapping in mappings
                         if mapping.field_name not in (None, "FILLER")
                     ],

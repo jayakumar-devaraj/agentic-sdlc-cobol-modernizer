@@ -165,8 +165,20 @@ def test_the_entity_name_transform_has_one_implementation():
     assert (named - {""}) <= entities, "an access path names an entity the design does not have"
 
 
-def test_the_schema_version_records_the_addition():
-    assert SCHEMA_VERSION == "3.2.0"
+def test_the_committed_schema_exposes_the_access_paths():
+    """The fact, not the number.
+
+    This pinned `SCHEMA_VERSION == "3.2.0"` and broke on the very next additive change (3.3.0, the
+    record layouts) -- a test that fails for being *right* teaches people to edit tests. What
+    actually matters is that the published contract carries the field and that the version has moved
+    past the release that introduced it.
+    """
+    schema = (
+        Path(__file__).resolve().parents[2] / "schemas" / "design_document.schema.json"
+    ).read_text(encoding="utf-8")
+    assert "file_access_paths" in schema
+    major, minor, _patch = (int(part) for part in SCHEMA_VERSION.split("."))
+    assert (major, minor) >= (3, 2)
 
 
 # --- the consumer, which is the point ---------------------------------------------------------------

@@ -32,6 +32,13 @@ trailing, and false the moment a copybook has one in the middle.
 
 Record lengths (50, 50, 300, 50) are in the copybook comments and in no contract.
 
+**Answered by G31 stage 3 (PR #65).** `DomainField.byte_offset` and `DomainEntity.record_length`
+now carry the layout, computed over every declaration including `FILLER` -- so an interior `FILLER`
+shifts what follows instead of silently mis-slicing it, and a record whose width cannot be
+determined (`COMP-3`, a `REDEFINES`) is refused whole rather than returned partial. The computed
+offsets are checked against the differential's own hand-derived layouts, which COBOL's output has
+already validated across 1,098 fields.
+
 ### F2 · Nothing in the design says where data comes from
 
 `CompositeType` declares that `TranCatBalWithRate` is composed of `TranCatBal`, `DisGroup`,
