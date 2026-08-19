@@ -363,7 +363,7 @@ def test_a_model_authored_run_is_compared_against_the_same_oracle(tmp_path, desi
         f"model-authored"
         f"\n  steps and attempts: {authored}"
         f"\n  account half: {assert_account_half_matches_except_the_last(accounts).render()}"
-        f"\n  {usage.model_calls} model call(s), {usage.total_tokens} tokens, "
+        f"\n  {usage.model_calls} model call(s), {usage.input_tokens} in / {usage.total_tokens} tokens, "
         f"notional cost {usage.notional_cost_usd}"
     )
     for note in notes:
