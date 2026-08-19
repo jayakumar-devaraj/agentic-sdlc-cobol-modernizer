@@ -373,3 +373,116 @@ def test_the_guard_is_exercised_by_this_data():
     written = len(load_oracle())
     assert (posted, written) == (TCATBAL_POSTED_RECORDS, 50)
     assert written < posted, "if every balance produced a transaction the guard would be untested"
+
+
+# --- the oracle checks itself, because looking plausible was not enough ----------------------------
+
+ACCTDATA_STAGE1 = ORACLE_DIR / "acctdata-stage1.dat"
+ACCTDATA_POSTED = ORACLE_DIR / "acctdata-posted.dat"
+ACCOUNT_RECORD_LEN = 300
+#: `ACCT-ID` and `ACCT-CURR-BAL` (`CVACT01Y`), the only two fields this identity needs.
+_ACCT_ID = (0, 11)
+_ACCT_CURR_BAL = (12, 12)
+#: `1300-B-WRITE-TX` does `STRING 'Int. for a/c ', ACCT-ID` into `TRAN-DESC`, so the account a
+#: transaction belongs to is readable from the record COBOL wrote rather than reconstructed.
+_DESC_ACCT_ID = (32 + len("Int. for a/c "), 11)
+
+
+def _account_balances(path: Path) -> dict[str, Decimal]:
+    raw = path.read_bytes().decode("latin-1")
+    assert len(raw) % ACCOUNT_RECORD_LEN == 0, f"{path.name} is not whole records"
+    records = [
+        raw[i : i + ACCOUNT_RECORD_LEN] for i in range(0, len(raw), ACCOUNT_RECORD_LEN)
+    ]
+    return {
+        r[_ACCT_ID[0] : sum(_ACCT_ID)]: decode_signed(
+            r[_ACCT_CURR_BAL[0] : sum(_ACCT_CURR_BAL)], 2
+        )
+        for r in records
+    }
+
+
+def _interest_written_per_account() -> dict[str, Decimal]:
+    totals: dict[str, Decimal] = {}
+    for record in load_oracle():
+        acct = record["TRAN-DESC"].raw[
+            _DESC_ACCT_ID[0] - 32 : _DESC_ACCT_ID[0] - 32 + _DESC_ACCT_ID[1]
+        ]
+        totals[acct] = totals.get(acct, Decimal(0)) + record["TRAN-AMT"].value
+    return totals
+
+
+def test_each_account_was_credited_exactly_the_interest_it_was_written():
+    """Two of COBOL's own outputs, checked against each other. **This is why it exists.**
+
+    PR #56's committed oracle carried `900014.55` in the first record's `TRAN-AMT` where five runs
+    of the identical pipeline over byte-identical inputs write `14.55` -- and the same run's own
+    account file agreed with `14.55`, so the fixture disagreed with itself. Every check the fixture
+    had asked whether it looked plausible *on its own*: fifty records, fifty distinct amounts, one
+    zero. All of those passed on the wrong file.
+
+    `1050-UPDATE-ACCOUNT` does `ADD WS-TOTAL-INT TO ACCT-CURR-BAL` and nothing else in stage 2
+    touches a balance, so for each account the balance it gained is the interest it was written.
+    Both sides are values COBOL produced; Python only sums them, and summing exact two-decimal
+    values introduces no rounding -- so this is not the re-derivation ADR-0021 forbids. Re-deriving
+    would mean recomputing `(TRAN-CAT-BAL * DIS-INT-RATE) / 1200` here, which this deliberately
+    does not do.
+    """
+    before, after = _account_balances(ACCTDATA_STAGE1), _account_balances(ACCTDATA_POSTED)
+    assert set(before) == set(after)
+    written = _interest_written_per_account()
+    last = max(written)  # see the test below; COBOL never posts this one
+
+    mismatches = [
+        f"{acct}: balance moved {after[acct] - before[acct]}, transactions total "
+        f"{written.get(acct, Decimal(0))}"
+        for acct in sorted(before)
+        if acct != last and after[acct] - before[acct] != written.get(acct, Decimal(0))
+    ]
+    assert not mismatches, "\n".join(mismatches)
+    # A vacuous pass would be an identity over an empty set: every account must have earned some.
+    assert len(written) == len(before) == 50
+
+
+def test_the_last_account_is_written_interest_it_is_never_credited():
+    """A real defect in `CBACT04C`, pinned rather than smoothed over.
+
+    The main loop is `PERFORM UNTIL END-OF-FILE = 'Y'` with `PERFORM 1050-UPDATE-ACCOUNT` in the
+    `ELSE` of `IF END-OF-FILE = 'N'`. `1000-TCATBALF-GET-NEXT` sets the flag at EOF, the loop
+    condition is then true, and the loop exits -- so that `ELSE` never runs and the final account's
+    accumulated interest is written as a transaction and never added to its balance.
+
+    Pinned because it is exactly the kind of behaviour a modernized target would "fix" silently:
+    ADR-0027's `postAccountInterest` step posts every account, including the last, so a
+    round-trip that compares account balances (this one compares transactions) would differ here
+    for a reason that is COBOL's defect rather than the translation's.
+    """
+    before, after = _account_balances(ACCTDATA_STAGE1), _account_balances(ACCTDATA_POSTED)
+    written = _interest_written_per_account()
+    last = max(written)
+
+    assert written[last] > 0, "the last account earned no interest, so this pins nothing"
+    assert after[last] - before[last] == 0, (
+        f"account {last} was credited {after[last] - before[last]}; if CBACT04C's EOF branch has "
+        "started running, this test and the one above both need rewriting"
+    )
+
+
+def test_the_stage_one_snapshot_is_not_the_shipped_account_file():
+    """Without this the identity above could be run against the wrong 'before' and still pass.
+
+    CBTRN02C rewrites `ACCTFILE` too, so the shipped `acctdata.txt` is two stages behind. The
+    snapshot exists precisely because that difference is invisible in the posted file alone.
+    """
+    shipped = (
+        Path(__file__).resolve().parents[1]
+        / "fixtures" / "tenant_repo_sample" / "app" / "data" / "ASCII" / "acctdata.txt"
+    ).read_bytes().decode("latin-1")
+    stage1 = _account_balances(ACCTDATA_STAGE1)
+    shipped_balances = {
+        line[:11]: decode_signed(line[12:24], 2)
+        for line in shipped.replace("\r\n", "\n").split("\n")
+        if line
+    }
+    assert set(shipped_balances) == set(stage1)
+    assert shipped_balances != stage1, "stage 1 posted nothing to any account balance"

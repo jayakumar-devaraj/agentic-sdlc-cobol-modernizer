@@ -33,6 +33,8 @@ cobc -x -std=ibm "$CO/RUNCB04.cbl"  -o runcb04
 cobc -x -std=ibm "$CO/LOADIDX.cbl"  -o loadidx
 cobc -x -std=ibm "$CO/DALYCONV.cbl" -o dalyconv
 cobc -x -std=ibm "$CO/ORACHK.cbl"   -o orachk
+cobc -x -std=ibm "$CO/UNLOADAC.cbl" -o unloadac
+cobc -x -std=ibm "$CO/UNLOADTC.cbl" -o unloadtc
 
 # --- file mapping -------------------------------------------------------------------------------
 # Every ASSIGN is an environment name; CLAUDE.md forbids machine paths in committed files.
@@ -74,6 +76,14 @@ expect_count() {
     exit 1
   fi
 }
+expect_count_in() {
+  got=$(grep -E "^$2" "$1" | tr -dc '0-9')
+  if [ "$got" != "$3" ]; then
+    echo "ABORT: $2 in $1 reported ${got:-none}, expected $3" >&2
+    exit 1
+  fi
+}
+
 expect_count "TCATBALF loaded"    50
 expect_count "XREFFILE loaded"    50
 expect_count "ACCTFILE loaded"    50
@@ -103,6 +113,23 @@ esac
 grep -q "TRANSACTIONS PROCESSED :000000300" stage1.log || {
   echo "ABORT: CBTRN02C did not process all 300 daily transactions" >&2; exit 1; }
 
+# --- snapshot the account file BETWEEN the stages ---------------------------------------------
+# Both programs rewrite ACCTFILE, so the posted file alone cannot say how much of an account's
+# balance change was interest. With this snapshot it can: CBACT04C's 1050-UPDATE-ACCOUNT does
+# `ADD WS-TOTAL-INT TO ACCT-CURR-BAL` and nothing else in stage 2 touches the balance, so for
+# every account
+#
+#     (stage-2 balance) - (stage-1 balance) == sum of that account's interest transactions
+#
+# and that identity is two COBOL outputs checking each other rather than a re-derivation in
+# Python. It is here because the fixture committed by PR #56 failed it: one transaction record
+# carried 900014.55 where four re-runs of this same pipeline over byte-identical inputs write
+# 14.55, and the account file agreed with the 14.55. Nothing in the suite could see that, because
+# every check asked whether the oracle looked plausible on its own.
+export dd_ACCOUT="$OUT/acctdata-stage1.dat"
+./unloadac | tee stage1-unload.log
+expect_count_in stage1-unload.log "ACCTFILE unloaded" 50
+
 # --- stage 2: compute interest (CBACT04C), unmodified --------------------------------------------
 echo "--- stage 2: CBACT04C ---"
 ./runcb04 | tee stage2.log
@@ -114,9 +141,9 @@ grep -q "END OF EXECUTION OF PROGRAM CBACT04C" stage2.log || {
 # Written as fixed-length SEQUENTIAL, not LINE SEQUENTIAL: the first version of this script used
 # LINE SEQUENTIAL and GnuCOBOL trimmed trailing spaces, so a 300-byte record came out ~113 bytes and
 # every field after the last non-blank was lost.
-cobc -x -std=ibm "$CO/UNLOADAC.cbl" -o unloadac
 export dd_ACCOUT="$OUT/acctdata-posted.dat"
-./unloadac
+./unloadac | tee stage2-unload.log
+expect_count_in stage2-unload.log "ACCTFILE unloaded" 50
 
 # --- unload the POSTED tcatbal, which is the comparison's input ------------------------------------
 # The balances CBACT04C computed interest from exist only inside this run: the shipped tcatbal.txt is
@@ -124,7 +151,6 @@ export dd_ACCOUT="$OUT/acctdata-posted.dat"
 # this oracle would have to start from zeros, compute zero interest, and fail for a reason that is
 # not about the code under test -- a red result that looks like a translation defect and is really a
 # fixture nobody captured.
-cobc -x -std=ibm "$CO/UNLOADTC.cbl" -o unloadtc
 export dd_TCBOUT="$OUT/tcatbal-posted.dat"
 ./unloadtc | tee -a load.log
 # **94, not 50, and the count assertion is what found that.** CBTRN02C does not only update existing
@@ -156,6 +182,9 @@ expect_count "TCATBALF unloaded" 94
   echo
   echo "tcatbal-posted.dat is the state *between* the two stages -- the input any"
   echo "candidate implementation must start from to be comparable with transact.dat."
+  echo "acctdata-stage1.dat is the account file at the same instant, so the interest"
+  echo "CBACT04C posted to each account is measurable as a difference against"
+  echo "acctdata-posted.dat and can be checked against the transactions it wrote."
   echo
   echo "## Input blob hashes (sha256)"
   for f in tcatbal cardxref acctdata discgrp dailytran; do
@@ -173,7 +202,7 @@ expect_count "TCATBALF unloaded" 94
   echo "- CBTRN02C: $(grep -h TRANSACTIONS stage1.log | tr -s ' ' | paste -sd'; ' -)"
   echo
   echo "## Output"
-  for f in transact.dat acctdata-posted.dat tcatbal-posted.dat dalyrejs.txt; do
+  for f in transact.dat acctdata-stage1.dat acctdata-posted.dat tcatbal-posted.dat dalyrejs.txt; do
     [ -f "$OUT/$f" ] && echo "- $f  $(wc -c < "$OUT/$f") bytes  sha256 $(sha256sum "$OUT/$f" | cut -d' ' -f1)"
   done
   echo
