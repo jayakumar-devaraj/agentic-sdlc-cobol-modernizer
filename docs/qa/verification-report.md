@@ -2609,6 +2609,71 @@ processors. The gap is now **visible at the gate** rather than invisible everywh
 difference between a known limitation and a defect. The balance arithmetic itself is still not
 generated, and nothing here claims otherwise.
 
+### The oracle's first record was not reproducible, and nothing could have seen it
+
+**What was wrong.** `tests/fixtures/golden/CBACT04C/oracle/transact.dat`, committed by PR #56,
+carried `900014.55` in record 0's `TRAN-AMT`. The balance that produces it is `1164.70` at
+`15.00`, which truncates to `14.55`.
+
+**Measured, not argued.** The pinned image was re-run against the same tenant fixture (input
+hashes identical to the fixture's own `PROVENANCE.md`):
+
+```
+docker run --rm -v <repo>/tests/fixtures/tenant_repo_sample/app:/src:ro \
+                -v <repo>/tools/cobol-oracle:/co:ro -v <out>:/out \
+                cobol-oracle:gnucobol3 sh /co/run-oracle.sh
+```
+
+Four fresh runs plus the previous session's own leftover output — **five samples** — all write
+`00000001455`. They agree with each other on **every non-timestamp byte of all fifty records**, and
+their `tcatbal-posted.dat` and `acctdata-posted.dat` are byte-identical to the committed ones. The
+committed `transact.dat` differs from all five in **one byte**.
+
+**The fixture disagreed with itself.** `acctdata-posted.dat` is identical across every run, and the
+account it belongs to gained `14.55`, not `900014.55`. Cause not established; a single stray digit
+in one digit position of the first record written, varying between processes, is consistent with
+uninitialised storage on the first store — but that is a hypothesis and is recorded as one.
+
+**Why no existing check saw it.** Every assertion the fixture had asked whether it looked plausible
+*alone*: fifty records, fifty distinct amounts, at most one zero, `TRAN-SOURCE` padded. All four
+pass on the wrong file. This is the check-that-cannot-fail pattern once more — this time in the
+artifact rather than in the code — and the instrument that finally caught it was, again, a number
+compared against another number rather than a review.
+
+**The check now in the suite.** `run-oracle.sh` unloads the account file *between* the stages
+(`acctdata-stage1.dat`, committed), so the interest CBACT04C posted per account is measurable.
+`1050-UPDATE-ACCOUNT` does `ADD WS-TOTAL-INT TO ACCT-CURR-BAL` and nothing else in stage 2 touches
+a balance, so each account's balance gain **is** the interest it was written. Both sides are values
+COBOL produced; Python only sums exact two-decimal values. Recomputing
+`(TRAN-CAT-BAL * DIS-INT-RATE) / 1200` here is what ADR-0021 forbids, and this deliberately does
+not do it.
+
+**Shown to fail first.** Restoring the old fixture and running
+`pytest tests/system/test_cobol_oracle_comparison.py -k credited_exactly`:
+
+```
+AssertionError: 00000000001: balance moved 14.55, transactions total 900014.55
+```
+
+— the account named, both numbers printed, and the direction of the disagreement visible.
+
+**It found a defect in the tenant program on its first run.** `CBACT04C`'s main loop is
+`PERFORM UNTIL END-OF-FILE = 'Y'` with `PERFORM 1050-UPDATE-ACCOUNT` in the `ELSE` of
+`IF END-OF-FILE = 'N'`. `1000-TCATBALF-GET-NEXT` sets the flag at EOF, the loop condition is then
+true, and the loop exits — so that `ELSE` is unreachable and the **last account is written interest
+it is never credited** (account `00000000050`, `18.76`). Pinned by
+`test_the_last_account_is_written_interest_it_is_never_credited`, because ADR-0027's
+`postAccountInterest` step posts every account including the last: a future balance comparison will
+differ here for a reason that is COBOL's defect, not the translation's.
+
+**Also fixed, found by trying to reproduce the fixture.** `run-oracle.sh` was CRLF in a Windows
+working tree (`core.autocrlf=true`), so the container failed at `set -eu` with
+`set: Illegal option -`. `.gitattributes` now pins it LF, as it already did for `mvnw`. And the
+stage-2 account unload had no count assertion; it has one now, for the reason the 94-row finding
+already established.
+
+**Suite after the change**: `pytest tests/system/test_cobol_oracle_comparison.py -q` → **21 passed**.
+
 ## Not yet covered (honest gaps, not silently skipped)
 
 - *(corrected 2026-08-08 — this entry was stale, not merely incomplete)* This previously read
