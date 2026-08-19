@@ -218,6 +218,33 @@ class RestEndpointDesign(BaseModel):
     description: str
 
 
+class LookupKeyPart(BaseModel):
+    """One component of a keyed lookup's key, and where its value comes from.
+
+    **The join predicate, read from the COBOL rather than declared by anyone.** `FILE-CONTROL` says
+    `ACCOUNT-FILE` is read by `FD-ACCT-ID`; `MOVE TRANCAT-ACCT-ID TO FD-ACCT-ID` says what goes in
+    it. ADR-0030 refused an LLM-declared join because a wrong one produces plausible rows and a
+    silently wrong comparison -- and it turns out nobody needs to declare it, because the program
+    already does.
+
+    A key can have several parts: `DISCGRP-FILE`'s is a group of three, filled by three separate
+    `MOVE`s.
+
+    `literal` is set instead of `source_field` when the program moves a constant. That is not an
+    edge case here -- it is how `1200-GET-INTEREST-RATE` retries under `'DEFAULT'`, which is finding
+    F4's "business logic living in wiring" arriving as a fact a renderer can carry.
+    """
+
+    key_field: str
+    source_field: str | None = None
+    literal: str | None = None
+    #: True for an assignment to a key field that was already assigned earlier in the program -- the
+    #: retry path rather than the first attempt. Derived from source order, which is the only thing
+    #: that distinguishes them.
+    is_fallback: bool = False
+    source_line: int
+
+
 class FileAccessPath(BaseModel):
     """How one program reaches one domain entity's data -- the fact G31 found missing.
 
@@ -259,6 +286,10 @@ class FileAccessPath(BaseModel):
     #: True when the program positions by key rather than walking the file -- `ACCESS MODE`'s own
     #: meaning, and the "one driving stream, N keyed lookups" split a reader is rendered from.
     is_keyed_lookup: bool = False
+    #: What this lookup is looked up *by*, in key order. Empty for a driving stream, and empty for
+    #: a keyed file whose key nothing fills -- which is a finding rather than a default, since a
+    #: lookup with no source cannot be rendered.
+    key_parts: list[LookupKeyPart] = []
     #: Provenance, as `CLAUDE.md` requires: the `SELECT` line, and the `READ` line when one bound
     #: this file to a record.
     select_line: int
@@ -323,7 +354,8 @@ class UnifiedDesign(BaseModel):
 
 #: design.json's own envelope version -- bump this on any breaking change to DesignDocument's
 #: shape, e.g. once solution_architect gives `unified_design` a real type.
-SCHEMA_VERSION = "3.3.0"  # 3.3.0: DomainField.byte_offset, DomainEntity.record_length (G31 F1)
+SCHEMA_VERSION = "3.4.0"  # 3.4.0: FileAccessPath.key_parts -- the join predicate (G31)
+#: 3.3.0 added DomainField.byte_offset and DomainEntity.record_length (G31 finding F1).
 #: 3.2.0 added UnifiedDesign.file_access_paths (G31, ADR-0030).
 
 #: A rule_confidence entry scoring below this becomes a `low_confidence_rule` GateItem. See the

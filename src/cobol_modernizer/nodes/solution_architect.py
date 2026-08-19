@@ -53,6 +53,7 @@ from cobol_modernizer.core.contracts import (
     DomainEntity,
     DomainField,
     FileAccessPath,
+    LookupKeyPart,
     ProgramDesignEntry,
     RestEndpointDesign,
     UnifiedDesign,
@@ -67,6 +68,11 @@ from cobol_modernizer.parsing.file_control import (
     RecordBinding,
     extract_file_declarations,
     extract_record_bindings,
+)
+from cobol_modernizer.parsing.key_assignments import (
+    KeyAssignment,
+    extract_key_assignments,
+    key_components,
 )
 from cobol_modernizer.parsing.record_layout import compute_record_layouts
 from cobol_modernizer.prompts_registry_client.loader import prompt_path
@@ -125,6 +131,35 @@ def entity_name_from_record(record_name: str) -> str:
     return _to_pascal_case(record_name)
 
 
+def _key_parts_for(
+    read_key_components: list[str], assignments: list[KeyAssignment]
+) -> list[LookupKeyPart]:
+    """The assignments that fill this lookup's key, in key order, fallbacks marked.
+
+    `read_key_components` is the key the program actually reads by, already resolved through any
+    group. `XREF-FILE` declares two keys and `CBACT04C` reads on the alternate; emitting parts for
+    both would leave a renderer choosing, and the read already chose.
+
+    A key field assigned more than once is a retry path: `FD-DIS-ACCT-GROUP-ID` is filled from the
+    account's group and then, on file status 23, from `'DEFAULT'`. Later assignments are marked
+    rather than dropped -- dropping them deletes the fallback, and leaving them unmarked would make
+    it look like the first attempt.
+    """
+    parts: list[LookupKeyPart] = []
+    for field in read_key_components:
+        for index, assignment in enumerate(a for a in assignments if a.key_field == field):
+            parts.append(
+                LookupKeyPart(
+                    key_field=field,
+                    source_field=assignment.source_field,
+                    literal=assignment.literal,
+                    is_fallback=index > 0,
+                    source_line=assignment.source_line,
+                )
+            )
+    return parts
+
+
 def build_file_access_paths(
     worktree_root: Path, programs: list[ProgramDesignEntry]
 ) -> list[FileAccessPath]:
@@ -147,11 +182,32 @@ def build_file_access_paths(
     for entry in programs:
         source_text = resolve_program(worktree_root, entry.program_name).source_text
         bindings = extract_record_bindings(source_text)
+        declarations = extract_file_declarations(source_text)
+
+        # Every field any lookup key is made of, resolved through group keys, so the MOVEs that
+        # fill them can be found. Collected across the whole program in one pass: a key field is
+        # only interesting because something assigns to it.
+        key_fields_by_file: dict[str, list[str]] = {}
+        for declaration in declarations:
+            if not declaration.is_keyed_lookup:
+                continue
+            names = list(declaration.alternate_record_keys)
+            if declaration.record_key:
+                names.append(declaration.record_key)
+            components = [
+                component
+                for name in names
+                for component in key_components(source_text, name)
+            ]
+            key_fields_by_file[declaration.select_name] = components
+        assignments = extract_key_assignments(
+            source_text, {name for names in key_fields_by_file.values() for name in names}
+        )
         first_binding: dict[str, RecordBinding] = {}
         for binding in bindings:
             first_binding.setdefault(binding.file_name, binding)
 
-        for declaration in extract_file_declarations(source_text):
+        for declaration in declarations:
             binding = first_binding.get(declaration.select_name.upper())
             paths.append(
                 FileAccessPath(
@@ -170,6 +226,17 @@ def build_file_access_paths(
                     ),
                     declared_record_key=declaration.record_key,
                     alternate_record_keys=list(declaration.alternate_record_keys),
+                    key_parts=_key_parts_for(
+                        key_components(
+                            source_text,
+                            (binding.read_key if binding and binding.read_key else None)
+                            or declaration.record_key
+                            or "",
+                        )
+                        if declaration.is_keyed_lookup
+                        else [],
+                        assignments,
+                    ),
                     is_keyed_lookup=declaration.is_keyed_lookup,
                     select_line=declaration.source_line,
                     read_line=binding.source_line if binding else None,
