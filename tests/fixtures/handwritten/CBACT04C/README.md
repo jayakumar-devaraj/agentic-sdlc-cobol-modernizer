@@ -40,6 +40,11 @@ what the keys are. All of that came from `CBACT04C`'s `FILE-CONTROL` — `TCATBA
 `ACCESS MODE IS SEQUENTIAL`, the other three are `RANDOM` with a declared `RECORD KEY` — which is
 exactly the parse ADR-0030's option (c) proposes and `cobol_parser` does not do today.
 
+**Answered by G31 stage 2 (PR #64).** `design.json` now carries `file_access_paths`: per program,
+which file yields which entity, whether it is a stream or a keyed lookup, and the key it is actually
+read by -- including the alternate-key case this finding is about. What remains unanswered here is
+the *layout* half (F1) and the writer side, since only `READ ... INTO` is parsed.
+
 The reader also reads flat files rather than PostgreSQL, and uses a `ResourcelessJobRepository`
 rather than a `DataSource`. That is a divergence from ADR-0019's target, taken because a container
 and a schema would add failure modes to a run whose subject is the generated logic. It does not

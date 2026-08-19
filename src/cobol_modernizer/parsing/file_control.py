@@ -280,3 +280,95 @@ def extract_file_declarations(source_text: str) -> list[FileDeclaration]:
         parse_select(sentence, line_no)
         for line_no, sentence in _select_sentences(_file_control_region(source_text))
     ]
+
+#: `READ <file> INTO <record>`. The `INTO` phrase is what links a file declaration to a copybook
+#: record -- and therefore to a domain entity -- and nothing else in the source states that link:
+#: `FILE-CONTROL` names the file, the `FD` names a record area, and only `READ ... INTO` says which
+#: `01`-level record the program actually works with.
+_READ_INTO_RE = re.compile(r"\bREAD\s+([A-Z0-9-]+)\s+INTO\s+([A-Z0-9-]+)", re.IGNORECASE)
+
+#: The key a *read* positions on, which is not always the key the file declares.
+_READ_KEY_RE = re.compile(r"\bKEY\s+(?:IS\s+)?([A-Z0-9-]+)", re.IGNORECASE)
+
+#: Everything after one of these is exception handling, not the read's own phrases. Cut there
+#: before looking for `KEY`, because `INVALID KEY DISPLAY '...'` contains the word KEY and would
+#: otherwise yield a "key" of `DISPLAY` -- a plausible-looking wrong answer, which is the failure
+#: mode this repo refuses everywhere else.
+_EXCEPTION_PHRASES = ("INVALID KEY", "NOT INVALID KEY", "AT END", "NOT AT END")
+
+
+class RecordBinding(BaseModel):
+    """One `READ ... INTO ...`: which file was read, into which record, positioned by which key.
+
+    **`read_key` is the finding that makes this worth parsing rather than assuming.** `CBACT04C`
+    declares `XREF-FILE` with `RECORD KEY IS FD-XREF-CARD-NUM` and then reads it
+    `KEY IS FD-XREF-ACCT-ID` -- the *alternate*. A reader rendered against the declared record key
+    would compile and find nothing, because the account id is what the program has in hand. The
+    declaration says which keys the file supports; this says which one the program uses.
+
+    `read_key` is `None` for a sequential read, where position comes from file order.
+    """
+
+    file_name: str
+    record_name: str
+    read_key: str | None = None
+    source_line: int
+
+
+def _read_statements(source_text: str) -> list[tuple[int, str]]:
+    """`(line of the READ, statement text)` for each `READ`, joined across continuation lines.
+
+    A `READ` runs to its terminating period or `END-READ`, and in this corpus the `KEY IS` phrase is
+    always on the line *after* the `READ` -- so a line-scoped match finds the file and the record and
+    silently misses the key, which is the one fact this parse exists for.
+    """
+    statements: list[tuple[int, str]] = []
+    current: list[str] = []
+    current_line = 0
+    for line_no, text in _iter_code_lines(source_text):
+        stripped = text.strip()
+        if not current:
+            if not re.match(r"^READ\b", stripped, re.IGNORECASE):
+                continue
+            current_line = line_no
+        current.append(stripped)
+        joined = " ".join(current)
+        if stripped.endswith(".") or "END-READ" in stripped.upper():
+            statements.append((current_line, joined))
+            current = []
+    if current:
+        statements.append((current_line, " ".join(current)))
+    return statements
+
+
+def extract_record_bindings(source_text: str) -> list[RecordBinding]:
+    """Every `READ ... INTO ...` in the source, in source order.
+
+    Duplicates are kept rather than collapsed: `CBACT04C` reads `DISCGRP-FILE` twice -- once on the
+    account's own group and once on `'DEFAULT'` -- and the second read is the fallback a rendered
+    reader has to reproduce. Collapsing them would hide a business rule (finding F4) at the exact
+    layer that exists to recover it.
+    """
+    bindings: list[RecordBinding] = []
+    for line_no, statement in _read_statements(source_text):
+        match = _READ_INTO_RE.search(statement)
+        if match is None:
+            # `READ <file>` with no `INTO` reads into the FD's own record area. It binds no
+            # copybook record, so there is nothing here to link -- and inventing one would be a
+            # guess about which layout the program meant.
+            continue
+        head = statement.upper()
+        for phrase in _EXCEPTION_PHRASES:
+            index = head.find(phrase)
+            if index != -1:
+                head = head[:index]
+        key_match = _READ_KEY_RE.search(head[match.end() :])
+        bindings.append(
+            RecordBinding(
+                file_name=match.group(1).upper(),
+                record_name=match.group(2).upper(),
+                read_key=key_match.group(1).upper() if key_match else None,
+                source_line=line_no,
+            )
+        )
+    return bindings
