@@ -499,6 +499,30 @@
           "title": "Key Field",
           "type": "string"
         },
+        "key_offset": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Key Offset"
+        },
+        "key_width": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Key Width"
+        },
         "literal": {
           "anyOf": [
             {
