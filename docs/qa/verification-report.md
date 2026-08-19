@@ -2906,6 +2906,60 @@ would have called that green. Both backends are patched now, with the reason rec
 runs recorded aggregate usage. The round-trip test now prints `input_tokens`, so the next live run
 produces one at no extra cost. Until then the token figures carry their assumed ratio explicitly.
 
+### G31 stage 2 — the design carries how each program reaches its data
+
+**The gap.** ADR-0030: a reader cannot be rendered from a design that declares *which* entities a
+composite carries and nothing about which is a stream, which are keyed lookups, or what the keys
+are. Stage 1 (PR #63) parsed `FILE-CONTROL`; this puts the facts in the contract and gives them a
+consumer in the same change.
+
+**What `design.json` now carries** (`UnifiedDesign.file_access_paths`, schema **3.2.0**), for
+`CBACT04C`:
+
+| file | entity | lookup | effective key | declared key |
+|---|---|---|---|---|
+| `TCATBAL-FILE` | `TranCatBal` | no (the stream) | — | `FD-TRAN-CAT-KEY` |
+| `XREF-FILE` | `CardXref` | yes | **`FD-XREF-ACCT-ID`** | `FD-XREF-CARD-NUM` |
+| `ACCOUNT-FILE` | `Account` | yes | `FD-ACCT-ID` | `FD-ACCT-ID` |
+| `DISCGRP-FILE` | `DisGroup` | yes | `FD-DISCGRP-KEY` | `FD-DISCGRP-KEY` |
+| `TRANSACT-FILE` | — (written) | no | — | — |
+
+**`effective_key` is the row that earns the parse.** `XREF-FILE` is declared on the card number and
+read `KEY IS FD-XREF-ACCT-ID` -- the alternate. A renderer taking the declared key would compile and
+find nothing, because the account id is what the program has in hand. That was finding **F2** from
+the hand-written wiring, discovered by writing it; it is now read from the source.
+
+**Found by running it**: the `KEY IS` phrase sits on the line *after* the `READ`, so the first,
+line-scoped version of this parse reported the file and the record correctly and the key as `None` --
+green, plausible, and missing the one fact the parse exists for. Fixed by joining a `READ` across its
+continuation lines, which is also what surfaced `INVALID KEY DISPLAY ...`: it contains the word KEY
+and would otherwise yield a key of `DISPLAY`.
+
+**The type has a consumer in the same PR, deliberately.** This repo has produced a computed fact
+that never reached its target four times (G21, G24, G28, G26), and once shipped a helper called by
+nothing. `unobtainable_inputs` reads these paths and reports, as a gate item, any entity a step
+consumes that no earlier step produces and no declared file yields -- the third link in a chain:
+ADR-0020 checked a step's types *resolve*, PR #42 checked its data is *reachable*, this checks it can
+be *obtained*.
+
+**Both halves of that check are tested**, because either alone makes it useless: it stays silent on
+the real three-step design (a check that fires on working input trains reviewers to ignore it) and
+reports `Customer` when the composite is widened to an entity `CBACT04C` never reads. Step order
+decides it -- reversing the chain makes `Tran` unobtainable for `completeTransaction`, the same
+design failing only on order.
+
+**One deliberate silence, which the review should look at.** `file_access_paths` defaults to empty so
+a pre-3.2.0 design still validates, and a design carrying none reports nothing rather than
+everything: no information is not the same as no access, and a check is least trustworthy exactly
+where it knows least. Pinned by a test, alongside a case proving it is not silent in general.
+
+**Verification**: `pytest tests/system/test_file_control.py tests/system/test_file_access_paths.py -q`
+→ **44 passed**, `parsing/file_control.py` at **100%** including every refusal path.
+
+**Limits, stated rather than implied.** Only `READ ... INTO` is parsed, so a file the program writes
+appears as a declaration with no entity -- `WRITE ... FROM` is the writer side's fact and is not
+parsed yet. The renderer itself is stage 3; nothing here renders a reader.
+
 ## Not yet covered (honest gaps, not silently skipped)
 
 - *(corrected 2026-08-08 — this entry was stale, not merely incomplete)* This previously read

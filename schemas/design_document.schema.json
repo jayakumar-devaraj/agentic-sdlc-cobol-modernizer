@@ -262,6 +262,104 @@
       "title": "DomainField",
       "type": "object"
     },
+    "FileAccessPath": {
+      "description": "How one program reaches one domain entity's data -- the fact G31 found missing.\n\n**Why this exists.** ADR-0030 established that a reader cannot be rendered from the design as it\nstood: `CompositeType` declares that `TranCatBalWithRate` is composed of four entities, and says\nnothing about which of them is a stream, which are keyed lookups, or what the keys are. The\nCOBOL says all of it -- `FILE-CONTROL` for the declaration, `READ ... INTO` for which record a\nfile yields -- and `parsing/file_control.py` reads both. This is where that lands so a renderer\ncan use it.\n\n**Per program, not per entity, and that is measured rather than stylistic.** `TCATBAL` is\n`ACCESS MODE IS SEQUENTIAL` in `CBACT04C` and `RANDOM` in `CBTRN02C`; both are true, and an\naccess path recorded on `DomainEntity` would have to pick one and be wrong for the other.\n\n**`effective_key` is the one derived field, and it is derived because the two sources disagree\non purpose.** `CBACT04C` declares `XREF-FILE` with `RECORD KEY IS FD-XREF-CARD-NUM` and reads it\n`KEY IS FD-XREF-ACCT-ID` -- the alternate. The declaration says which keys the file supports; the\nread says which one this program positions on. A renderer that took the declared key would\ncompile and find nothing, so the field that answers *\"what do I look this up by\"* is the read's\nkey when it names one and the declared record key otherwise.",
+      "properties": {
+        "access_mode": {
+          "title": "Access Mode",
+          "type": "string"
+        },
+        "alternate_record_keys": {
+          "default": [],
+          "items": {
+            "type": "string"
+          },
+          "title": "Alternate Record Keys",
+          "type": "array"
+        },
+        "assign_to": {
+          "title": "Assign To",
+          "type": "string"
+        },
+        "declared_record_key": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Declared Record Key"
+        },
+        "effective_key": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Effective Key"
+        },
+        "entity_name": {
+          "title": "Entity Name",
+          "type": "string"
+        },
+        "is_keyed_lookup": {
+          "default": false,
+          "title": "Is Keyed Lookup",
+          "type": "boolean"
+        },
+        "organization": {
+          "title": "Organization",
+          "type": "string"
+        },
+        "program_name": {
+          "title": "Program Name",
+          "type": "string"
+        },
+        "read_line": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Read Line"
+        },
+        "record_name": {
+          "title": "Record Name",
+          "type": "string"
+        },
+        "select_line": {
+          "title": "Select Line",
+          "type": "integer"
+        },
+        "select_name": {
+          "title": "Select Name",
+          "type": "string"
+        }
+      },
+      "required": [
+        "program_name",
+        "entity_name",
+        "record_name",
+        "select_name",
+        "assign_to",
+        "organization",
+        "access_mode",
+        "select_line"
+      ],
+      "title": "FileAccessPath",
+      "type": "object"
+    },
     "GateItem": {
       "description": "One fact a human (via control-plane's gate) should look at before approving `design.json`.\n\n`summary` is a short, skimmable one-liner; `detail` carries the full context (the original\nexception message, fidelity-check finding, rationale, or matched text) -- a reviewer scanning\n`gate_items` reads summaries first, then opens `detail` on whichever ones warrant it.",
       "properties": {
@@ -745,6 +843,14 @@
           "title": "Domain Entities",
           "type": "array"
         },
+        "file_access_paths": {
+          "default": [],
+          "items": {
+            "$ref": "#/$defs/FileAccessPath"
+          },
+          "title": "File Access Paths",
+          "type": "array"
+        },
         "rest_endpoints": {
           "items": {
             "$ref": "#/$defs/RestEndpointDesign"
@@ -844,7 +950,7 @@
       "type": "array"
     },
     "schema_version": {
-      "default": "3.1.0",
+      "default": "3.2.0",
       "title": "Schema Version",
       "type": "string"
     },

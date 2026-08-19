@@ -52,6 +52,7 @@ from cobol_modernizer.core.contracts import (
     CompositeType,
     DomainEntity,
     DomainField,
+    FileAccessPath,
     ProgramDesignEntry,
     RestEndpointDesign,
     UnifiedDesign,
@@ -62,6 +63,11 @@ from cobol_modernizer.core.model_routing import RoutingDecision, resolve_routing
 from cobol_modernizer.core.structured_output import strip_code_fence
 from cobol_modernizer.nodes.spec_extractor import group_field_mappings_by_source
 from cobol_modernizer.parsing.field_references import referenced_fields
+from cobol_modernizer.parsing.file_control import (
+    RecordBinding,
+    extract_file_declarations,
+    extract_record_bindings,
+)
 from cobol_modernizer.prompts_registry_client.loader import prompt_path
 from cobol_modernizer.tools.pic_mapper import PicMapping
 from cobol_modernizer.tools.tenant_repo import resolve_program
@@ -106,6 +112,70 @@ def _to_camel_case(cobol_name: str) -> str:
     return words[0].lower() + "".join(word.capitalize() for word in words[1:])
 
 
+def entity_name_from_record(record_name: str) -> str:
+    """`TRAN-CAT-BAL-RECORD` -> `TranCatBal`. The one implementation of that transform.
+
+    Extracted so `_derive_entity_name` and `build_file_access_paths` cannot disagree about what an
+    entity is called: two spellings of the same rule is how an access path ends up pointing at an
+    entity name that does not exist, which compiles and finds nothing.
+    """
+    if record_name.upper().endswith(_RECORD_SUFFIX):
+        record_name = record_name[: -len(_RECORD_SUFFIX)]
+    return _to_pascal_case(record_name)
+
+
+def build_file_access_paths(
+    worktree_root: Path, programs: list[ProgramDesignEntry]
+) -> list[FileAccessPath]:
+    """Every program's declared access paths, joined to the records its `READ`s bind them to (G31).
+
+    **Deterministic and model-free**, for the reason ADR-0030 refused the alternative: a model asked
+    to describe how four entities join produces plausible rows and a silently wrong comparison, and
+    this is the same class of fact `pic_mapper` is not allowed to guess.
+
+    Files the program declares but never `READ ... INTO` are **kept, not dropped** -- `CBACT04C`'s
+    `TRANSACT-FILE` is written rather than read, and a reader renderer that only saw read files
+    would have no idea the program has an output at all. They carry no `entity_name`, which is what
+    says so.
+
+    A file read more than once contributes one path: `CBACT04C` reads `DISCGRP-FILE` twice, on the
+    account's own group and again on `'DEFAULT'`, and both reads position on the same key. The
+    fallback is a business rule inside the step, not a second access path.
+    """
+    paths: list[FileAccessPath] = []
+    for entry in programs:
+        source_text = resolve_program(worktree_root, entry.program_name).source_text
+        bindings = extract_record_bindings(source_text)
+        first_binding: dict[str, RecordBinding] = {}
+        for binding in bindings:
+            first_binding.setdefault(binding.file_name, binding)
+
+        for declaration in extract_file_declarations(source_text):
+            binding = first_binding.get(declaration.select_name.upper())
+            paths.append(
+                FileAccessPath(
+                    program_name=entry.program_name,
+                    entity_name=(
+                        entity_name_from_record(binding.record_name) if binding else ""
+                    ),
+                    record_name=binding.record_name if binding else "",
+                    select_name=declaration.select_name,
+                    assign_to=declaration.assign_to,
+                    organization=declaration.organization,
+                    access_mode=declaration.access_mode,
+                    effective_key=(
+                        (binding.read_key if binding and binding.read_key else None)
+                        or (declaration.record_key if declaration.is_keyed_lookup else None)
+                    ),
+                    declared_record_key=declaration.record_key,
+                    alternate_record_keys=list(declaration.alternate_record_keys),
+                    is_keyed_lookup=declaration.is_keyed_lookup,
+                    select_line=declaration.source_line,
+                    read_line=binding.source_line if binding else None,
+                )
+            )
+    return paths
+
 def _derive_entity_name(copybook_name: str, copybook_source: str) -> str:
     """The copybook's own `01`-level record name, `-RECORD` stripped, mechanically PascalCased.
 
@@ -115,10 +185,7 @@ def _derive_entity_name(copybook_name: str, copybook_source: str) -> str:
     match = _RECORD_NAME_RE.search(copybook_source)
     if match is None:
         return _to_pascal_case(copybook_name)
-    record_name = match.group(1)
-    if record_name.upper().endswith(_RECORD_SUFFIX):
-        record_name = record_name[: -len(_RECORD_SUFFIX)]
-    return _to_pascal_case(record_name)
+    return entity_name_from_record(match.group(1))
 
 
 def _domain_field(mapping: PicMapping) -> DomainField:
@@ -181,6 +248,53 @@ def build_domain_entities(
     return list(entities.values())
 
 
+
+def _entities_of(type_name: str, design: UnifiedDesign) -> list[str]:
+    """The domain entities a declared type carries -- itself, or a composite's components."""
+    composite = next((c for c in design.composite_types if c.name == type_name), None)
+    if composite is not None:
+        return [component.entity_name for component in composite.components]
+    return [type_name] if any(e.name == type_name for e in design.domain_entities) else []
+
+
+def unobtainable_inputs(
+    job: BatchJobDesign, step: BatchStepDesign, design: UnifiedDesign
+) -> list[str]:
+    """Entities this step consumes that nothing can supply (G31's check).
+
+    **The third link in a chain this repo has now built one piece at a time.** ADR-0020 checked that
+    a step's declared types *resolve*; PR #42 checked that the data its COBOL reads is *reachable*
+    from them (G26); this checks that the entities it consumes can actually be **obtained** -- read
+    from a file the program declares, or produced by a step that runs before it.
+
+    Both halves are needed or the check is noise. A `Tran` reaching `completeTransaction` is never
+    read from a file; `computeInterest` makes it, and flagging it would train a reviewer to ignore
+    this. Conversely an entity that no earlier step produces and that appears in no `FILE-CONTROL`
+    declaration is a design a renderer cannot build a reader for -- which is precisely the shape
+    that left `generate` producing projects that compile and cannot run.
+
+    Deliberately **inputs only**. What a step *writes* is bound by `WRITE ... FROM`, which nothing
+    parses yet, so a check over outputs would report every writer as unobtainable -- a false alarm
+    that would make this useless. Recorded as a limit rather than approximated.
+    """
+    declared = [path for path in design.file_access_paths if path.program_name == job.program_name]
+    if not declared:
+        # **No information is not the same as no access.** `file_access_paths` defaults to empty so
+        # a design written before schema 3.2.0 still validates, and a design assembled by hand in a
+        # test may not carry it at all. Treating that silence as "this program reads nothing" would
+        # report every entity of every step -- a check that fires hardest exactly where it knows
+        # least, which is how a category of finding gets ignored.
+        return []
+
+    available = {path.entity_name for path in declared if path.entity_name}
+    for earlier in job.steps:
+        if earlier.step_name == step.step_name:
+            break
+        available.update(_entities_of(earlier.output_type, design))
+
+    return sorted(
+        {entity for entity in _entities_of(step.input_type, design) if entity not in available}
+    )
 
 def unreachable_entities(
     step: BatchStepDesign,
@@ -525,4 +639,7 @@ def design_solution(
         batch_jobs=batch_jobs,
         rest_endpoints=rest_endpoints,
         composite_types=composite_types,
+        # Deterministic, and built here rather than asked of the model above: the architect decides
+        # the step chain, the COBOL decides how data is reached (G31, ADR-0030).
+        file_access_paths=build_file_access_paths(worktree_root, programs),
     )

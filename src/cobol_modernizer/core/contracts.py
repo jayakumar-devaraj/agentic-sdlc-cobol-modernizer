@@ -202,6 +202,53 @@ class RestEndpointDesign(BaseModel):
     description: str
 
 
+class FileAccessPath(BaseModel):
+    """How one program reaches one domain entity's data -- the fact G31 found missing.
+
+    **Why this exists.** ADR-0030 established that a reader cannot be rendered from the design as it
+    stood: `CompositeType` declares that `TranCatBalWithRate` is composed of four entities, and says
+    nothing about which of them is a stream, which are keyed lookups, or what the keys are. The
+    COBOL says all of it -- `FILE-CONTROL` for the declaration, `READ ... INTO` for which record a
+    file yields -- and `parsing/file_control.py` reads both. This is where that lands so a renderer
+    can use it.
+
+    **Per program, not per entity, and that is measured rather than stylistic.** `TCATBAL` is
+    `ACCESS MODE IS SEQUENTIAL` in `CBACT04C` and `RANDOM` in `CBTRN02C`; both are true, and an
+    access path recorded on `DomainEntity` would have to pick one and be wrong for the other.
+
+    **`effective_key` is the one derived field, and it is derived because the two sources disagree
+    on purpose.** `CBACT04C` declares `XREF-FILE` with `RECORD KEY IS FD-XREF-CARD-NUM` and reads it
+    `KEY IS FD-XREF-ACCT-ID` -- the alternate. The declaration says which keys the file supports; the
+    read says which one this program positions on. A renderer that took the declared key would
+    compile and find nothing, so the field that answers *"what do I look this up by"* is the read's
+    key when it names one and the declared record key otherwise.
+    """
+
+    program_name: str
+    #: The domain entity this file yields, derived from the `READ ... INTO` record name by the same
+    #: mechanical transform `build_domain_entities` applies -- never a business rename (ADR-0010).
+    entity_name: str
+    record_name: str
+    select_name: str
+    #: The external name in `ASSIGN TO`, which is the DD/environment name rather than a path.
+    assign_to: str
+    organization: str
+    access_mode: str
+    #: What to look this entity up by. `None` for a stream the program walks in order.
+    effective_key: str | None = None
+    #: What the file *declares*, kept beside `effective_key` so a disagreement between them stays
+    #: visible instead of being flattened away.
+    declared_record_key: str | None = None
+    alternate_record_keys: list[str] = []
+    #: True when the program positions by key rather than walking the file -- `ACCESS MODE`'s own
+    #: meaning, and the "one driving stream, N keyed lookups" split a reader is rendered from.
+    is_keyed_lookup: bool = False
+    #: Provenance, as `CLAUDE.md` requires: the `SELECT` line, and the `READ` line when one bound
+    #: this file to a record.
+    select_line: int
+    read_line: int | None = None
+
+
 class UnifiedDesign(BaseModel):
     """`design.json`'s `unified_design` -- ADR-0010's real shape for what ADR-0008 left untyped.
 
@@ -211,6 +258,13 @@ class UnifiedDesign(BaseModel):
     """
 
     domain_entities: list[DomainEntity]
+    #: How each program reaches its data (G31, ADR-0030). Deterministic, parsed from
+    #: `FILE-CONTROL` and `READ ... INTO` -- never model-authored, for the reason ADR-0030
+    #: refused an LLM-declared join: a wrong join produces plausible rows and a silently wrong
+    #: comparison. Defaults to empty so a design produced before schema 3.2.0 still validates;
+    #: the producer always fills it, so there is no silence to distinguish here (unlike
+    #: ADR-0022's `guard_condition`, which is LLM judgment and required-but-nullable).
+    file_access_paths: list[FileAccessPath] = []
     batch_jobs: list[BatchJobDesign]
     rest_endpoints: list[RestEndpointDesign]
     #: Target-side types composed of domain entities (ADR-0020). Defaults to empty because a design
@@ -253,7 +307,7 @@ class UnifiedDesign(BaseModel):
 
 #: design.json's own envelope version -- bump this on any breaking change to DesignDocument's
 #: shape, e.g. once solution_architect gives `unified_design` a real type.
-SCHEMA_VERSION = "3.1.0"
+SCHEMA_VERSION = "3.2.0"  # 3.2.0: UnifiedDesign.file_access_paths (G31, ADR-0030)
 
 #: A rule_confidence entry scoring below this becomes a `low_confidence_rule` GateItem. See the
 #: module docstring -- a tentative default, not a benchmarked number.

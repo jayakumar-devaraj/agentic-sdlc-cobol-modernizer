@@ -64,6 +64,7 @@ from cobol_modernizer.core.model_client import RunBudget, UsageAccumulator, coll
 from cobol_modernizer.nodes.solution_architect import (
     ArchitectFn,
     design_solution,
+    unobtainable_inputs,
     unreachable_entities,
 )
 from cobol_modernizer.nodes.spec_critic import CritiqueFn, critique_spec
@@ -349,6 +350,27 @@ def unpopulatable_gate_items(
                     composites=unified_design.composite_types,
                     owned_elsewhere=owned,
                 )
+                unobtainable = unobtainable_inputs(job, step, unified_design)
+                if unobtainable:
+                    items.append(
+                        GateItem(
+                            category="fidelity_issue",
+                            program_name=entry.program_name,
+                            summary=(
+                                f"step {step.step_name!r} consumes "
+                                f"{', '.join(unobtainable)}, which nothing supplies"
+                            ),
+                            detail=(
+                                f"The step declares input {step.input_type!r}, which carries "
+                                f"{', '.join(unobtainable)}. No earlier step of job "
+                                f"{job.job_name!r} outputs those, and {entry.program_name}'s "
+                                "FILE-CONTROL declares no file that is READ INTO them -- so a "
+                                "rendered reader would have nowhere to get them (G31). Either the "
+                                "step order is wrong, the composite carries an entity it does not "
+                                "need, or this program genuinely does not read that data."
+                            ),
+                        )
+                    )
                 if not missing:
                     continue
                 items.append(

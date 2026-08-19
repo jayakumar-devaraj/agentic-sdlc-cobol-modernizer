@@ -22,6 +22,7 @@ from cobol_modernizer.parsing.file_control import (
     FileDeclaration,
     UnsupportedFileControlError,
     extract_file_declarations,
+    extract_record_bindings,
     parse_select,
 )
 
@@ -280,3 +281,81 @@ def test_a_clause_with_no_value_is_refused():
     """`FILE STATUS` with nothing after it names no variable; taking the next clause would be worse."""
     with pytest.raises(UnsupportedFileControlError, match="names no value"):
         parse_select("SELECT F ASSIGN TO DD FILE STATUS", 8)
+
+
+# --- record bindings: which record a file yields, and by which key -----------------------------------
+
+
+def bindings(name: str):
+    return extract_record_bindings(source(name))
+
+
+def test_the_read_statements_bind_each_file_to_the_record_it_yields():
+    """`FILE-CONTROL` names files and copybooks name records; only `READ ... INTO` joins the two.
+
+    Without this link an access path can say a file is read by a key and still not say *what* it
+    produces, which is the difference between a reader a renderer can build and a fact nobody can
+    use.
+    """
+    bound = {b.file_name: b.record_name for b in bindings("CBACT04C")}
+    assert bound == {
+        "TCATBAL-FILE": "TRAN-CAT-BAL-RECORD",
+        "ACCOUNT-FILE": "ACCOUNT-RECORD",
+        "XREF-FILE": "CARD-XREF-RECORD",
+        "DISCGRP-FILE": "DIS-GROUP-RECORD",
+    }
+
+
+def test_the_read_key_is_found_on_a_continuation_line():
+    """The reason these are parsed as statements rather than lines.
+
+    `READ XREF-FILE INTO CARD-XREF-RECORD` and its `KEY IS FD-XREF-ACCT-ID` are on *different*
+    physical lines. A line-scoped match finds the file and the record and silently misses the key --
+    which is the single fact that distinguishes the alternate key from the declared one.
+    """
+    xref = next(b for b in bindings("CBACT04C") if b.file_name == "XREF-FILE")
+    assert xref.read_key == "FD-XREF-ACCT-ID"
+
+
+def test_invalid_key_is_not_mistaken_for_the_read_key():
+    """`INVALID KEY DISPLAY ...` contains the word KEY, and would otherwise yield a key of DISPLAY.
+
+    A plausible-looking wrong answer, which is the failure mode this repo refuses everywhere else --
+    `ACCOUNT-FILE`'s read has an `INVALID KEY` clause and no key phrase of its own.
+    """
+    account = next(b for b in bindings("CBACT04C") if b.file_name == "ACCOUNT-FILE")
+    assert account.read_key is None
+    assert "INVALID KEY" in source("CBACT04C").upper()
+
+
+def test_repeated_reads_of_one_file_are_kept():
+    """`CBACT04C` reads `DISCGRP-FILE` twice: the account's group, then `'DEFAULT'`.
+
+    Collapsing them would hide the fallback -- a business rule (finding F4) -- at the exact layer
+    that exists to recover it.
+    """
+    discgrp = [b for b in bindings("CBACT04C") if b.file_name == "DISCGRP-FILE"]
+    assert len(discgrp) == 2
+    assert discgrp[0].source_line != discgrp[1].source_line
+
+
+def test_a_read_without_into_binds_no_record():
+    """`READ f` reads into the FD's own record area and names no copybook record.
+
+    Skipped rather than guessed: picking a layout for it would invent the one fact this parse
+    exists to establish.
+    """
+    program = """       PROCEDURE DIVISION.
+           READ ACCT-FILE
+               AT END MOVE 'Y' TO EOF
+           END-READ.
+"""
+    assert extract_record_bindings(program) == []
+
+
+def test_an_unterminated_read_is_still_returned():
+    """A `READ` with no period and no `END-READ` is malformed, and dropping it would lose a binding."""
+    program = """       PROCEDURE DIVISION.
+           READ ACCT-FILE INTO ACCOUNT-RECORD
+"""
+    assert [b.record_name for b in extract_record_bindings(program)] == ["ACCOUNT-RECORD"]
