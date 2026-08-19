@@ -67,6 +67,18 @@ class DomainField(BaseModel):
     #: to distinguish, and a required key would break every existing design for no signal.
     length: int | None = None
     signed: bool
+    #: Where this field starts in its record, in bytes (G31 finding F1).
+    #:
+    #: `DomainField` carried a width and no position, so a reader built from the design had to
+    #: assume fields are contiguous from byte zero -- true of these four copybooks only because
+    #: every `FILLER` in them is trailing, and false the moment one sits in the middle. Computed
+    #: over *every* declaration including `FILLER`, which is what makes an interior one a non-event
+    #: rather than a silent mis-slice of every field after it.
+    #:
+    #: `None` only where no layout was computed at all: `parsing/record_layout.py` refuses a record
+    #: it cannot size rather than returning a partial one, because a missing width is a wrong offset
+    #: for every field that follows.
+    byte_offset: int | None = None
 
 
 class DomainEntity(BaseModel):
@@ -79,6 +91,10 @@ class DomainEntity(BaseModel):
 
     name: str
     source_copybook: str
+    #: The record's total length in bytes, `FILLER` included. `CVTRA01Y`'s comment says
+    #: `RECLN = 50`; nothing in the contract said so until now, and a fixed-width reader needs it
+    #: to know where one record ends and the next begins.
+    record_length: int | None = None
     used_by_programs: list[str]
     fields: list[DomainField]
 
@@ -307,7 +323,8 @@ class UnifiedDesign(BaseModel):
 
 #: design.json's own envelope version -- bump this on any breaking change to DesignDocument's
 #: shape, e.g. once solution_architect gives `unified_design` a real type.
-SCHEMA_VERSION = "3.2.0"  # 3.2.0: UnifiedDesign.file_access_paths (G31, ADR-0030)
+SCHEMA_VERSION = "3.3.0"  # 3.3.0: DomainField.byte_offset, DomainEntity.record_length (G31 F1)
+#: 3.2.0 added UnifiedDesign.file_access_paths (G31, ADR-0030).
 
 #: A rule_confidence entry scoring below this becomes a `low_confidence_rule` GateItem. See the
 #: module docstring -- a tentative default, not a benchmarked number.
