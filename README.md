@@ -63,30 +63,38 @@ path, and one calculation is checked against its COBOL: `CBACT04C`'s interest `C
 equivalence test **10 of 10** against expected values derived by hand from the source (ADR-0021),
 rendered into the generated project and run by real Maven.
 
-What that does **not** yet amount to: it is **one `COMPUTE` of one program**, not a program.
-`CBACT04C` is also a rate lookup, a `'DEFAULT'` fallback, a per-account accumulation and an account
-update, and generating a stateful control-break writer is out of scope (ADR-0019). Nothing has been
-written to the real `card-service` repository. **No program round-trips** — COBOL to compiling Java
-to a passing differential test — and that count is `0 of 4`. What changed is that the missing half is
-now the *test*, not the code: `tests/fixtures/golden/CBACT04C/oracle/` holds what the **unmodified**
-`CBACT04C` wrote under GnuCOBOL over the shipped corpus (`docs/adr/0028`), reproduced by
-`tools/cobol-oracle/`, and `docs/adr/0029`'s field-level comparison is built and shown to
-discriminate. The comparison now has a candidate, and it is green: **500 of 500
-comparable fields across 50 records**, 3 excluded by `docs/adr/0026`. **Read both qualifiers before
-quoting that.** Nothing renders readers, writers or job configuration (gap G31), so the wiring the
-job runs inside is **hand-written**, once, for this one program
-(`tests/fixtures/handwritten/CBACT04C/`, `docs/adr/0030`) — and the method bodies in that run are
-the scripted fixtures step 45 uses. **A live `claude-opus-5` run then reproduced the same result
-with model-authored bodies** — 500 of 500, both steps compiled on the first attempt, 2 calls and
-`$0.577`. **Both halves of what `CBACT04C` writes are now compared**: the transactions at 500 of 500, and the
-rewritten account file at **598 of 600 with nothing excluded**. The two that differ are one record —
-COBOL's own loop never posts the last account, because the account-break branch sits in an
-unreachable `ELSE`, and the divergence is exactly the two fields that paragraph writes. Reproducing
-that defect in the wiring would have made it green and is refused; the shape is pinned instead. So
-the remaining qualifier is the wiring itself: what is measured is that **generated logic matches
-COBOL's own output inside wiring a human wrote** (G31), which is why the count stays `0 of 4`. The run found a real defect on its first pass — `TRAN-SOURCE`
-is `PIC X(10)` and the body wrote a bare `"System"`, disagreeing with COBOL on fifty records while
-every amount matched. Step 40a's loader
+**One program round-trips** — and the qualifier travels with the number: **`1 of 4`, wiring
+hand-written.** Both files `CBACT04C` writes are compared against what the **unmodified** program
+wrote under GnuCOBOL (`tools/cobol-oracle/`, `docs/adr/0028`), field-for-field at full declared
+width (`docs/adr/0029`):
+
+| | matched | excluded |
+|---|---|---|
+| interest transactions (50 records) | **500 of 500** | 3 fields, `docs/adr/0026` |
+| rewritten account file (50 records) | **598 of 600** | none |
+
+The method bodies were written by a real `claude-opus-5` run; all three compiled on the first
+attempt, and the self-healing loop never ran.
+
+**What the qualifier means, and it is not decoration.** Nothing renders readers, writers, steps or
+job configuration (gap G31), so the job those processors ran inside is hand-written, once, for this
+one program (`tests/fixtures/handwritten/CBACT04C/`, `docs/adr/0030`). The claim is therefore
+*generated logic matches COBOL's own output inside wiring a human wrote* — **not** *this platform
+generated a working program*. A test fails if this file states the count without the qualifier in
+the same paragraph.
+
+**The two account fields that differ are COBOL's own defect**, pinned rather than smoothed over: its
+account-break post sits in an unreachable `ELSE`, so the last account is never credited, and the
+divergence is exactly the fields `1050-UPDATE-ACCOUNT` writes. Skipping that account in the wiring
+would have made the comparison green by encoding a bug, and is refused on the record.
+
+**Still true.** Nothing has been written to the real `card-service` repository; the reachable
+maximum is `2 of 4` (G17, `docs/adr/0019`), since `CBCUS01C` and `CBACT01C` contribute a read and a
+print; and generating a stateful control-break writer is out of scope. The round trip found a real
+defect on its first pass — `TRAN-SOURCE` is `PIC X(10)` and the body wrote a bare `"System"`,
+disagreeing with COBOL on fifty records while every amount matched.
+
+Step 40a's loader
 (`tools/data_loader.py`) reads CardDemo's fixed-width files into PostgreSQL with
 `pic_mapper`-derived types; its finding that every `TRAN-CAT-BAL` in the shipped data is zero turned
 out to be a property of *that* file rather than the corpus — `dailytran.txt` carries 299 distinct
