@@ -459,3 +459,42 @@ def test_the_account_comparison_would_catch_a_wrong_balance(candidate_accounts):
     mutated[3]["ACCT-CURR-BAL"] = CandidateValue("ACCT-CURR-BAL", Decimal("0.01"))
     result = compare(mutated, load_account_oracle(), ACCOUNT_LAYOUT, {})
     assert any("record 3 ACCT-CURR-BAL" in m for m in result.mismatches)
+
+
+# --- the qualifier is enforced, not remembered ------------------------------------------------------
+
+README = Path(__file__).resolve().parents[2] / "README.md"
+
+#: What ADR-0030's bound 2 requires beside the count. Matched as a word rather than a sentence so
+#: rewording the paragraph does not fail this, but dropping the fact does.
+QUALIFIER = "hand-written"
+
+
+def test_the_readme_never_states_the_round_trip_count_without_its_qualifier():
+    """`1 of 4` means *generated logic inside hand-written wiring*, and a bare number does not say so.
+
+    ADR-0030 accepted the stopgap on the condition that every result reports it, and the risk it
+    named is that the stopgap becomes permanent -- which begins with the qualifier quietly falling
+    off the number. `describe_result` enforces it for anything printed by a run; this enforces it for
+    the one file people actually read.
+
+    Paragraph-scoped rather than file-scoped on purpose: a qualifier three screens away from the
+    claim is not a qualifier.
+    """
+    paragraphs = README.read_text(encoding="utf-8").split("\n\n")
+    claims = [paragraph for paragraph in paragraphs if "1 of 4" in paragraph]
+    assert claims, "the README no longer states the round-trip count at all"
+    for claim in claims:
+        assert QUALIFIER in claim, (
+            "the round-trip count appears without its qualifier:\n" + claim[:400]
+        )
+
+
+def test_the_readme_guard_fails_on_a_bare_claim():
+    """The guard above passes; this is what proves it can fail.
+
+    Checked against a string rather than by editing README.md, because a test that mutates the file
+    it guards can leave the repository changed when it fails -- and once did, in this session.
+    """
+    bare = ["the count is 1 of 4 and nothing else is said about it"]
+    assert not [claim for claim in bare if QUALIFIER in claim]

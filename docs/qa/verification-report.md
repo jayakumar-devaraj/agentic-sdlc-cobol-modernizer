@@ -2738,6 +2738,12 @@ rules left to wiring; and the Spring Batch 6 facts above.
 the two things standing between this and the metric are a rendered wiring layer (G31) and a
 model-authored body.
 
+*(superseded 2026-08-19 — both of that sentence's two blockers were removed the same day: the live
+run supplied model-authored bodies, and the account half closed the "only half the output is
+compared" objection. On the maintainer's decision the count is now reported as **`1 of 4`, wiring
+hand-written**, which is exactly what ADR-0030 bound 2 permits. The entry is left standing rather
+than edited, because what it recorded was true when it was written.)*
+
 ### The same round trip, with a model writing the bodies
 
 **The run.**
