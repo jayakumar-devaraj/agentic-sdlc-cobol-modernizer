@@ -41,10 +41,14 @@ from cobol_modernizer.core.contracts import (
     build_design_document,
 )
 from cobol_modernizer.core.model_client import RunBudget, collect_usage
-from cobol_modernizer.graph.generate_pipeline import run_generate
-from cobol_modernizer.nodes.solution_architect import build_domain_entities
+from cobol_modernizer.graph.generate_pipeline import DEFAULT_DOMAIN_PACKAGE, run_generate
+from cobol_modernizer.nodes.solution_architect import (
+    build_domain_entities,
+    build_file_access_paths,
+)
 from cobol_modernizer.nodes.spec_critic import critique_spec
 from cobol_modernizer.nodes.spec_extractor import extract_spec
+from cobol_modernizer.rendering.java_reader import reader_class_name, render_item_reader
 from cobol_modernizer.tools.local_compiler import compile_project
 from tests.system.test_account_break_posting import _FAITHFUL as _POSTING_BODY
 from tests.system.test_account_break_posting import _IMPORTS as _POSTING_IMPORTS
@@ -83,11 +87,26 @@ CORPUS = FIXTURE_ROOT / "app" / "data" / "ASCII"
 INPUTS = {
     "tcatbal-posted.dat": ORACLE_DIR / "tcatbal-posted.dat",
     "acctdata-stage1.dat": ORACLE_DIR / "acctdata-stage1.dat",
-    "cardxref.txt": CORPUS / "cardxref.txt",
-    "discgrp.txt": CORPUS / "discgrp.txt",
+}
+
+#: The two lookup files the corpus ships as *text*, with the record length to frame them at.
+#:
+#: A COBOL `WRITE` produces fixed-length records with no terminators, which is what the rendered
+#: reader expects and what the unloaded oracle files already are. The shipped `cardxref.txt` and
+#: `discgrp.txt` are a distribution format -- 36-character lines for a 50-byte record in one case --
+#: so they are converted here, exactly as the oracle pipeline's own `LOADIDX` step converts them
+#: before either program sees them. Teaching the renderer to guess the framing per file would bake
+#: a property of one distribution into every generated project.
+TEXT_INPUTS = {
+    "cardxref.dat": (CORPUS / "cardxref.txt", 50),
+    "discgrp.dat": (CORPUS / "discgrp.txt", 50),
 }
 
 CANDIDATE = Path("roundtrip") / "output" / "candidate.jsonl"
+
+#: Where the rendered reader lands. Its own package, so a reviewer can tell rendered wiring
+#: from the hand-written job configuration by path alone.
+READER_PACKAGE = "com.modernized.batch.reader"
 
 #: The generated record's accessors, in the copybook's own field order.
 _JAVA_FIELD = {
@@ -169,11 +188,78 @@ def parse_candidate(path: Path, layout=TRAN_LAYOUT, java_field=None) -> list[dic
     return records
 
 
+
+def stage_as_fixed_records(source: Path, destination: Path, record_length: int) -> None:
+    """Convert a line-terminated corpus file into the fixed-length records COBOL would have written.
+
+    Short lines are padded: the trailing `FILLER` of a record simply was not written out. A line
+    *longer* than the record is a different file than the one expected and raises, rather than being
+    truncated into something plausible.
+    """
+    records = []
+    for line in source.read_text(encoding="latin-1").replace("\r\n", "\n").split("\n"):
+        if not line:
+            continue
+        if len(line) > record_length:
+            raise ValueError(f"{source.name}: {len(line)}-character line for a {record_length}-byte record")
+        records.append(line.ljust(record_length))
+    destination.write_bytes("".join(records).encode("latin-1"))
+
+
+def render_reader_into(project: Path, design, program_name: str) -> Path:
+    """Render the interest step's `ItemReader` into the generated project. Returns its path."""
+    source = render_item_reader(
+        STEP,
+        design,
+        program_name,
+        package=READER_PACKAGE,
+        domain_package=DEFAULT_DOMAIN_PACKAGE,
+    )
+    destination = (
+        project / "src" / "main" / "java" / Path(READER_PACKAGE.replace(".", "/"))
+        / f"{reader_class_name(STEP)}.java"
+    )
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    destination.write_text(source, encoding="utf-8")
+    return destination
+
+
 def describe_result(result: ComparisonResult) -> str:
-    """The metric, with the two qualifiers ADR-0030 requires it never to appear without."""
+    """The metric, with the qualifiers ADR-0030 requires it never to appear without.
+
+    **The first one narrowed when the reader started being rendered** (G31). It used to say the
+    wiring was hand-written, full stop; the reader now comes from `design.json` and the job and step
+    beans do not. Narrowing it rather than dropping it is the point: a qualifier that quietly becomes
+    less true is how a stopgap turns permanent, and one that quietly becomes broader is how a real
+    result gets undersold.
+    """
     return (
-        f"{result.render()}; wiring hand-written (ADR-0030), bodies scripted rather than "
-        f"model-authored"
+        f"{result.render()}; reader rendered from design.json, job and step wiring hand-written "
+        f"(ADR-0030), bodies scripted rather than model-authored"
+    )
+
+
+def _unified_design(entry, entities) -> UnifiedDesign:
+    """The design both the generated project and the rendered reader are built from.
+
+    One construction, used twice: a second copy assembled for the renderer could differ from the one
+    written to design.json, and then the reader would be rendered against a design nothing else saw.
+    """
+    return UnifiedDesign(
+        domain_entities=entities,
+        composite_types=[COMPOSITE, OUTPUT_COMPOSITE, POSTING],
+        batch_jobs=[
+            BatchJobDesign(
+                job_name="interestJob",
+                program_name=PROGRAM,
+                description="Monthly interest calculation.",
+                domain_entities=[entity.name for entity in entities],
+                steps=[STEP, COMPLETE_STEP, POSTING_STEP],
+            )
+        ],
+        rest_endpoints=[],
+        # What the rendered reader is built from (G31): access paths, keys and record layouts.
+        file_access_paths=build_file_access_paths(FIXTURE_ROOT, [entry]),
     )
 
 
@@ -184,23 +270,7 @@ def _design_json(directory: Path, entry, entities) -> Path:
     The third is ADR-0027's `postAccountInterest`, and without it the job writes transactions and
     never touches the account file -- so half of what the program does would go unmeasured.
     """
-    document = build_design_document(
-        [entry],
-        unified_design=UnifiedDesign(
-            domain_entities=entities,
-            composite_types=[COMPOSITE, OUTPUT_COMPOSITE, POSTING],
-            batch_jobs=[
-                BatchJobDesign(
-                    job_name="interestJob",
-                    program_name=PROGRAM,
-                    description="Monthly interest calculation.",
-                    domain_entities=[entity.name for entity in entities],
-                    steps=[STEP, COMPLETE_STEP, POSTING_STEP],
-                )
-            ],
-            rest_endpoints=[],
-        ),
-    )
+    document = build_design_document([entry], unified_design=_unified_design(entry, entities))
     path = directory / "design.json"
     path.write_text(document.model_dump_json(indent=2), encoding="utf-8")
     return path
@@ -250,6 +320,7 @@ def wire_build_and_run(project: Path, design_inputs, **generate_kwargs):
     entry, entities = design_inputs
     project.parent.mkdir(parents=True, exist_ok=True)
     design_path = _design_json(project.parent, entry, entities)
+    design = _unified_design(entry, entities)
 
     outcome = run_generate(design_path, FIXTURE_ROOT, project, **generate_kwargs)
     assert outcome.succeeded, f"generation failed: {[o.reason for o in outcome.blocked]}"
@@ -258,10 +329,17 @@ def wire_build_and_run(project: Path, design_inputs, **generate_kwargs):
     # every generated project and make every future round-trip claim ambiguous (ADR-0030, bound 1).
     shutil.copytree(HANDWRITTEN / "src", project / "src", dirs_exist_ok=True)
 
+    # The reader is rendered rather than copied in: `InterestJobConfiguration` constructs
+    # `ComputeInterestItemReader`, which exists only because this line ran. Free and deterministic,
+    # so it happens on every run rather than being a mode.
+    render_reader_into(project, design, entry.program_name)
+
     staged = project / "roundtrip" / "input"
     staged.mkdir(parents=True, exist_ok=True)
     for name, source in INPUTS.items():
         shutil.copy2(source, staged / name)
+    for name, (source, record_length) in TEXT_INPUTS.items():
+        stage_as_fixed_records(source, staged / name, record_length)
 
     result = compile_project(project, goal="verify")
     assert result.succeeded, "\n".join(d.message for d in result.diagnostics[:10])

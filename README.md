@@ -76,9 +76,10 @@ width (`docs/adr/0029`):
 The method bodies were written by a real `claude-opus-5` run; all three compiled on the first
 attempt, and the self-healing loop never ran.
 
-**What the qualifier means, and it is not decoration.** Nothing renders readers, writers, steps or
-job configuration (gap G31), so the job those processors ran inside is hand-written, once, for this
-one program (`tests/fixtures/handwritten/CBACT04C/`, `docs/adr/0030`). The claim is therefore
+**What the qualifier means, and it is not decoration.** The **reader is now rendered** from
+`design.json` — access paths, keys, joins and record layouts, all parsed from the COBOL (G31) — and
+what stays hand-written is the job and step wiring (`tests/fixtures/handwritten/CBACT04C/`,
+`docs/adr/0030`). The claim is therefore
 *generated logic matches COBOL's own output inside wiring a human wrote* — **not** *this platform
 generated a working program*. A test fails if this file states the count without the qualifier in
 the same paragraph.

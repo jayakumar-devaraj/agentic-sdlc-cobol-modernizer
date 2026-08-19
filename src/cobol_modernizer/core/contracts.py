@@ -242,6 +242,13 @@ class LookupKeyPart(BaseModel):
     #: retry path rather than the first attempt. Derived from source order, which is the only thing
     #: that distinguishes them.
     is_fallback: bool = False
+    #: Where this key field sits in the looked-up file's own record, from the program's `FD`
+    #: declaration. Carried rather than left to be matched by name: `FD-ACCT-ID` and the entity's
+    #: `ACCT-ID` line up because `READ ... INTO` copies the same bytes, and inferring that from the
+    #: `FD-` prefix would be a naming convention standing in for a fact. `None` when the `FD` record
+    #: could not be sized, which makes the lookup unrenderable rather than approximate.
+    key_offset: int | None = None
+    key_width: int | None = None
     source_line: int
 
 

@@ -102,28 +102,39 @@ def display_width(mapping: PicMapping) -> int:
     return mapping.precision
 
 
-def compute_record_layouts(source_text: str) -> list[RecordLayout]:
+def compute_record_layouts(source_text: str, *, skip_unsizable: bool = False) -> list[RecordLayout]:
     """Every `01`-level record in `source_text`, with each field's offset and the total length.
 
     A copybook yields one; a program's `DATA DIVISION` yields one per `01` level, which is why this
     returns a list rather than the single record a copybook happens to contain.
 
+    `skip_unsizable` drops a record this module cannot size instead of raising. Off by default,
+    because for a copybook -- one record, and the entity is built from it -- a partial answer is a
+    wrong answer. It is switched on for a *program*, where the `DATA DIVISION` legitimately contains
+    records this cannot size (`CBACT04C`'s `DB2-FORMAT-TS` is a `REDEFINES` group the construct
+    matrix already routes to a human) and the caller wants the `FD` records regardless. Skipping is
+    then safe for the same reason it is unsafe above: whole records are dropped, never fields, so no
+    surviving offset is affected.
+
     Raises:
-        UnsupportedRecordLayoutError: any field whose width cannot be determined. Deliberately not
-            partial -- see the exception's docstring.
+        UnsupportedRecordLayoutError: any field whose width cannot be determined, unless
+            `skip_unsizable`. Deliberately not partial within a record -- see the exception.
     """
     layouts: list[RecordLayout] = []
     current_name: str | None = None
     fields: list[FieldLayout] = []
     offset = 0
+    unsizable = False
 
     def flush() -> None:
-        nonlocal current_name, fields, offset
-        if current_name is not None:
+        nonlocal current_name, fields, offset, unsizable
+        # A record with an unsizable field is dropped whole rather than emitted short: every offset
+        # after the skipped field would be wrong, which is worse than not describing the record.
+        if current_name is not None and not unsizable:
             layouts.append(
                 RecordLayout(record_name=current_name, record_length=offset, fields=fields)
             )
-        current_name, fields, offset = None, [], 0
+        current_name, fields, offset, unsizable = None, [], 0, False
 
     for declaration in extract_record_fields(source_text):
         if declaration.level == "01":
@@ -143,13 +154,16 @@ def compute_record_layouts(source_text: str) -> list[RecordLayout]:
             mapping = map_pic_clause(
                 declaration.raw_text, adjacent_text=declaration.sibling_text
             )
-        except (UnsupportedPicConstructError, ValueError) as exc:
+            width = display_width(mapping)
+        except (UnsupportedPicConstructError, UnsupportedRecordLayoutError, ValueError) as exc:
+            if skip_unsizable:
+                unsizable = True
+                continue
             raise UnsupportedRecordLayoutError(
                 f"{current_name}: field {declaration.name or 'FILLER'!r} cannot be mapped, so "
                 f"every offset after it would be wrong -- {exc}"
             ) from exc
 
-        width = display_width(mapping)
         fields.append(
             FieldLayout(
                 field_name=None if declaration.is_filler else declaration.name,

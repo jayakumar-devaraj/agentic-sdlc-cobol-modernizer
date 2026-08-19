@@ -131,8 +131,29 @@ def entity_name_from_record(record_name: str) -> str:
     return _to_pascal_case(record_name)
 
 
+def _key_position(layouts, key_field: str) -> tuple[int | None, int | None]:
+    """Where `key_field` sits in the record that declares it.
+
+    Found by searching the program's own `FD` records rather than by trusting that `FD-ACCT-ID` and
+    `ACCT-ID` are the same field because their names rhyme. Ambiguity is refused the same way an
+    absence is: a key field declared in two records gives a renderer two different offsets and no
+    way to choose.
+    """
+    found = [
+        field
+        for layout in layouts
+        for field in layout.fields
+        if field.field_name == key_field
+    ]
+    if len(found) != 1:
+        return None, None
+    return found[0].byte_offset, found[0].byte_width
+
+
 def _key_parts_for(
-    read_key_components: list[str], assignments: list[KeyAssignment]
+    read_key_components: list[str],
+    assignments: list[KeyAssignment],
+    layouts,
 ) -> list[LookupKeyPart]:
     """The assignments that fill this lookup's key, in key order, fallbacks marked.
 
@@ -147,6 +168,7 @@ def _key_parts_for(
     """
     parts: list[LookupKeyPart] = []
     for field in read_key_components:
+        offset, width = _key_position(layouts, field)
         for index, assignment in enumerate(a for a in assignments if a.key_field == field):
             parts.append(
                 LookupKeyPart(
@@ -154,6 +176,8 @@ def _key_parts_for(
                     source_field=assignment.source_field,
                     literal=assignment.literal,
                     is_fallback=index > 0,
+                    key_offset=offset,
+                    key_width=width,
                     source_line=assignment.source_line,
                 )
             )
@@ -200,6 +224,10 @@ def build_file_access_paths(
                 for component in key_components(source_text, name)
             ]
             key_fields_by_file[declaration.select_name] = components
+        # The program's own records, `FD` ones included. Unsizable records are skipped rather than
+        # fatal: `CBACT04C`'s WORKING-STORAGE holds a `REDEFINES` group the construct matrix routes
+        # to a human, and it has nothing to do with where a key field sits.
+        fd_layouts = compute_record_layouts(source_text, skip_unsizable=True)
         assignments = extract_key_assignments(
             source_text, {name for names in key_fields_by_file.values() for name in names}
         )
@@ -236,6 +264,7 @@ def build_file_access_paths(
                         if declaration.is_keyed_lookup
                         else [],
                         assignments,
+                        fd_layouts,
                     ),
                     is_keyed_lookup=declaration.is_keyed_lookup,
                     select_line=declaration.source_line,
