@@ -7,7 +7,7 @@ Produced by tools/cobol-oracle/run-oracle.sh inside the pinned image (see Docker
 - indexed handler: indexed file handler : BDB
 - dialect: -std=ibm
 - PARM-DATE: 2026-08-12 (fixed; see RUNCB04.cbl)
-- generated: 2026-08-18T22:22:47Z
+- generated: 2026-08-19T00:20:25Z
 
 ## Pipeline
 1. CBTRN02C posts dailytran into tcatbal (the shipped tcatbal is the PRE-posting state).
@@ -15,6 +15,9 @@ Produced by tools/cobol-oracle/run-oracle.sh inside the pinned image (see Docker
 
 tcatbal-posted.dat is the state *between* the two stages -- the input any
 candidate implementation must start from to be comparable with transact.dat.
+acctdata-stage1.dat is the account file at the same instant, so the interest
+CBACT04C posted to each account is measurable as a difference against
+acctdata-posted.dat and can be checked against the transactions it wrote.
 
 ## Input blob hashes (sha256)
 - tcatbal.txt  a33eda6c526646e738164fd036ffdf525780466ade7141039bf72d4e25237afd
@@ -33,7 +36,8 @@ leaves this fixture stale with no signal, and a later mismatch reads as a Java d
 - CBTRN02C: TRANSACTIONS PROCESSED :000000300;TRANSACTIONS REJECTED :000000043
 
 ## Output
-- transact.dat  17500 bytes  sha256 f29007cbbf48d03752d90ec022ca460f9341a85de63e5861cbf7d51a26fd1473
+- transact.dat  17500 bytes  sha256 1c2e4f84db019a779b6cb153c85a5a7e82f46027812bc9a55404e837127e22f3
+- acctdata-stage1.dat  15000 bytes  sha256 5dfe79a147bc8c6b0a1e6e5c2b3a3df05367241da1c32622b8187eccba68195d
 - acctdata-posted.dat  15000 bytes  sha256 2156833ada1d4f9f2df8820794e7a1647a3fa95f7a4021d129cbde007d04fb25
 - tcatbal-posted.dat  4700 bytes  sha256 4b0a2389413ee5de0059bf0c40e1e52935e0aa265d7ac34ed7515d0e0aec1376
 - dalyrejs.txt  18490 bytes  sha256 86f3b3418f44226b0df45b68b164b9d81c7d1121a5c4d98b187245cc59080cc6

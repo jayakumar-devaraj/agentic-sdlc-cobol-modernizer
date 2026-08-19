@@ -14,3 +14,10 @@ tests/fixtures/tenant_repo_sample/** -text
 # alone deliberately. (The executable bit is a separate concern and is set on the index entry
 # itself, since core.fileMode is not meaningful on Windows.)
 templates/target-spring-boot-baseline/mvnw text eol=lf
+
+# The oracle pipeline runs inside a Linux container (tools/cobol-oracle/Dockerfile), so its
+# shell script must stay LF whatever the checking-out machine does. With core.autocrlf=true on
+# Windows the working tree gets CRLF and the container fails at `set -eu` with `set: Illegal
+# option -` -- a message that points at the shell rather than at the line endings, and one that
+# only appears for the person trying to reproduce the fixture. Same reasoning as mvnw above.
+tools/cobol-oracle/*.sh text eol=lf
