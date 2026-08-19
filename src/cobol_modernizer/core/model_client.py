@@ -83,11 +83,46 @@ MAX_BACKOFF_SECONDS = 30.0
 #: `core/model_routing.py` instead of relying on this.
 DEFAULT_MAX_OUTPUT_TOKENS = 32_000
 
+#: The input ceiling, in **characters**, applied to every model call this repo makes (step 39a,
+#: pillar 3, audit gap G11). See `docs/adr/0031-the-prompt-budget-is-measured-in-characters.md`.
+#:
+#: **Characters, not tokens, and that is the decision.** This repo has no tokenizer and will not
+#: acquire one just to count: the SDK's token counter is a network call, and a guard that costs a
+#: round trip to a service is a guard that gets disabled. Characters are exact, free, deterministic
+#: and available on both backends.
+#:
+#: **Where the number comes from.** Measured, not guessed. The largest real `generate` prompt is
+#: **85,215 characters** for `CBACT04C` (`tests/system/test_context_budget.py` re-measures it on
+#: every run, so this comment cannot quietly go stale), and the `design` side measured 81,975 at
+#: step 37g. The ceiling is ~7x that: enough headroom for a Track B program several times larger
+#: than anything in Track C, and low enough that unbounded growth -- an accumulating repair prompt,
+#: a pathological copybook expansion -- fails here rather than as an opaque API error or, worse, a
+#: silent truncation nobody notices in the output.
+#:
+#: At the conservative 2 characters/token this repo has used since step 37g, this is ~300k tokens
+#: against a 1M window; at a more typical 3.5 it is ~170k. Both are comfortably inside, which is
+#: the point: this bounds *growth*, it does not approximate the window.
+MAX_PROMPT_CHARS = 600_000
+
 #: Every tool the CLI could otherwise expose. Listed explicitly rather than via a wildcard so a
 #: newly-added tool is a visible omission in review, not silently permitted.
 _DISALLOWED_TOOLS = (
     "Bash,Read,Write,Edit,Glob,Grep,WebFetch,WebSearch,Task,TodoWrite,NotebookEdit"
 )
+
+
+class PromptBudgetExceededError(Exception):
+    """A prompt exceeded `MAX_PROMPT_CHARS` and was not sent (step 39a, pillar 3).
+
+    Joins the `UnsupportedPicConstructError` family: an unambiguous case that fails loudly rather
+    than being papered over. **The alternative that is never taken is truncation.** Dropping the
+    tail of a prompt to fit produces a model call that succeeds, costs money, and answers a
+    question nobody asked -- the copybook whose fields were cut, the paragraph whose second half is
+    missing -- and nothing downstream can tell that from a model that simply did worse. A wrong
+    answer that looks right is the outcome this repo spends the most effort refusing.
+
+    Raised **before** the call, so an oversized prompt costs nothing.
+    """
 
 
 class ModelCallError(Exception):
@@ -445,6 +480,39 @@ def _sdk_retryable_status(exc: Exception) -> int | None:
 # --- The public call ---------------------------------------------------------------------------
 
 
+def prompt_size_chars(system_prompt: str, user_content: str) -> int:
+    """What the budget is measured over: both turns, as sent.
+
+    One function rather than two `len()` calls at the check site, because the *reported* size and
+    the *checked* size have to be the same quantity -- a diagnostic that names a number the guard
+    did not use is worse than no number.
+    """
+    return len(system_prompt) + len(user_content)
+
+
+def _require_within_prompt_budget(
+    node: str, model: str, system_prompt: str, user_content: str, ceiling: int
+) -> None:
+    """Refuse an oversized prompt, naming what to look at.
+
+    The split matters in the message. A system prompt over budget is a prompt-template defect and
+    a `user_content` over budget is a data problem -- a program larger than anything measured, a
+    copybook that expanded, a repair context that kept accumulating -- and those have completely
+    different fixes. A single total would leave a reader to guess which.
+    """
+    total = prompt_size_chars(system_prompt, user_content)
+    if total <= ceiling:
+        return
+    raise PromptBudgetExceededError(
+        f"{node}: prompt is {total:,} characters against a ceiling of {ceiling:,} "
+        f"(system {len(system_prompt):,}, user {len(user_content):,}) for model {model}. "
+        "Not sent, and deliberately not truncated: a shortened prompt would produce a confident "
+        "answer to a question missing its tail. Either the input is larger than anything this "
+        "budget was measured against -- re-measure and raise MAX_PROMPT_CHARS on the record -- or "
+        "something is accumulating that should not be."
+    )
+
+
 def call_model(
     node: str,
     model: str,
@@ -454,6 +522,7 @@ def call_model(
     effort: str | None = None,
     max_output_tokens: int = DEFAULT_MAX_OUTPUT_TOKENS,
     backend: Backend | None = None,
+    max_prompt_chars: int = MAX_PROMPT_CHARS,
 ) -> ModelCallResult:
     """Call a model for `node`, retrying transient failures, and record what it cost.
 
@@ -470,15 +539,22 @@ def call_model(
             its own default -- which is not free: on Claude Opus 5 thinking is *on* by default and
             effort defaults to `high`, so an unset value is the most expensive setting, not a
             neutral one.
+        max_prompt_chars: Input ceiling for this call, in characters (step 39a). Defaults to
+            `MAX_PROMPT_CHARS` and is a parameter rather than an environment variable on purpose:
+            an env var lets a run quietly raise its own ceiling, and the ADR requires that raising
+            it be a decision someone made in code with a fresh measurement behind it.
         max_output_tokens: Safety ceiling. **Applied on the SDK backend only** -- the `claude` CLI
             exposes no max-tokens flag, so the two backends are not at parity here. Stated rather
             than hidden: a workload that depends on a hard output cap must use the SDK backend.
 
     Raises:
+        PromptBudgetExceededError: the prompt is over `max_prompt_chars`. Raised before the call,
+            so it costs nothing, and never handled by truncating -- see the exception's docstring.
         ModelCallError: a non-retryable failure, or every attempt exhausted. Never returns a
             partial or fabricated response -- consistent with `pic_mapper`'s posture that a wrong
             answer which looks right is the worst outcome available.
     """
+    _require_within_prompt_budget(node, model, system_prompt, user_content, max_prompt_chars)
     chosen = resolve_backend(backend)
 
     for attempt in range(1, MAX_TRANSPORT_ATTEMPTS + 1):

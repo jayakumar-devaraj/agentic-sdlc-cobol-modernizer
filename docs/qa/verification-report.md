@@ -2856,6 +2856,56 @@ unconditionally performs `1300-B-WRITE-TX`, so it included that paragraph's fiel
 which is exactly the split PR #43 made. The comparison is unaffected because `completeTransaction`
 rebuilds every field, but the model located a design ambiguity from the COBOL alone.
 
+### Step 39a — the context budget, measured rather than assumed
+
+**What was open.** Pillar 3 (Context Window Engineering) had been deferred to a precondition
+ADR-0016 removed, leaving it with no owner (gap G11). The deliverable the plan asked for was *a
+measured budget and a documented behaviour when it is exceeded*.
+
+**The measurement, taken without calling a model.** The real `generate` prompts are rebuilt through
+the same `author` seam every other test uses, so this costs nothing and can run in CI:
+
+```
+JAVA_HOME=... pytest tests/system/test_context_budget.py -q -s
+generate prompts (chars): [85215, 84928, 84938]; ceiling 600,000
+6 passed
+```
+
+| | characters |
+|---|---|
+| largest `generate` prompt (`CBACT04C`) | **85,215** |
+| largest `design` prompt (step 37g) | 81,975 |
+| ceiling adopted (ADR-0031) | **600,000** |
+
+The three prompts differ by **under 0.4%**, independently consistent with the 99.8% shared prefix
+PR #28 recorded from cache behaviour — derived here from the prompts themselves rather than from a
+bill, and asserted, so an edit that breaks the shared prefix fails a test instead of showing up as a
+cost increase nobody attributes to it.
+
+**The policy** (ADR-0031): characters rather than tokens, because this repo has no tokenizer and the
+SDK's counter is a network call — a guard that costs a round trip is a guard that gets disabled.
+Enforced in `call_model`, the single place this repo talks to a model, so every node and both
+backends are covered by one check. `PromptBudgetExceededError` is raised **before** the call, so an
+oversized prompt costs nothing.
+
+**Truncation is refused permanently**, and that is the substance of the decision rather than a
+footnote: a truncated prompt produces a call that succeeds, bills, and answers a question missing
+its tail, which nothing downstream can distinguish from a model that did worse.
+
+**Shown to guard rather than to report.** Both backends are replaced with functions that raise if
+they are ever entered, so a check placed after backend selection — or absent — fails with a
+different exception than the one asserted. The boundary is tested from the other side too: a prompt
+of exactly `MAX_PROMPT_CHARS` must reach the (stubbed) backend, since an off-by-one in a ceiling is
+the difference between a guard and an outage.
+
+**Found by running it**: patching only the CLI backend let the test pass through to the SDK and fail
+with an authentication error — an exception, but not the one under test, and a looser assertion
+would have called that green. Both backends are patched now, with the reason recorded in the test.
+
+**What stays an estimate.** No characters-per-token calibration point exists yet, because the live
+runs recorded aggregate usage. The round-trip test now prints `input_tokens`, so the next live run
+produces one at no extra cost. Until then the token figures carry their assumed ratio explicitly.
+
 ## Not yet covered (honest gaps, not silently skipped)
 
 - *(corrected 2026-08-08 — this entry was stale, not merely incomplete)* This previously read
