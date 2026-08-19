@@ -2798,6 +2798,58 @@ volunteered.
 **Cost, recorded because this repo records it**: `$0.5766754` notional for 2 calls / 7,563 tokens,
 inside a `RunBudget(max_model_calls=8)` ceiling that was never approached.
 
+### The account half, and a divergence pinned rather than smoothed
+
+**Half of `CBACT04C`'s output was still unmeasured.** It writes interest transactions *and* rewrites
+the account master; the first round trip compared `transact.dat` only. ADR-0027's
+`postAccountInterest` step now runs as a third step in the same hand-written job, over items whose
+interest is already summed by an aggregating reader, and its output is compared against
+`acctdata-posted.dat`.
+
+**The result: `598 of 600` fields, and nothing excluded.** The transaction record gives up `TRAN-ID`
+and both timestamps by ADR-0026; the account record gives up nothing, so every one of its twelve
+fields has to match by being right rather than by being skipped.
+
+**The two that differ are one defect, and it is COBOL's.**
+
+| field | candidate | COBOL |
+|---|---|---|
+| `ACCT-CURR-BAL` (record 49) | 2060.06 | 2041.30 |
+| `ACCT-CURR-CYC-CREDIT` (record 49) | 0 | 1549.30 |
+
+`CBACT04C`'s loop is `PERFORM UNTIL END-OF-FILE = 'Y'` with `PERFORM 1050-UPDATE-ACCOUNT` in the
+`ELSE` of `IF END-OF-FILE = 'N'`, so that branch never runs and the last account is never posted --
+the defect PR #59's cross-artifact identity found. The paragraph does exactly three things (add the
+interest, zero the cycle credit, zero the cycle debit) and **the divergence set is exactly its write
+set**, minus the field that was already zero. The balance difference is `18.76`, which is precisely
+that account's interest read off the transaction oracle.
+
+**The cheap option was available and refused.** Making the reader skip the last account would have
+turned this green by encoding a bug, and the number would then describe the wiring rather than the
+generated logic. `assert_account_half_matches_except_the_last` pins the shape instead: one record,
+fields confined to that paragraph's writes, balance difference equal to the uncredited interest. A
+second diverging account, a different field, or a different amount all fail.
+
+**Both halves, with model-authored bodies:**
+
+```
+COBOL_MODERNIZER_RUN_LIVE_CLI_TESTS=1 JAVA_HOME=...   pytest tests/system/test_hand_written_round_trip.py -q -s -k live
+
+live round trip: 500 of 500 fields matched; 3 excluded by decision;
+  wiring hand-written (ADR-0030), bodies model-authored
+  steps and attempts: {'computeInterest': 1, 'completeTransaction': 1, 'postAccountInterest': 1}
+  account half: 598 of 600 fields matched; 0 excluded by decision
+  3 model call(s), 9802 tokens, notional cost 0.7626982
+```
+
+All three bodies compiled on the first attempt. Session total for both live runs: **$1.339**.
+
+**The third body's notes flagged something the first run's did not**: that `1300-COMPUTE-INTEREST`
+unconditionally performs `1300-B-WRITE-TX`, so it included that paragraph's field moves and said
+*"if the design intended `1300-B-WRITE-TX` to be a separate step, this body needs to be split"* --
+which is exactly the split PR #43 made. The comparison is unaffected because `completeTransaction`
+rebuilds every field, but the model located a design ambiguity from the COBOL alone.
+
 ## Not yet covered (honest gaps, not silently skipped)
 
 - *(corrected 2026-08-08 — this entry was stale, not merely incomplete)* This previously read

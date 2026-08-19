@@ -1,10 +1,13 @@
 package com.modernized.batch.handwritten;
 
+import com.modernized.batch.domain.Account;
+import com.modernized.batch.domain.AccountInterestPosting;
 import com.modernized.batch.domain.Tran;
 import com.modernized.batch.domain.TranCatBalWithRate;
 import com.modernized.batch.domain.TranWithContext;
 import com.modernized.batch.processor.CompleteTransactionProcessor;
 import com.modernized.batch.processor.ComputeInterestProcessor;
+import com.modernized.batch.processor.PostAccountInterestProcessor;
 import java.nio.file.Path;
 import org.springframework.batch.core.job.Job;
 import org.springframework.batch.core.configuration.JobRegistry;
@@ -64,6 +67,9 @@ public class InterestJobConfiguration {
 
     static final Path OUTPUT = Path.of("roundtrip", "output", "candidate.jsonl");
 
+    /** `CBACT04C` writes two files, so a round trip that measures one of them measures half. */
+    static final Path ACCOUNT_OUTPUT = Path.of("roundtrip", "output", "candidate-accounts.jsonl");
+
     @Bean
     JobRepository jobRepository() {
         return new ResourcelessJobRepository();
@@ -91,6 +97,17 @@ public class InterestJobConfiguration {
     @Bean
     TranJsonLinesItemWriter tranJsonLinesItemWriter() throws Exception {
         return new TranJsonLinesItemWriter(OUTPUT);
+    }
+
+    @Bean
+    AccountInterestPostingItemReader accountInterestPostingItemReader(
+            TranWithContextStaging staging) {
+        return new AccountInterestPostingItemReader(staging);
+    }
+
+    @Bean
+    AccountJsonLinesItemWriter accountJsonLinesItemWriter() throws Exception {
+        return new AccountJsonLinesItemWriter(ACCOUNT_OUTPUT);
     }
 
     @Bean
@@ -123,12 +140,38 @@ public class InterestJobConfiguration {
                 .build();
     }
 
+    /**
+     * `1050-UPDATE-ACCOUNT`, over items whose interest is already summed (ADR-0027).
+     *
+     * <p>Third rather than parallel: it consumes what step 1 staged, so it cannot run until every
+     * balance row has been through the interest calculation -- which is the same reason COBOL posts
+     * on the account break rather than per row.
+     */
+    @Bean
+    Step postAccountInterestStep(
+            JobRepository jobRepository,
+            PlatformTransactionManager transactionManager,
+            AccountInterestPostingItemReader reader,
+            AccountJsonLinesItemWriter writer) {
+        return new StepBuilder("postAccountInterest", jobRepository)
+                .<AccountInterestPosting, Account>chunk(10)
+                .reader(reader)
+                .processor(new PostAccountInterestProcessor())
+                .writer(writer)
+                .transactionManager(transactionManager)
+                .build();
+    }
+
     @Bean
     Job interestJob(
-            JobRepository jobRepository, Step computeInterestStep, Step completeTransactionStep) {
+            JobRepository jobRepository,
+            Step computeInterestStep,
+            Step completeTransactionStep,
+            Step postAccountInterestStep) {
         return new JobBuilder("interestJob", jobRepository)
                 .start(computeInterestStep)
                 .next(completeTransactionStep)
+                .next(postAccountInterestStep)
                 .build();
     }
 

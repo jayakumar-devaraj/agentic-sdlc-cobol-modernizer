@@ -78,10 +78,13 @@ job runs inside is **hand-written**, once, for this one program
 (`tests/fixtures/handwritten/CBACT04C/`, `docs/adr/0030`) — and the method bodies in that run are
 the scripted fixtures step 45 uses. **A live `claude-opus-5` run then reproduced the same result
 with model-authored bodies** — 500 of 500, both steps compiled on the first attempt, 2 calls and
-`$0.577`. So the remaining qualifier is the wiring: what is measured is that **generated logic
-matches COBOL's own output inside wiring a human wrote** (G31), and only for the transactions —
-`CBACT04C` also rewrites the account file, and that half is not compared. The count therefore stays
-`0 of 4`. The run found a real defect on its first pass — `TRAN-SOURCE`
+`$0.577`. **Both halves of what `CBACT04C` writes are now compared**: the transactions at 500 of 500, and the
+rewritten account file at **598 of 600 with nothing excluded**. The two that differ are one record —
+COBOL's own loop never posts the last account, because the account-break branch sits in an
+unreachable `ELSE`, and the divergence is exactly the two fields that paragraph writes. Reproducing
+that defect in the wiring would have made it green and is refused; the shape is pinned instead. So
+the remaining qualifier is the wiring itself: what is measured is that **generated logic matches
+COBOL's own output inside wiring a human wrote** (G31), which is why the count stays `0 of 4`. The run found a real defect on its first pass — `TRAN-SOURCE`
 is `PIC X(10)` and the body wrote a bare `"System"`, disagreeing with COBOL on fifty records while
 every amount matched. Step 40a's loader
 (`tools/data_loader.py`) reads CardDemo's fixed-width files into PostgreSQL with

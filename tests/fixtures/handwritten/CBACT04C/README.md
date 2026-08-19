@@ -75,6 +75,17 @@ A rendered reader must carry both, or they are lost with no signal.
   every Spring Boot test in the generated project — bound 1 defeated through a side door. The
   baseline's own `BaselineStackTest` failed on the first run for exactly that reason.
 
+### F6 · The account half is where the design's step chain stops being enough
+
+`CBACT04C` writes **two** files, and the second one needs the interest summed per account before
+`1050-UPDATE-ACCOUNT` can post it. ADR-0027 makes that summation infrastructure -- so
+`AccountInterestPostingItemReader` aggregates the first step's staged output by account key. Nothing
+in `design.json` says that this step consumes an *aggregate* of an earlier step's output rather than
+a stream of its own: the step declares `AccountInterestPosting` in and `Account` out, and the
+grouping key, the summed field and the ordering are all facts the wiring supplied. The live model
+reached the same conclusion from the COBOL alone, writing that the total *"has to be supplied by
+whatever step implements the account-break/update logic"*.
+
 ## What the first run found
 
 `TRAN-SOURCE` is `PIC X(10)`. The completion body wrote a bare `"System"`, so **fifty records
@@ -82,3 +93,27 @@ disagreed with COBOL on one field** while every amount matched. The eval judge h
 defect in the real PR #44 body (audit R2.27) and the copybook had said so all along; this is the
 first check in the repo that could fail on it, because the equivalence test asserts on `tranAmt`
 alone.
+
+
+## What the account half found
+
+`598 of 600` fields match, **with nothing excluded** -- the account record gives up no field the way
+`transact.dat` gives up `TRAN-ID` and its timestamps. The two that differ are both on the **last
+account**, and both are fields `1050-UPDATE-ACCOUNT` writes:
+
+| field | candidate | COBOL |
+|---|---|---|
+| `ACCT-CURR-BAL` | 2060.06 | 2041.30 |
+| `ACCT-CURR-CYC-CREDIT` | 0 | 1549.30 |
+
+**One cause, and it is COBOL's.** The main loop is `PERFORM UNTIL END-OF-FILE = 'Y'` with the
+account-break post in the `ELSE` of `IF END-OF-FILE = 'N'`, so that branch is unreachable and the
+final account is never posted. The paragraph does exactly three things -- add the interest, zero the
+cycle credit, zero the cycle debit -- and the divergence set is exactly its write set, minus the one
+field that was already zero. That is what makes the diagnosis a measurement rather than a story.
+
+**Reproducing the defect in the wiring was available and refused.** Skipping the last account would
+have made this comparison green by encoding a bug, and the number would then have been an artifact
+of the wiring rather than a fact about the generated logic. `assert_account_half_matches_except_the_last`
+pins the shape instead: one record, fields limited to that paragraph's writes, the balance
+difference equal to that account's uncredited interest as read from the transaction oracle.

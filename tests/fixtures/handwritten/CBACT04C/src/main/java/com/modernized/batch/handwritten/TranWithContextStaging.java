@@ -39,4 +39,15 @@ class TranWithContextStaging implements ItemWriter<TranWithContext>, ItemReader<
     int staged() {
         return staged.size();
     }
+
+    /**
+     * What step 1 wrote, in the order it wrote it -- the input to the account-break aggregation.
+     *
+     * <p>Reading it back rather than staging a second copy: two collections holding the same items
+     * is a pair that can disagree, and the account totals must be the sums of the very records the
+     * comparison sees.
+     */
+    List<TranWithContext> items() {
+        return List.copyOf(staged);
+    }
 }
