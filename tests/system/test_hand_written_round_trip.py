@@ -34,7 +34,12 @@ from pathlib import Path
 
 import pytest
 
+from cobol_modernizer.core.contracts import ProgramDesignEntry
+from cobol_modernizer.core.model_client import RunBudget, collect_usage
 from cobol_modernizer.graph.generate_pipeline import run_generate
+from cobol_modernizer.nodes.solution_architect import build_domain_entities
+from cobol_modernizer.nodes.spec_critic import critique_spec
+from cobol_modernizer.nodes.spec_extractor import extract_spec
 from cobol_modernizer.tools.local_compiler import compile_project
 from tests.system.test_cobol_oracle_comparison import (
     EXCLUSIONS,
@@ -44,12 +49,11 @@ from tests.system.test_cobol_oracle_comparison import (
     load_oracle,
 )
 from tests.system.test_interest_equivalence import (
-    FIXTURE_ROOT,
-    _author,
     _CORRECT_BODY,
+    FIXTURE_ROOT,
+    PROGRAM,
+    _author,
     _design_json,
-    entities,  # noqa: F401  -- pytest fixture, imported for use
-    entry,  # noqa: F401  -- pytest fixture, imported for use
 )
 
 HANDWRITTEN = Path(__file__).resolve().parents[1] / "fixtures" / "handwritten" / "CBACT04C"
@@ -136,20 +140,36 @@ def describe_result(result: ComparisonResult) -> str:
 
 
 @pytest.fixture(scope="module")
-def candidate_records(tmp_path_factory, entry, entities) -> list[dict[str, CandidateValue]]:
-    """Generate, wire, build and run -- once for the whole module, because Maven is the cost."""
-    project = tmp_path_factory.mktemp("round-trip") / "target-project"
+def design_inputs():
+    """The real `CBACT04C` spec and its `pic_mapper`-derived entities.
+
+    Built here rather than imported from `test_interest_equivalence`: importing that module's
+    fixtures and then naming them as parameters is a redefinition, and ruff is right to refuse it.
+    """
+
+    def narrate(model, system_prompt, user_content):
+        return user_content.split(f'<untrusted-cobol-source label="{PROGRAM}">')[0]
+
+    extraction = extract_spec(FIXTURE_ROOT, PROGRAM, narrate=narrate)
+    critique = critique_spec(FIXTURE_ROOT, extraction, critique=lambda m, s, u: "[]")
+    entry = ProgramDesignEntry(
+        program_name=PROGRAM, spec_extraction=extraction, critique=critique
+    )
+    return entry, build_domain_entities(FIXTURE_ROOT, [entry])
+
+
+def wire_build_and_run(project: Path, design_inputs, **generate_kwargs):
+    """Generate the processors, add the hand-written wiring, build and run. Returns the records.
+
+    Shared by the scripted path and the live one so that **the only difference between them is who
+    wrote the method bodies** -- if the wiring or the comparison differed too, a disagreement
+    between the two runs would not be attributable to the bodies.
+    """
+    entry, entities = design_inputs
+    project.parent.mkdir(parents=True, exist_ok=True)
     design_path = _design_json(project.parent, entry, entities)
 
-    outcome = run_generate(
-        design_path,
-        FIXTURE_ROOT,
-        project,
-        author=_author(_CORRECT_BODY),
-        advise=lambda routing, s, u: json.dumps(
-            {"repairable": False, "reason": "scripted", "instruction": ""}
-        ),
-    )
+    outcome = run_generate(design_path, FIXTURE_ROOT, project, **generate_kwargs)
     assert outcome.succeeded, f"generation failed: {[o.reason for o in outcome.blocked]}"
 
     # The wiring, copied in rather than rendered -- and never into templates/, where it would join
@@ -166,7 +186,22 @@ def candidate_records(tmp_path_factory, entry, entities) -> list[dict[str, Candi
 
     output = project / CANDIDATE
     assert output.is_file(), "the job completed and wrote no candidate output"
-    return parse_candidate(output)
+    return parse_candidate(output), outcome
+
+
+@pytest.fixture(scope="module")
+def candidate_records(tmp_path_factory, design_inputs) -> list[dict[str, CandidateValue]]:
+    """Generate, wire, build and run -- once for the whole module, because Maven is the cost."""
+    project = tmp_path_factory.mktemp("round-trip") / "target-project"
+    records, _outcome = wire_build_and_run(
+        project,
+        design_inputs,
+        author=_author(_CORRECT_BODY),
+        advise=lambda routing, s, u: json.dumps(
+            {"repairable": False, "reason": "scripted", "instruction": ""}
+        ),
+    )
+    return records
 
 
 def test_the_wiring_produces_one_record_per_non_zero_rate(candidate_records):
@@ -196,3 +231,44 @@ def test_the_comparison_would_have_caught_a_wrong_amount(candidate_records):
     mutated = [dict(record) for record in candidate_records]
     mutated[13]["TRAN-AMT"] = CandidateValue("TRAN-AMT", Decimal("0.01"))
     assert not compare(mutated, load_oracle()).passed
+
+
+# --- the same measurement, with a model writing the bodies -----------------------------------------
+
+
+@pytest.mark.live_claude_cli
+def test_a_model_authored_run_is_compared_against_the_same_oracle(tmp_path, design_inputs):
+    """The question ADR-0030 says the oracle exists to answer: **is the generated logic correct?**
+
+    Identical to the scripted run in every respect except who wrote the two method bodies -- same
+    design, same hand-written wiring, same inputs, same differential -- so a disagreement between
+    the two is attributable to the bodies and to nothing else.
+
+    **Costs real money**, so it is skipped unless `COBOL_MODERNIZER_RUN_LIVE_CLI_TESTS=1`, and the
+    budget is a ceiling rather than a hope: eight calls covers two steps and their heal attempts,
+    and `RunBudgetExceededError` stops the run rather than letting a repair loop spend without
+    bound.
+
+    A failure here is a **finding, not a broken test**. If a model-authored body disagrees with
+    COBOL, the mismatch list names the field and both values, and that is the most useful output
+    this repo can produce.
+    """
+    project = tmp_path / "live" / "target-project"
+    with collect_usage(RunBudget(max_model_calls=8)) as usage:
+        records, outcome = wire_build_and_run(project, design_inputs)
+
+    result = compare(records, load_oracle())
+    authored = {step.step_name: step.attempts for step in outcome.compiled}
+    notes = [note for step in outcome.compiled for note in step.notes if note.strip()]
+
+    print(
+        f"\nlive round trip: {result.render()}; wiring hand-written (ADR-0030), bodies "
+        f"model-authored"
+        f"\n  steps and attempts: {authored}"
+        f"\n  {usage.model_calls} model call(s), {usage.total_tokens} tokens, "
+        f"notional cost {usage.notional_cost_usd}"
+    )
+    for note in notes:
+        print(f"  model note: {note}")
+
+    assert result.passed, "\n".join(result.mismatches[:10])
