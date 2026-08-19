@@ -71,8 +71,16 @@ to a passing differential test — and that count is `0 of 4`. What changed is t
 now the *test*, not the code: `tests/fixtures/golden/CBACT04C/oracle/` holds what the **unmodified**
 `CBACT04C` wrote under GnuCOBOL over the shipped corpus (`docs/adr/0028`), reproduced by
 `tools/cobol-oracle/`, and `docs/adr/0029`'s field-level comparison is built and shown to
-discriminate. It has no generated-Java candidate to compare yet, because nothing renders readers,
-writers or job configuration — so the generated project cannot run as a batch job. Step 40a's loader
+discriminate. The comparison now has a candidate, and it is green: **500 of 500
+comparable fields across 50 records**, 3 excluded by `docs/adr/0026`. **Read both qualifiers before
+quoting that.** Nothing renders readers, writers or job configuration (gap G31), so the wiring the
+job runs inside is **hand-written**, once, for this one program
+(`tests/fixtures/handwritten/CBACT04C/`, `docs/adr/0030`) — and the method bodies in that run are
+the scripted fixtures step 45 uses, not model-authored. So the count stays `0 of 4`: what is
+measured is that generated logic matches COBOL's own output inside wiring a human wrote, which is a
+weaker claim than the metric's name. The run found a real defect on its first pass — `TRAN-SOURCE`
+is `PIC X(10)` and the body wrote a bare `"System"`, disagreeing with COBOL on fifty records while
+every amount matched. Step 40a's loader
 (`tools/data_loader.py`) reads CardDemo's fixed-width files into PostgreSQL with
 `pic_mapper`-derived types; its finding that every `TRAN-CAT-BAL` in the shipped data is zero turned
 out to be a property of *that* file rather than the corpus — `dailytran.txt` carries 299 distinct

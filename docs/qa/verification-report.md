@@ -2674,6 +2674,70 @@ already established.
 
 **Suite after the change**: `pytest tests/system/test_cobol_oracle_comparison.py -q` → **21 passed**.
 
+### The round trip, run — generated logic inside hand-written wiring
+
+**What ran.** `tests/system/test_hand_written_round_trip.py` generates `CBACT04C`'s two processors
+through `run_generate`, copies the hand-written wiring from `tests/fixtures/handwritten/CBACT04C/`
+into the generated project, and builds and runs it with real Maven over the oracle's own inputs
+(`tcatbal-posted.dat`, `acctdata-stage1.dat`, plus the corpus's untouched `discgrp.txt` and
+`cardxref.txt`). The job writes each generated `Tran` as JSON; the Python differential
+(`docs/adr/0029`) compares it field-for-field against `transact.dat`.
+
+```
+JAVA_HOME=... pytest tests/system/test_hand_written_round_trip.py -q
+3 passed in 69.58s
+```
+
+**The result, with the qualifiers that belong to it.** **500 of 500 comparable fields matched across
+50 records; 3 fields excluded by ADR-0026** (`TRAN-ID` and both timestamps). `describe_result`
+renders it as *"500 of 500 fields matched; 3 excluded by decision; wiring hand-written (ADR-0030),
+bodies scripted rather than model-authored"*, and that string exists so the number cannot travel
+without them. **This is not "the platform generated a working program."** The wiring — reader,
+writer, two step beans, job bean — is hand-written, because nothing renders it (G31); and the method
+bodies are step 45's scripted fixtures, so what a *model* would write remains an open question
+needing a live call.
+
+**It found a defect on its first run, and no other check here could have.** `TRAN-SOURCE` is
+`PIC X(10)` (`CVTRA05Y:8`) and the completion body wrote a bare `"System"`, so **fifty records
+disagreed on that field while every amount matched**:
+
+```
+record 0 TRAN-SOURCE: got 'System' want 'System    '
+... 450 of 500 fields matched
+```
+
+The eval judge flagged that same body defect in PR #44 (audit R2.27) and the copybook had said so
+all along — but the equivalence test asserts on `tranAmt` alone, so nothing in the suite could fail
+on it until a whole record was compared against COBOL's own. Third independent agreement on one
+defect, and the first one that a machine could act on.
+
+**The guard is exercised by the run, not asserted about it.** 94 balance rows go in and 50 records
+come out, because `IF DIS-INT-RATE NOT = 0` is running in generated Java. The record-count check
+happens before the field comparison, so "the job wrote nothing" cannot present as fifty mismatches.
+
+**Three defects found only by running it**, each costing one Maven cycle and each recorded in the
+wiring's `README.md` as a finding rather than a fix:
+
+1. `BatchApplication` component-scans `com.modernized.batch`, so the hand-written `@Configuration`
+   joined the context of every Spring Boot test in the generated project and `BaselineStackTest`
+   failed to load. ADR-0030's first bound arriving through a side door — the wiring is now gated
+   behind a `handwritten-wiring` profile.
+2. `TaskExecutorJobOperator` refuses to initialise without a `JobRegistry`.
+3. `MapJobRegistry` registers every `Job` bean itself, so registering the job explicitly throws
+   `DuplicateJobException` — "register the thing you built" is the obvious shape and it is wrong.
+
+**What the stopgap is for.** ADR-0030's third bound requires every fact the wiring needed that
+`design.json` lacks to be recorded, so the eventual renderer starts from practice rather than a
+design session. Five are listed in `tests/fixtures/handwritten/CBACT04C/README.md`: no byte offsets
+or record lengths (only widths, and contiguity happens to hold for these four copybooks); no
+statement of where data comes from or how the four composite components join; no store for the step
+chain's intermediate type; the `'DEFAULT'` rate fallback and abend-on-missing-lookup are business
+rules left to wiring; and the Spring Batch 6 facts above.
+
+**Still true after this run**: `0 of 4 programs round-trip`. The candidate exists and matches, and
+the two things standing between this and the metric are a rendered wiring layer (G31) and a
+model-authored body.
+
 ## Not yet covered (honest gaps, not silently skipped)
 
 - *(corrected 2026-08-08 — this entry was stale, not merely incomplete)* This previously read
