@@ -76,9 +76,12 @@ comparable fields across 50 records**, 3 excluded by `docs/adr/0026`. **Read bot
 quoting that.** Nothing renders readers, writers or job configuration (gap G31), so the wiring the
 job runs inside is **hand-written**, once, for this one program
 (`tests/fixtures/handwritten/CBACT04C/`, `docs/adr/0030`) — and the method bodies in that run are
-the scripted fixtures step 45 uses, not model-authored. So the count stays `0 of 4`: what is
-measured is that generated logic matches COBOL's own output inside wiring a human wrote, which is a
-weaker claim than the metric's name. The run found a real defect on its first pass — `TRAN-SOURCE`
+the scripted fixtures step 45 uses. **A live `claude-opus-5` run then reproduced the same result
+with model-authored bodies** — 500 of 500, both steps compiled on the first attempt, 2 calls and
+`$0.577`. So the remaining qualifier is the wiring: what is measured is that **generated logic
+matches COBOL's own output inside wiring a human wrote** (G31), and only for the transactions —
+`CBACT04C` also rewrites the account file, and that half is not compared. The count therefore stays
+`0 of 4`. The run found a real defect on its first pass — `TRAN-SOURCE`
 is `PIC X(10)` and the body wrote a bare `"System"`, disagreeing with COBOL on fifty records while
 every amount matched. Step 40a's loader
 (`tools/data_loader.py`) reads CardDemo's fixed-width files into PostgreSQL with

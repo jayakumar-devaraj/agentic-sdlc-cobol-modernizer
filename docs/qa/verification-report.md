@@ -2738,6 +2738,66 @@ rules left to wiring; and the Spring Batch 6 facts above.
 the two things standing between this and the metric are a rendered wiring layer (G31) and a
 model-authored body.
 
+### The same round trip, with a model writing the bodies
+
+**The run.**
+
+```
+COBOL_MODERNIZER_RUN_LIVE_CLI_TESTS=1 JAVA_HOME=... \
+  pytest tests/system/test_hand_written_round_trip.py -q -s -k live
+1 passed in 164.37s
+```
+
+```
+live round trip: 500 of 500 fields matched; 3 excluded by decision;
+  wiring hand-written (ADR-0030), bodies model-authored
+  steps and attempts: {'computeInterest': 1, 'completeTransaction': 1}
+  2 model call(s), 7563 tokens, notional cost 0.5766754
+```
+
+**What is now established.** Two `claude-opus-5`-authored method bodies, placed in hand-written
+wiring, produce **every comparable field of all fifty transaction records exactly as the unmodified
+`CBACT04C` wrote them under GnuCOBOL**. Both compiled on the first attempt — the heal loop did not
+run — and the differential is the one ADR-0029 built and demonstrated to fail on a one-cent change,
+a short alphanumeric and a record-count mismatch.
+
+**Identical to the scripted run in everything but the bodies.** Same design, same wiring, same
+inputs, same comparison, one shared `wire_build_and_run`. That is deliberate: if any of those
+differed, a disagreement between the two runs would not be attributable to the model.
+
+**The notes are the other half of the result.** The model flagged three gaps unprompted, and every
+one of them is a decision this repo had already recorded:
+
+1. **`ADD WS-MONTHLY-INT TO WS-TOTAL-INT` is not implemented**, because a stateless `ItemProcessor`
+   has nowhere to hold an accumulator that spans an account's records, and *"reproducing it here with
+   a field would be order- and restart-dependent"*. That is ADR-0027's reasoning, arrived at
+   independently.
+2. **`TRAN-ID`, `TRAN-ORIG-TS`, `TRAN-PROC-TS` are job-level facts, not item-level ones** — a run
+   parameter, a monotonic counter and a clock read — and *"reading a clock or a counter inside
+   process() would make the same input produce different records across runs and across a chunk
+   restart"*. That is ADR-0026 and `NonDeterministicBodyError`, restated by the model that would have
+   tripped them.
+3. **It emitted PIC-width spaces rather than empty strings** for fields it could not fill, and said
+   so. G28's lesson, applied without being asked for that field.
+
+It also stated the arithmetic reasoning explicitly: the product is exact at scale 4, the division is
+the only lossy step, and it truncates *"since the `COMPUTE` has no `ROUNDED`"* — ADR-0021's semantic,
+volunteered.
+
+**What this does not establish**, and the list is short and specific:
+
+- **The wiring is still hand-written** (G31). Nothing renders readers, writers, steps or jobs, so
+  what ran is generated logic inside a human's scaffolding.
+- **Only half of `CBACT04C`'s output is compared.** The program writes transactions *and* rewrites
+  the account file; this compares `transact.dat` and not `acctdata-posted.dat`. The account posting
+  step (ADR-0027) is not in this job, which the model's first note independently identifies.
+- **One program, one run.** ADR-0024's lesson about the judge applies here too: one sample of an
+  instrument is not a measurement of its reliability, though unlike the judge this one is checked
+  against a fixed oracle rather than against itself.
+
+**Cost, recorded because this repo records it**: `$0.5766754` notional for 2 calls / 7,563 tokens,
+inside a `RunBudget(max_model_calls=8)` ceiling that was never approached.
+
 ## Not yet covered (honest gaps, not silently skipped)
 
 - *(corrected 2026-08-08 — this entry was stale, not merely incomplete)* This previously read
