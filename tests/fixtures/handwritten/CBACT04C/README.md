@@ -1,9 +1,19 @@
 # Hand-written job wiring for `CBACT04C` — and what the design could not supply
 
 **This is a stopgap, and it is labelled one on purpose** ([ADR-0030](../../../../docs/adr/0030-job-wiring-is-rendered-eventually-and-hand-written-once-first.md)).
-`generate` renders domain records, `ItemProcessor`s and an equivalence test. It renders **no reader,
-no writer, no step and no job**, which is why a generated project compiles and cannot run (gap
-**G31**). Everything here is what nothing renders, written once, for one program.
+`generate` renders domain records, `ItemProcessor`s and an equivalence test, and used to render no
+reader, no writer, no step and no job -- which is why a generated project compiled and could not run
+(gap **G31**).
+
+**The reader is no longer here.** `rendering/java_reader.py` renders it from `design.json`, and the
+round trip that measures this program runs on the rendered one: `500 of 500` transaction fields and
+`598 of 600` account fields, the same numbers the hand-written reader produced before it was deleted.
+The stopgap worked as ADR-0030 intended -- writing it by hand is what produced the findings below,
+and each of those became a fact in the contract rather than a guess in a design session.
+
+**What is still hand-written**, and what the qualifier on the round-trip number now refers to: the
+job bean, the two step beans, the staging between them, the JSON writers, and the aggregating reader
+for the account-posting step.
 
 ## The three bounds ADR-0030 put on it
 
@@ -20,9 +30,12 @@ no writer, no step and no job**, which is why a generated project compiles and c
    target (option (c): render readers from the COBOL's own `FILE-CONTROL`), drawn from practice
    rather than guessed in a design session.
 
-## Findings — what a rendered reader will have to carry
+## Findings — what a rendered reader had to carry
 
-### F1 · `design.json` gives widths, never offsets or record lengths
+Each is marked with where it ended up. **F1, F2 and F4 are closed**: the renderer emits them from
+design.json, and the round trip proves the emitted code produces COBOL's own answers.
+
+### F1 · `design.json` gives widths, never offsets or record lengths — **closed**
 
 `DomainField` carries a `PIC X(n)` length or a numeric precision and scale, in copybook order. It
 carries **no byte offset, no record length, and no `FILLER`**. `CobolFixedWidth` and the layout
@@ -39,7 +52,7 @@ determined (`COMP-3`, a `REDEFINES`) is refused whole rather than returned parti
 offsets are checked against the differential's own hand-derived layouts, which COBOL's output has
 already validated across 1,098 fields.
 
-### F2 · Nothing in the design says where data comes from
+### F2 · Nothing in the design says where data comes from — **closed**
 
 `CompositeType` declares that `TranCatBalWithRate` is composed of `TranCatBal`, `DisGroup`,
 `Account` and `CardXref`. It does not say which is the driving stream, which are keyed lookups, or
@@ -64,7 +77,11 @@ crosses a step boundary. `TranWithContext` corresponds to no copybook and no tab
 target persists `Tran`. `TranWithContextStaging` holds it in memory, which is **not restartable** —
 a real limitation of this stopgap, and a question a renderer has to answer rather than inherit.
 
-### F4 · Business logic that the design leaves to wiring
+### F4 · Business logic that the design leaves to wiring — **closed**
+
+**Both are now rendered.** `LookupKeyPart` carries the `'DEFAULT'` retry as a marked second
+assignment with a literal source, so the generated reader emits the fallback probe; and the abend on
+a missed lookup is rendered as a throw, for the reason below. What follows is the original finding.
 
 Two behaviours in the reader are not infrastructure:
 

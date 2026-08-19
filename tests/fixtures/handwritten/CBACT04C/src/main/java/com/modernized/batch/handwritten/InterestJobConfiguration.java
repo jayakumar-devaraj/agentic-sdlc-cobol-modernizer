@@ -8,6 +8,8 @@ import com.modernized.batch.domain.TranWithContext;
 import com.modernized.batch.processor.CompleteTransactionProcessor;
 import com.modernized.batch.processor.ComputeInterestProcessor;
 import com.modernized.batch.processor.PostAccountInterestProcessor;
+import com.modernized.batch.reader.ComputeInterestItemReader;
+import com.modernized.batch.processor.PostAccountInterestProcessor;
 import java.nio.file.Path;
 import org.springframework.batch.core.job.Job;
 import org.springframework.batch.core.configuration.JobRegistry;
@@ -19,6 +21,7 @@ import org.springframework.batch.core.repository.JobRepository;
 import org.springframework.batch.core.repository.support.ResourcelessJobRepository;
 import org.springframework.batch.core.step.Step;
 import org.springframework.batch.core.step.builder.StepBuilder;
+import org.springframework.batch.infrastructure.item.ItemReader;
 import org.springframework.batch.infrastructure.support.transaction.ResourcelessTransactionManager;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
@@ -80,13 +83,22 @@ public class InterestJobConfiguration {
         return new ResourcelessTransactionManager();
     }
 
+    /**
+     * <b>Rendered, not hand-written</b> (G31). `ComputeInterestItemReader` is generated from
+     * design.json's access paths and record layouts -- which file drives, which are keyed lookups,
+     * what fills each key, and where every field sits. The hand-written reader this replaced was
+     * ADR-0030's stopgap, and the only thing left hand-written here is the job and step wiring.
+     *
+     * <p>The file arguments are the program's own `ASSIGN TO` names in declaration order, so what
+     * this configuration supplies is paths -- not layout, not keys, not joins.
+     */
     @Bean
-    TranCatBalWithRateItemReader tranCatBalWithRateItemReader() throws Exception {
-        return new TranCatBalWithRateItemReader(
+    ItemReader<TranCatBalWithRate> tranCatBalWithRateItemReader() throws Exception {
+        return new ComputeInterestItemReader(
                 INPUT.resolve("tcatbal-posted.dat"),
                 INPUT.resolve("acctdata-stage1.dat"),
-                INPUT.resolve("cardxref.txt"),
-                INPUT.resolve("discgrp.txt"));
+                INPUT.resolve("cardxref.dat"),
+                INPUT.resolve("discgrp.dat"));
     }
 
     @Bean
@@ -114,7 +126,7 @@ public class InterestJobConfiguration {
     Step computeInterestStep(
             JobRepository jobRepository,
             PlatformTransactionManager transactionManager,
-            TranCatBalWithRateItemReader reader,
+            ItemReader<TranCatBalWithRate> reader,
             TranWithContextStaging staging) {
         return new StepBuilder("computeInterest", jobRepository)
                 .<TranCatBalWithRate, TranWithContext>chunk(10)

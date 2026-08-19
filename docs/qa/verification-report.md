@@ -2996,6 +2996,67 @@ missing one width is not incomplete, it is wrong for every field that follows.
 being right teaches people to edit tests. It now asserts the published schema carries
 `file_access_paths` and that the version has moved past the release that introduced it.
 
+### G31 stage 3c — the reader is rendered, and the round trip runs on it
+
+**The measurement, unchanged in value and different in meaning.** The same round trip that reported
+`500 of 500` transaction fields and `598 of 600` account fields now runs with the interest step's
+`ItemReader` **rendered from design.json** instead of hand-written. Same oracle, same differential,
+same numbers -- and the hand-written reader has been deleted rather than kept beside it, because two
+readers would mean the result no longer says which one was measured.
+
+```
+JAVA_HOME=... pytest tests/system/test_hand_written_round_trip.py -q -s
+round trip: 500 of 500 fields matched; 3 excluded by decision; reader rendered from design.json,
+  job and step wiring hand-written (ADR-0030), bodies scripted rather than model-authored
+account half: 598 of 600 fields matched; 0 excluded by decision
+8 passed, 1 skipped
+```
+
+**Nothing in the renderer is inferred.** Every offset, key and join it emits came from a fact the
+three previous PRs parsed out of the COBOL and put in the contract:
+
+| what the reader needs | where it comes from |
+|---|---|
+| which file yields which entity, stream or lookup | `FileAccessPath` — `FILE-CONTROL` + `READ ... INTO` |
+| the key it is read by | `effective_key` — the read's key, not the declared one |
+| what fills that key | `LookupKeyPart` — `MOVE ... TO` the key field |
+| where each field sits, and how long a record is | `DomainField.byte_offset`, `DomainEntity.record_length` |
+
+**Three findings became generated code rather than notes:**
+
+- **F2** — the `XREF` lookup is indexed at offset 25, the *alternate* key. A reader built on the
+  declared record key would compile and find nothing.
+- **F4** — the `'DEFAULT'` retry is emitted as a second probe with the literal padded to the key's
+  declared width, because a ten-byte key field holds `DEFAULT` plus three spaces.
+- **The lookup order** — `DISCGRP`'s key is filled from `ACCT-GROUP-ID`, a field of the account
+  record, so the account read is emitted first. Nothing declares that ordering; it is derived from
+  which entity owns each key source, and a design where it does not resolve is refused.
+
+**The refusals are the bulk of the test module, deliberately.** A reader that guesses a key, an
+offset or an order compiles, runs, and differs from COBOL in ways only a differential catches. Eight
+are covered: no access path for a component, a lookup whose key nothing fills, a key with no byte
+position, a width mismatch between a key and its source (a `MOVE` there pads or truncates, and this
+renders a straight copy), a key source from a record the step never reads, zero or two driving
+streams, an entity with no record length, and a field with neither length nor precision.
+
+**A runtime helper joined the template**: `CobolRecord`, beside `CobolArithmetic` and `CobolText`.
+It holds the two rules a literal translation loses -- a record is a fixed number of bytes rather than
+a line, and a signed zoned field carries its sign in its last digit. 10 tests, run by the template's
+own build.
+
+**One decision that could have gone the other way.** The renderer emits `fixedRecords` for every
+file, because that is what a COBOL `WRITE` produces. The shipped corpus stores two lookup files as
+line-terminated text, so the harness converts them -- exactly as the oracle pipeline's own `LOADIDX`
+does before either program sees them. Teaching the renderer to guess framing per file would have
+baked a property of one distribution into every generated project.
+
+**Verification**: `pytest tests/system/test_java_reader.py -q` -> **19 passed**, renderer at 98%
+(the two uncovered lines are refusals for states the earlier contract checks already make
+unreachable). The end-to-end proof is the round trip above.
+
+**What G31 still leaves open**: the writer, the step beans and the job bean. `WRITE ... FROM` is not
+parsed, so a written file appears in the design as a declaration with no entity.
+
 ## Not yet covered (honest gaps, not silently skipped)
 
 - *(corrected 2026-08-08 — this entry was stale, not merely incomplete)* This previously read

@@ -338,6 +338,14 @@
           "title": "Is Keyed Lookup",
           "type": "boolean"
         },
+        "key_parts": {
+          "default": [],
+          "items": {
+            "$ref": "#/$defs/LookupKeyPart"
+          },
+          "title": "Key Parts",
+          "type": "array"
+        },
         "organization": {
           "title": "Organization",
           "type": "string"
@@ -477,6 +485,78 @@
         "description"
       ],
       "title": "JobParameter",
+      "type": "object"
+    },
+    "LookupKeyPart": {
+      "description": "One component of a keyed lookup's key, and where its value comes from.\n\n**The join predicate, read from the COBOL rather than declared by anyone.** `FILE-CONTROL` says\n`ACCOUNT-FILE` is read by `FD-ACCT-ID`; `MOVE TRANCAT-ACCT-ID TO FD-ACCT-ID` says what goes in\nit. ADR-0030 refused an LLM-declared join because a wrong one produces plausible rows and a\nsilently wrong comparison -- and it turns out nobody needs to declare it, because the program\nalready does.\n\nA key can have several parts: `DISCGRP-FILE`'s is a group of three, filled by three separate\n`MOVE`s.\n\n`literal` is set instead of `source_field` when the program moves a constant. That is not an\nedge case here -- it is how `1200-GET-INTEREST-RATE` retries under `'DEFAULT'`, which is finding\nF4's \"business logic living in wiring\" arriving as a fact a renderer can carry.",
+      "properties": {
+        "is_fallback": {
+          "default": false,
+          "title": "Is Fallback",
+          "type": "boolean"
+        },
+        "key_field": {
+          "title": "Key Field",
+          "type": "string"
+        },
+        "key_offset": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Key Offset"
+        },
+        "key_width": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Key Width"
+        },
+        "literal": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Literal"
+        },
+        "source_field": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Source Field"
+        },
+        "source_line": {
+          "title": "Source Line",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "key_field",
+        "source_line"
+      ],
+      "title": "LookupKeyPart",
       "type": "object"
     },
     "PicFieldType": {
@@ -974,7 +1054,7 @@
       "type": "array"
     },
     "schema_version": {
-      "default": "3.3.0",
+      "default": "3.4.0",
       "title": "Schema Version",
       "type": "string"
     },
