@@ -293,6 +293,16 @@ class FileAccessPath(BaseModel):
     #: True when the program positions by key rather than walking the file -- `ACCESS MODE`'s own
     #: meaning, and the "one driving stream, N keyed lookups" split a reader is rendered from.
     is_keyed_lookup: bool = False
+    #: The entity this file is *written* from, when the program writes it (`WRITE ... FROM`).
+    #: Separate from `entity_name`, which is the read side: `CBACT04C` reads `ACCOUNT-FILE` and
+    #: rewrites it, and a single field would have to lose one of those. Empty when the program never
+    #: writes this file.
+    written_entity_name: str = ""
+    #: True when the write is a `REWRITE` -- replacing a record found by key rather than appending.
+    #: A renderer that treated the two alike would turn an update of fifty accounts into fifty new
+    #: ones, which no comparison of the *records* would catch, only one of the file's length.
+    is_update: bool = False
+    write_line: int | None = None
     #: What this lookup is looked up *by*, in key order. Empty for a driving stream, and empty for
     #: a keyed file whose key nothing fills -- which is a finding rather than a default, since a
     #: lookup with no source cannot be rendered.
@@ -361,7 +371,8 @@ class UnifiedDesign(BaseModel):
 
 #: design.json's own envelope version -- bump this on any breaking change to DesignDocument's
 #: shape, e.g. once solution_architect gives `unified_design` a real type.
-SCHEMA_VERSION = "3.4.0"  # 3.4.0: FileAccessPath.key_parts -- the join predicate (G31)
+SCHEMA_VERSION = "3.5.0"  # 3.5.0: FileAccessPath write side -- WRITE ... FROM (G31)
+#: 3.4.0 added FileAccessPath.key_parts, the join predicate (G31).
 #: 3.3.0 added DomainField.byte_offset and DomainEntity.record_length (G31 finding F1).
 #: 3.2.0 added UnifiedDesign.file_access_paths (G31, ADR-0030).
 

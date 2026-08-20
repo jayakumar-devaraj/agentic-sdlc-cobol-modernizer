@@ -372,3 +372,78 @@ def extract_record_bindings(source_text: str) -> list[RecordBinding]:
             )
         )
     return bindings
+
+
+#: `FD <file>.` and the `01` record area that follows it. A write names the *record area*, not the
+#: file, so without this a `WRITE FD-TRANFILE-REC FROM TRAN-RECORD` cannot be attributed to
+#: `TRANSACT-FILE` at all.
+_FD_RE = re.compile(r"^\s*FD\s+([A-Z0-9-]+)", re.IGNORECASE)
+_LEVEL_01_RE = re.compile(r"^\s*01\s+([A-Z0-9-]+)", re.IGNORECASE)
+
+#: `WRITE <record area> FROM <record>` and its update sibling. `REWRITE` is included because it is
+#: how COBOL updates a keyed file in place -- `CBACT04C` posts interest to the account master that
+#: way -- and a writer renderer that only knew `WRITE` would silently produce no output for it.
+_WRITE_FROM_RE = re.compile(
+    r"\b(RE)?WRITE\s+([A-Z0-9-]+)\s+FROM\s+([A-Z0-9-]+)", re.IGNORECASE
+)
+
+
+class WriteBinding(BaseModel):
+    """One `WRITE`/`REWRITE ... FROM`: which file is written, from which record, and how.
+
+    `is_update` distinguishes `REWRITE` from `WRITE`: one replaces a record found by key, the other
+    appends. A renderer that treated them alike would turn an update of fifty accounts into fifty
+    new ones -- which is not a defect any comparison of the *records* would catch, only a comparison
+    of the file's length.
+    """
+
+    file_name: str
+    record_name: str
+    is_update: bool = False
+    source_line: int
+
+
+def fd_record_areas(source_text: str) -> dict[str, str]:
+    """`{record area name: file name}` for every `FD` in the `FILE SECTION`.
+
+    The association is positional in COBOL -- the `01` immediately after an `FD` is that file's
+    record -- so it is read that way rather than by matching names, which only rhyme by convention.
+    """
+    areas: dict[str, str] = {}
+    pending: str | None = None
+    for _line_no, text in _iter_code_lines(source_text):
+        fd = _FD_RE.match(text)
+        if fd:
+            pending = fd.group(1).upper()
+            continue
+        record = _LEVEL_01_RE.match(text)
+        if record and pending:
+            areas[record.group(1).upper()] = pending
+            pending = None
+    return areas
+
+
+def extract_write_bindings(source_text: str) -> list[WriteBinding]:
+    """Every `WRITE`/`REWRITE ... FROM` in the source, attributed to the file it writes.
+
+    A write whose record area belongs to no `FD` is skipped: it names something this parse cannot
+    attribute to a file, and inventing an attribution would put records in the wrong output.
+    """
+    areas = fd_record_areas(source_text)
+    bindings: list[WriteBinding] = []
+    for line_no, text in _iter_code_lines(source_text):
+        match = _WRITE_FROM_RE.search(text)
+        if match is None:
+            continue
+        area = match.group(2).upper()
+        if area not in areas:
+            continue
+        bindings.append(
+            WriteBinding(
+                file_name=areas[area],
+                record_name=match.group(3).upper(),
+                is_update=bool(match.group(1)),
+                source_line=line_no,
+            )
+        )
+    return bindings

@@ -148,18 +148,30 @@ def load_oracle() -> list[dict[str, FieldValue]]:
     ]
 
 
-def load_account_oracle() -> list[dict[str, FieldValue]]:
-    """The account file `CBACT04C` left behind, parsed with `ACCOUNT_LAYOUT`."""
-    raw = (ORACLE_DIR / "acctdata-posted.dat").read_bytes().decode("latin-1")
-    if len(raw) % 300:
-        raise ValueError(f"account oracle is not a whole number of records: {len(raw)} bytes")
+def parse_fixed_records(
+    path: Path, layout: tuple[tuple[str, int, int, int | None], ...], record_length: int
+) -> list[dict[str, FieldValue]]:
+    """Parse a fixed-width file with `layout`, whatever wrote it.
+
+    Used for the oracle *and* for a candidate produced by a rendered writer, deliberately: two
+    parsers would be two places for one of the sides to be misread, and a difference in how the
+    files are read would show up as a difference in what the programs computed.
+    """
+    raw = path.read_bytes().decode("latin-1")
+    if len(raw) % record_length:
+        raise ValueError(f"{path.name} is not a whole number of records: {len(raw)} bytes")
     return [
         {
             name: FieldValue(name, raw[i + off : i + off + width], scale)
-            for name, off, width, scale in ACCOUNT_LAYOUT
+            for name, off, width, scale in layout
         }
-        for i in range(0, len(raw), 300)
+        for i in range(0, len(raw), record_length)
     ]
+
+
+def load_account_oracle() -> list[dict[str, FieldValue]]:
+    """The account file `CBACT04C` left behind, parsed with `ACCOUNT_LAYOUT`."""
+    return parse_fixed_records(ORACLE_DIR / "acctdata-posted.dat", ACCOUNT_LAYOUT, 300)
 
 
 @dataclass(frozen=True)

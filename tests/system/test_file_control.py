@@ -23,6 +23,8 @@ from cobol_modernizer.parsing.file_control import (
     UnsupportedFileControlError,
     extract_file_declarations,
     extract_record_bindings,
+    extract_write_bindings,
+    fd_record_areas,
     parse_select,
 )
 
@@ -359,3 +361,54 @@ def test_an_unterminated_read_is_still_returned():
            READ ACCT-FILE INTO ACCOUNT-RECORD
 """
     assert [b.record_name for b in extract_record_bindings(program)] == ["ACCOUNT-RECORD"]
+
+
+# --- the write side ----------------------------------------------------------------------------------
+
+
+def test_each_fd_record_area_is_attributed_to_its_file():
+    """A write names the record *area*, not the file, so without this it cannot be attributed at all.
+
+    Read positionally -- the `01` after an `FD` is that file's record -- rather than by matching
+    names, which only rhyme by convention.
+    """
+    areas = fd_record_areas(source("CBACT04C"))
+    assert areas["FD-TRANFILE-REC"] == "TRANSACT-FILE"
+    assert areas["FD-ACCTFILE-REC"] == "ACCOUNT-FILE"
+    assert len(areas) == 5
+
+
+def test_the_writes_are_found_and_attributed():
+    """`CBACT04C` appends transactions and rewrites accounts, and the two are different statements."""
+    writes = {b.file_name: b for b in extract_write_bindings(source("CBACT04C"))}
+    assert writes["TRANSACT-FILE"].record_name == "TRAN-RECORD"
+    assert not writes["TRANSACT-FILE"].is_update
+    assert writes["ACCOUNT-FILE"].record_name == "ACCOUNT-RECORD"
+    assert writes["ACCOUNT-FILE"].is_update, "REWRITE is an update, not an append"
+
+
+def test_a_file_written_both_ways_keeps_both_bindings():
+    """`CBTRN02C` both creates and updates `TCATBAL` rows -- the 44 new rows the oracle found.
+
+    Collapsing them would erase the fact that the program can *create* a balance row, which is the
+    difference between 50 rows and 94.
+    """
+    tcatbal = [
+        b for b in extract_write_bindings(source("CBTRN02C")) if b.file_name == "TCATBAL-FILE"
+    ]
+    assert {b.is_update for b in tcatbal} == {False, True}
+
+
+def test_a_write_to_an_unknown_record_area_is_skipped_rather_than_guessed():
+    """A record area belonging to no `FD` cannot be attributed, and inventing one would put records
+    in the wrong output file."""
+    program = """       PROCEDURE DIVISION.
+           WRITE SOME-UNKNOWN-REC FROM WS-RECORD.
+"""
+    assert extract_write_bindings(program) == []
+
+
+def test_each_write_binding_carries_its_source_line():
+    lines = source("CBACT04C").splitlines()
+    for binding in extract_write_bindings(source("CBACT04C")):
+        assert "WRITE" in lines[binding.source_line - 1].upper()

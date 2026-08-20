@@ -11,9 +11,14 @@ round trip that measures this program runs on the rendered one: `500 of 500` tra
 The stopgap worked as ADR-0030 intended -- writing it by hand is what produced the findings below,
 and each of those became a fact in the contract rather than a guess in a design session.
 
-**What is still hand-written**, and what the qualifier on the round-trip number now refers to: the
-job bean, the two step beans, the staging between them, the JSON writers, and the aggregating reader
-for the account-posting step.
+**The writers are no longer here either.** `rendering/java_writer.py` renders both -- an appending
+writer for the interest transactions and an in-place `REWRITE` writer for the account master -- so
+the candidate the round trip compares is now COBOL's own record format, produced by generated code
+and parsed with the same layout the oracle is read with.
+
+**What is still hand-written**, and what the qualifier on the round-trip number refers to: the job
+bean, the three step beans, the staging between steps 1 and 2, and the aggregating reader for the
+account-posting step.
 
 ## The three bounds ADR-0030 put on it
 

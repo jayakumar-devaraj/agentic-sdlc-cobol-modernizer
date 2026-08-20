@@ -49,6 +49,7 @@ from cobol_modernizer.nodes.solution_architect import (
 from cobol_modernizer.nodes.spec_critic import critique_spec
 from cobol_modernizer.nodes.spec_extractor import extract_spec
 from cobol_modernizer.rendering.java_reader import reader_class_name, render_item_reader
+from cobol_modernizer.rendering.java_writer import render_item_writer, writer_class_name
 from cobol_modernizer.tools.local_compiler import compile_project
 from tests.system.test_account_break_posting import _FAITHFUL as _POSTING_BODY
 from tests.system.test_account_break_posting import _IMPORTS as _POSTING_IMPORTS
@@ -62,6 +63,7 @@ from tests.system.test_cobol_oracle_comparison import (
     compare,
     load_account_oracle,
     load_oracle,
+    parse_fixed_records,
 )
 from tests.system.test_interest_equivalence import (
     _COMPLETE_BODY,
@@ -102,11 +104,23 @@ TEXT_INPUTS = {
     "discgrp.dat": (CORPUS / "discgrp.txt", 50),
 }
 
-CANDIDATE = Path("roundtrip") / "output" / "candidate.jsonl"
+#: What the rendered writers produce: COBOL's own record format, in the same layout the oracle is
+#: read with. The candidate is no longer a harness serialisation -- it is the program's output.
+CANDIDATE = Path("roundtrip") / "output" / "transact.dat"
 
 #: Where the rendered reader lands. Its own package, so a reviewer can tell rendered wiring
 #: from the hand-written job configuration by path alone.
 READER_PACKAGE = "com.modernized.batch.reader"
+WRITER_PACKAGE = "com.modernized.batch.writer"
+
+#: What the rendered writers produce: COBOL's own record format, in the same layout the oracle is
+#: read with. The candidate is no longer a harness serialisation -- it is the program's output.
+CANDIDATE = Path("roundtrip") / "output" / "transact.dat"
+
+#: Where the rendered reader lands. Its own package, so a reviewer can tell rendered wiring
+#: from the hand-written job configuration by path alone.
+READER_PACKAGE = "com.modernized.batch.reader"
+WRITER_PACKAGE = "com.modernized.batch.writer"
 
 #: The generated record's accessors, in the copybook's own field order.
 _JAVA_FIELD = {
@@ -142,50 +156,23 @@ _JAVA_ACCOUNT_FIELD = {
     "ACCT-GROUP-ID": "acctGroupId",
 }
 
-ACCOUNT_CANDIDATE = Path("roundtrip") / "output" / "candidate-accounts.jsonl"
+#: The account file is rewritten in place, as `REWRITE` does, so the candidate is the input file
+#: the job was given.
+ACCOUNT_CANDIDATE = Path("roundtrip") / "input" / "acctdata-stage1.dat"
 
 
 @dataclass(frozen=True)
 class CandidateValue:
-    """One field as the generated code produced it.
+    """One field value, for the mutation tests below.
 
-    Deliberately *not* re-encoded into a zoned-decimal string first. Round-tripping the candidate
-    through COBOL's own on-disk representation would mean writing an encoder whose only consumer is
-    this comparison -- the serialiser ADR-0029 declined -- and any bug in it would show up as a
-    translation defect.
+    The candidate itself no longer needs this: the rendered writers emit COBOL's own record format,
+    so both sides of the comparison are parsed by `parse_fixed_records` and arrive as `FieldValue`s.
+    This stays because a mutation test has to *construct* a wrong value, and `FieldValue` takes
+    stored bytes rather than a number.
     """
 
     name: str
     value: object
-
-
-def parse_candidate(path: Path, layout=TRAN_LAYOUT, java_field=None) -> list[dict[str, CandidateValue]]:
-    """The JSON lines the job wrote, keyed by COBOL field name.
-
-    Alphanumerics keep whatever width the generated code emitted, so padding is compared rather
-    than normalised. Numerics become `Decimal`s, which compare by value against the oracle's
-    decoded overpunch.
-
-    Layout-driven so the account file goes through the same parser as the transaction file: two
-    parsers would be two places for the candidate to be misread.
-    """
-    java_field = _JAVA_FIELD if java_field is None else java_field
-    records = []
-    for line in path.read_text(encoding="utf-8").splitlines():
-        if not line.strip():
-            continue
-        raw = json.loads(line)
-        record = {}
-        for name, _offset, _width, scale in layout:
-            value = raw[java_field[name]]
-            if scale is None:
-                record[name] = CandidateValue(name, value)
-            else:
-                record[name] = CandidateValue(
-                    name, None if value is None else Decimal(str(value))
-                )
-        records.append(record)
-    return records
 
 
 
@@ -201,9 +188,32 @@ def stage_as_fixed_records(source: Path, destination: Path, record_length: int) 
         if not line:
             continue
         if len(line) > record_length:
-            raise ValueError(f"{source.name}: {len(line)}-character line for a {record_length}-byte record")
+            raise ValueError(
+                f"{source.name}: {len(line)}-character line for a {record_length}-byte record"
+            )
         records.append(line.ljust(record_length))
     destination.write_bytes("".join(records).encode("latin-1"))
+
+
+def render_writers_into(project: Path, design, program_name: str) -> list[Path]:
+    """Render an `ItemWriter` for each step that writes a file. Returns the paths written."""
+    written = []
+    for step in (COMPLETE_STEP, POSTING_STEP):
+        source = render_item_writer(
+            step,
+            design,
+            program_name,
+            package=WRITER_PACKAGE,
+            domain_package=DEFAULT_DOMAIN_PACKAGE,
+        )
+        destination = (
+            project / "src" / "main" / "java" / Path(WRITER_PACKAGE.replace(".", "/"))
+            / f"{writer_class_name(step)}.java"
+        )
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        destination.write_text(source, encoding="utf-8")
+        written.append(destination)
+    return written
 
 
 def render_reader_into(project: Path, design, program_name: str) -> Path:
@@ -234,8 +244,8 @@ def describe_result(result: ComparisonResult) -> str:
     result gets undersold.
     """
     return (
-        f"{result.render()}; reader rendered from design.json, job and step wiring hand-written "
-        f"(ADR-0030), bodies scripted rather than model-authored"
+        f"{result.render()}; reader and writers rendered from design.json, job and step wiring "
+        f"hand-written (ADR-0030), bodies scripted rather than model-authored"
     )
 
 
@@ -333,6 +343,7 @@ def wire_build_and_run(project: Path, design_inputs, **generate_kwargs):
     # `ComputeInterestItemReader`, which exists only because this line ran. Free and deterministic,
     # so it happens on every run rather than being a mode.
     render_reader_into(project, design, entry.program_name)
+    render_writers_into(project, design, entry.program_name)
 
     staged = project / "roundtrip" / "input"
     staged.mkdir(parents=True, exist_ok=True)
@@ -347,10 +358,10 @@ def wire_build_and_run(project: Path, design_inputs, **generate_kwargs):
     output = project / CANDIDATE
     accounts = project / ACCOUNT_CANDIDATE
     assert output.is_file(), "the job completed and wrote no transaction output"
-    assert accounts.is_file(), "the job completed and wrote no account output"
+    assert accounts.is_file(), "the account file the job rewrites is gone"
     return (
-        parse_candidate(output),
-        parse_candidate(accounts, ACCOUNT_LAYOUT, _JAVA_ACCOUNT_FIELD),
+        parse_fixed_records(output, TRAN_LAYOUT, 350),
+        parse_fixed_records(accounts, ACCOUNT_LAYOUT, 300),
     ), outcome
 
 
@@ -370,12 +381,12 @@ def candidate(tmp_path_factory, design_inputs):
 
 
 @pytest.fixture(scope="module")
-def candidate_records(candidate) -> list[dict[str, CandidateValue]]:
+def candidate_records(candidate):
     return candidate[0]
 
 
 @pytest.fixture(scope="module")
-def candidate_accounts(candidate) -> list[dict[str, CandidateValue]]:
+def candidate_accounts(candidate):
     return candidate[1]
 
 
