@@ -91,7 +91,9 @@ retroactively once it's noticed missing (as logging and the QA report below were
 3. **QA**: unit tests + a coverage report, **and** a functional verification report for anything a
    unit test can't reach on its own (a real database, real fetched source, a real external CLI,
    the self-healing compile loop recovering from a real injected error rather than a mocked one).
-   `docs/qa/verification-report.md` is the standing home for both — updated in the same PR as
+   `docs/qa/verification-report.md` is the standing home for both. It is a hub: it carries the
+   framing and an index, and every entry lives in exactly one spoke under `docs/qa/verification/`
+   (ADR-0033). A new entry goes in the spoke that owns its scope, updated in the same PR as
    whatever it reports on, never accumulated as a backlog. "The tests pass" is not itself a
    functional-verification entry: state what was verified, the exact command run, and the real
    result, the same way every entry already there does.

@@ -1,0 +1,569 @@
+# The write path, the systemic gate fixes, and the round trips
+
+> Spoke of the [QA Verification Report](../verification-report.md) — this repo's hub index
+> for unit-test coverage and functional verification. Every entry below is reproduced
+> verbatim from the single-file report it was split out of, and states the exact command run
+> and its real output, not a paraphrase.
+
+## Functional verification
+
+### Generating the write step — by splitting logic from wiring, not by rendering writers
+
+**`generate` renders `ItemProcessor`s only** (ADR-0019, reaffirmed by ADR-0023), so there were two
+ways to produce Java for `1300-B-WRITE-TX`: teach the renderer about `ItemWriter`s, or find the line
+inside the paragraph where business logic stops and infrastructure begins. The second is the one
+this repo's architecture already points at — render the mechanical, model the logic.
+
+**The paragraph is mostly per-item field population**: fourteen `MOVE`s and two `STRING`s. Three
+statements are not, and they are the ones that cannot be an `ItemProcessor`:
+
+| Not translatable here | Why |
+|---|---|
+| `ADD 1 TO WS-TRANID-SUFFIX` + `STRING PARM-DATE …` | a per-run counter and a job parameter |
+| `PERFORM Z-GET-DB2-FORMAT-TIMESTAMP` | a clock, into `REDEFINES` fields the matrix gates |
+| `WRITE FD-TRANFILE-REC` | the physical I/O |
+
+So the step is a `processor` named `completeTransaction`, and those three stay wiring. **Typing the
+whole paragraph as a `writer` would have left its field population ungenerated for the sake of three
+statements** — the same mistake as putting the guard in `source_paragraphs`: taking a boundary the
+COBOL draws and assuming the design must draw it in the same place.
+
+**Verified through `run_generate`**: both steps compile, `not_generated` is now empty, and the
+generated completion body contains `item.account().acctId()`, `item.cardXref().xrefCardNum()` and
+`CobolText.spaces(50)` — G26's two newly-reachable fields and G28's padding, exercised in generated
+Java rather than asserted about it.
+
+**The residual is unchanged and still stated**: `TRAN-ID` and the timestamps are `null` in the body,
+because a stateless processor has neither a run counter nor a clock. That is the same boundary G26
+recorded, now visible in the generated file rather than only in a gap register.
+
+#### The real run — and the G28 fix landing on a model
+
+Two Opus 5 calls, capped at one attempt each, **$0.6062 notional**. Both processors compiled on
+attempt 1, and `computeInterest` still passes the oracle **10 of 10** under the changed output type.
+
+**G28's fix worked.** The model wrote `CobolText.spaces(50)` for the three `MOVE SPACES` fields —
+not `""`. Its previous run, before the width and the helper existed, wrote `""` and flagged that it
+was wrong to.
+
+**It went further than the scripted body.** It padded *every* alphanumeric field to its declared
+width — `pad("01", 2)`, `pad("System", 10)`, the card number to 16, the timestamps to 26 — where the
+hand-written fixture only padded the three the COBOL spells `SPACES`.
+
+**G26's reachability worked**: `item.account().acctId()` and `item.cardXref().xrefCardNum()`, the
+two fields it left `null` last time.
+
+**One finding is a correction to this repo's own fixture, not to the model.** For
+`STRING 'Int. for a/c ', ACCT-ID DELIMITED BY SIZE`, it wrote:
+
+```java
+String acctIdDigits = String.format("%011d", item.account().acctId().toBigInteger());
+```
+
+with the reasoning that `ACCT-ID` is an unsigned 11-digit **display** field, so `DELIMITED BY SIZE`
+contributes all eleven zero-padded positions rather than a trimmed number. That is right, and the
+scripted `_COMPLETE_BODY` in this repo concatenates the bare value — which would write
+`Int. for a/c 194` where the COBOL writes `Int. for a/c 00000000194`. **The hand-written fixture is
+the less faithful of the two.**
+
+**What it decided rather than refused, and therefore needed a fix.** It implemented the DB2
+timestamp, reconstructing the format from `Z-GET-DB2-FORMAT-TIMESTAMP`'s sub-fields — including that
+the trailing group is hundredths of a second — and used `LocalDateTime.now()`. Those sub-fields are
+`REDEFINES`, which the construct matrix routes to a human, and `now()` is non-deterministic in a
+batch record. It said so in its notes rather than passing it off as settled, **which is the only
+reason it was caught.** See the next section.
+
+#### Ambient state is now refused, not reviewed
+
+**A batch record has to come out the same on every run over the same input**, including a restart
+that reprocesses a chunk. `LocalDateTime.now()` in a generated body means it does not, and nothing
+downstream notices: it compiles, it looks right, and the only symptom is two runs disagreeing.
+
+That is the failure class this repo's deterministic core exists to prevent, arriving through the one
+part a model writes — so it is a **refusal** (`NonDeterministicBodyError`), the same posture as the
+forgery check, rather than a note a reviewer might skim. `render_processor` rejects
+`LocalDate/LocalDateTime/LocalTime/Instant/OffsetDateTime/ZonedDateTime/Year/Clock.now(...)`,
+`System.currentTimeMillis/nanoTime/getenv/getProperty`, `new Random(...)`, `new Date(...)`,
+`Math.random(...)` and `UUID.randomUUID(...)`.
+
+**It matches call sites, not words.** A field named `nowField`, a `CobolText` call, and a comment
+explaining why the clock was *not* used all pass — a guard that fired on the word would push a model
+into writing worse notes. Pinned both ways, and the positive case is the **verbatim body the real
+model wrote**, so this cannot regress into a check that no longer catches the thing it was built for.
+
+**The right answer is not a different clock call.** A run timestamp and `TRAN-ID`'s
+`PARM-DATE`-plus-counter are the same kind of thing — **job-level facts**, belonging to the
+invocation rather than the item — and a stateless processor has access to neither. Supplying them is
+one design decision, not two (audit **G29**). Until it is made, the fields stay unset and flagged,
+which the prompt now asks for explicitly rather than leaving a model to infer.
+
+**Still refused, and flagged for a human**: `TRAN-ID`'s counter and job parameter, `TRAN-AMT`'s
+provenance across the step boundary, the `WRITE` and its status handling, and whether
+`MOVE '05' TO TRAN-CAT-CD (PIC 9(04))` is faithfully `BigDecimal("5")`.
+
+### `1300-B-WRITE-TX` becomes its own step
+
+**The design decision G26 and G27 both left open, now made.** The interest paragraph performs the
+write paragraph, and a single step owning both was what made `Tran`'s id, description, card number
+and timestamps unreachable in the first place.
+
+**The split needed a change to the check before it meant anything.** `unreachable_entities` follows
+`PERFORM`, so `computeInterest` would still have been charged with the write paragraph's data
+however the design divided them. A `PERFORM` is a call, and a design may legitimately split one
+into two steps — so paragraphs another step of the same job owns are now boundaries: not followed
+into, not included, and a step is never excluded from its own.
+
+**The assertion that matters is that the finding relocates rather than vanishing:**
+
+| | `computeInterest` | `writeTransaction` |
+|---|---|---|
+| Undivided | `['Account', 'CardXref']` | — |
+| Split | `[]` | `['Account', 'CardXref']` |
+
+A boundary that made a real gap disappear would be worse than no boundary. It lands on the step that
+now owns the work, which is why `writeTransaction`'s input is the composite that reaches them.
+
+**The shape.** `computeInterest` takes `TranCatBalWithRate` and returns `TranWithContext` — the
+transaction plus the context its successor needs; a composite carries existing entities only
+(ADR-0020), which is why the amount travels inside a `Tran` rather than as a bare value.
+`writeTransaction` takes that and produces the `Tran`. That is the chain ADR-0020 recorded a real
+architect run producing.
+
+**End to end, not merely declared.** `writeTransaction` is a `writer`, so `generate` reports it
+`not_generated` naming `1300-B-WRITE-TX` (ADR-0023) rather than rendering it — the honest end state:
+the step exists, is owned, and its logic is declared as not yet produced. Asserted through
+`run_generate`, because a step nothing exercises is a step that has not really been added.
+
+The oracle's result now sits one accessor deeper (`result.tran().tranAmt()`), declared as a
+`component` in `java_binding` rather than inferred.
+
+**CI's coverage caught a quieter cost of the split.** It fell 98.62% → 98.50%, and the uncovered
+lines were the renderer's refusals — including the **plain-entity output path**, which every call in
+the harness stopped exercising the moment the output became a composite. Most steps return an
+entity, so that is the common case, not a legacy one; it was silently untested by a change that
+looked like it only added something. Closed, along with the two new refusals and two pre-existing
+ones the same pass exposed: the module is at **100%**, and every `UnrenderableOracleError` branch
+now has a test. Third time this session a coverage delta was the thing that noticed.
+
+### G26's systemic half — resolving is not populating
+
+**The gap in one sentence.** ADR-0020 checks a step's `input_type`/`output_type` **resolve** — that
+each names a declared entity or composite. Nothing checked they were **populatable**: whether the
+data the step's COBOL actually reads is reachable from the type it was handed. Those two failed
+apart once already, and the only signal was a model refusing to invent values.
+
+**What the check does.** `unreachable_entities` matches declared COBOL field names against the
+step's paragraph text and reports entities that are mentioned but not reachable from the declared
+types. Deterministic, and deliberately shallow — no expression parsing, no dataflow inference.
+
+**It follows `PERFORM`, and that is the load-bearing part.** G26's fields are not in the paragraph
+the step names: `1300-COMPUTE-INTEREST` performs `1300-B-WRITE-TX`, and the moves live there. A
+check reading only the named paragraph finds nothing wrong with the design that produced the defect.
+Asserted directly rather than assumed:
+
+```
+XREF-CARD-NUM in 1300-B-WRITE-TX        → True
+XREF-CARD-NUM in 1300-COMPUTE-INTEREST  → False
+```
+
+**Demonstrated on the real before and after**, which is what makes it a check rather than a claim:
+
+| Composite | Result |
+|---|---|
+| `balance` + `disclosureGroup` (what the design had when the model failed) | `['Account', 'CardXref']` |
+| plus `account` + `cardXref` (PR #40's fix) | `[]` |
+| a plain `TranCatBal` step, no composite | `['DisGroup', …]` — cannot reach the rate it multiplies by |
+
+The first row is G26 reproduced from the real COBOL: every type name resolved, and two entities were
+still out of reach.
+
+**A fact, not a refusal.** It emits a `GateItem` rather than raising, because a referenced entity
+may be legitimately absent — mentioned in a `DISPLAY`, or read by a paragraph whose logic belongs to
+another step. Surfacing it and letting a reviewer weigh it is the specialist contract's rule 5, and
+the same posture ADR-0008 fixed for every other gate item. `build_design_document` gained
+`design_gate_items` for facts that are properties of the *design* rather than of a program's
+extraction; they are passed in rather than derived there because deriving them needs the tenant's
+COBOL, which `core/contracts.py` deliberately does not read.
+
+**Ambiguity resolves toward silence, deliberately.** A field name owned by two entities counts as
+reachable if either is. A gate nobody trusts is worse than one that occasionally under-reports.
+
+**CI's coverage caught the wiring untested — the G21 pattern, one more time.** The first CI run on
+this branch reported **98.37% against 98.59%**, and every uncovered line was
+`unpopulatable_gate_items`: the function that turns the check's answer into something a human at the
+gate actually reads. `unreachable_entities` had four tests of its own the whole time. That is
+exactly the shape G21 was closed twice over — a helper tested directly while the path to production
+was never exercised — and the only reason it surfaced is that a number moved.
+
+Closed by testing through the wiring: the gate item is produced, it names both entities and the
+paragraph, and it **reaches `DesignDocument.gate_items`** (a gate item nobody assembles into
+`design.json` is a gate item nobody sees). Both modules are now at **100%**, and the set includes
+the case where the check must go quiet — without it, a check that always fires would look exactly
+like a check that works.
+
+### G28 — the width was computed all along and thrown away one line early
+
+**"Pad in the writer" could not be done as stated: there is no writer.** `generate` renders
+`ItemProcessor`s only, and ADR-0023 records that non-processor steps are reported rather than
+rendered. But the defect is not a writer's — **the `""` the model wrote appeared in a *processor*'s
+output record**, so it is fixable where it occurs.
+
+**The root, found by reading the chain rather than the symptom.** `pic_mapper` computes
+`string_length` for every `PIC X(n)`. `_to_domain_field` copied `precision`, `scale` and `signed`
+and **dropped the width one line before it reached the design** — so a `PIC X(50)` became a bare
+`String`, and the width existed nowhere the generator, the record, or a reviewer could see it. Same
+defect class as G21 (`WS-MONTHLY-INT`'s scale) and G24 (a composite's accessors): a computed fact
+that never reached the target.
+
+| Where the width now appears | Form |
+|---|---|
+| `DomainField.length` | carried from `pic_mapper`, optional with a default |
+| Generated record Javadoc | `@param tranMerchantName from COBOL TRAN-MERCHANT-NAME; PIC X(50), space-padded to that width` |
+| Generator prompt | `String tranMerchantName()  // PIC X(50) -- pad to this width, do not emit a short value` |
+
+**Why optional here and required for `guard_condition`** (ADR-0022): a guard is LLM judgment, where
+a missing key and a considered `null` must look different. A width is deterministic — the producer
+always fills it — so there is no silence to distinguish, and a required key would break every
+existing design for no signal. The asymmetry is deliberate, not an oversight.
+
+**`CobolText`, beside `CobolArithmetic`.** The semantic lives in one place, per that class's own
+stated rationale. `pad` truncates on the **right** — the opposite end from a numeric `MOVE`, which
+discards high-order digits — and `null` maps to spaces, because a COBOL `PIC X` field has no null
+state and mapping it to `""` would reintroduce the defect. 7 Java tests; the template now runs **20**
+(`mvn -B test`, `BUILD SUCCESS`).
+
+**The helper would have been invisible.** `render_target_api_facts` read one hardcoded class, so
+adding a second would have produced a helper written, tested and unreachable — G21 exactly. It now
+takes a list, and a test asserts both classes and both new signatures appear in the prompt.
+
+**The suite caught a violation in the fix itself.** `CobolText`'s first Javadoc explained the
+defect using the program and field names it was found in, and
+`test_the_template_carries_no_tenant_vocabulary` failed on it. That guard exists because the
+template is the scaffold *every* tenant's generated code is seeded into — ADR-0001's boundary, and
+the inverse of `guardrails.py`'s concern. The explanation is unchanged in substance and now names no
+tenant. Worth recording because the violation was in documentation, which is where this rule is
+easiest to break without noticing.
+
+**Not claimed:** that any generated body pads today. No model has been asked to translate
+`MOVE SPACES` since the width and the helper existed. What is verified is that the fact and the
+primitive now reach the generator, and that the template builds and tests them.
+
+### G26 — the composite gains `Account` and `CardXref`, and two fields stay out of reach
+
+**What was verified.** `1300-B-WRITE-TX` builds the `Tran` this step returns, and two of its moves
+read records the composite did not carry: `ACCT-ID` → `TRAN-DESC`, and `XREF-CARD-NUM` →
+`TRAN-CARD-NUM`. Both are now reachable as `item.account().acctId()` and
+`item.cardXref().xrefCardNum()`, asserted against the real COBOL text and the real `pic_mapper`
+entities rather than against the composite alone — so the test fails if either the copybooks or the
+paragraph move underneath it.
+
+**Two of the four flagged fields cannot be fixed this way, and a test says so by name.** A composite
+carries *existing domain entities* (ADR-0020), and neither of the remaining two is one:
+
+| Field | Source | Why no composite reaches it |
+|---|---|---|
+| `TRAN-ID` | `STRING PARM-DATE, WS-TRANID-SUFFIX` | A job parameter and a per-run counter. The model separately noted a stateless processor cannot produce a monotonic suffix correctly under restart or partitioning — a stronger objection than reachability |
+| `TRAN-ORIG-TS` / `TRAN-PROC-TS` | `Z-GET-DB2-FORMAT-TIMESTAMP` | Its target fields are `REDEFINES`, which the construct matrix routes to a human gate rather than translating |
+
+The real remainder is a design decision left unmade: either `1300-B-WRITE-TX` becomes its own step
+with access to job parameters and a clock, or those fields are populated outside translated logic.
+
+**Widening the composite broke the renderer twice, and both were found by compiling.**
+
+1. It **refused** unbound components. Correct while the composite was exactly balance-plus-rate;
+   wrong once it carried types the interest arithmetic does not read. Those are now constructed from
+   placeholders — refusing them would force the test's composite to differ from the design's, which
+   is the one thing a test rendered from the design must never do.
+2. The import set was derived from the **bound** entities only, so the rendered file constructed two
+   types it had not imported — `cannot find symbol`, twice, from javac. Now guarded by asserting
+   every `new X(` in the file has a matching import, which is the form that survives the next
+   component someone adds rather than a fix for these two names.
+
+Neither was visible by reading the renderer. Both are the same shape as PR #30's finding that local
+green is structurally weaker than a real build for anything touching Java.
+
+### G27 — the accumulator's owning step, and what giving it one exposed
+
+**The gap said the accumulator needs an owning step. Giving it one showed the owning step would have
+been invisible.**
+
+`1050-UPDATE-ACCOUNT` does `ADD WS-TOTAL-INT TO ACCT-CURR-BAL`. It cannot be an `ItemProcessor` — a
+stateless per-item processor holds nothing across items — so any step owning it must carry a
+non-processor role. And `generate` skipped every non-processor with a bare `continue`, appending no
+outcome at all.
+
+**Measured, not inferred.** A design of one processor plus one writer reported:
+
+```json
+{"status": "ok", "steps_total": 1, "steps_compiled": 1}
+```
+
+byte-identical to a design containing nothing else. A human approving that at control-plane's gate
+saw a complete success over a job whose account update had never been generated.
+
+**The test was written to fail first**, and it did, for the right reason — `Right contains one more
+item: 'updateAccount'` — before any fix existed.
+
+**What changed** (ADR-0023): a non-processor step now produces a `StepOutcome` with status
+`not_generated`, carrying its role and its `source_paragraphs`, and `GenerateCliResult` gains
+`steps_not_generated`. `succeeded` is measured over *generable* steps, so a declared writer does not
+flip a run to failure — most non-processors really are wiring, and failing on them would train a
+reviewer to ignore the signal.
+
+**An old test had encoded the defect as a requirement.** `test_non_processor_steps_are_skipped_rather_than_failed`
+asserted `len(outcome.outcomes) == 1` — i.e. that the reader vanished. It now asserts the reader is
+**both present and non-fatal**, which is what it was actually protecting.
+
+**G27 is closed for reporting and open for generation, and that split is deliberate.** Rendering a
+stateful control-break writer is a design question before a code one — Spring Batch's chunk
+boundaries do not align with COBOL's account breaks — and ADR-0019 scopes this pipeline to
+processors. The gap is now **visible at the gate** rather than invisible everywhere, which is the
+difference between a known limitation and a defect. The balance arithmetic itself is still not
+generated, and nothing here claims otherwise.
+
+### The oracle's first record was not reproducible, and nothing could have seen it
+
+**What was wrong.** `tests/fixtures/golden/CBACT04C/oracle/transact.dat`, committed by PR #56,
+carried `900014.55` in record 0's `TRAN-AMT`. The balance that produces it is `1164.70` at
+`15.00`, which truncates to `14.55`.
+
+**Measured, not argued.** The pinned image was re-run against the same tenant fixture (input
+hashes identical to the fixture's own `PROVENANCE.md`):
+
+```
+docker run --rm -v <repo>/tests/fixtures/tenant_repo_sample/app:/src:ro \
+                -v <repo>/tools/cobol-oracle:/co:ro -v <out>:/out \
+                cobol-oracle:gnucobol3 sh /co/run-oracle.sh
+```
+
+Four fresh runs plus the previous session's own leftover output — **five samples** — all write
+`00000001455`. They agree with each other on **every non-timestamp byte of all fifty records**, and
+their `tcatbal-posted.dat` and `acctdata-posted.dat` are byte-identical to the committed ones. The
+committed `transact.dat` differs from all five in **one byte**.
+
+**The fixture disagreed with itself.** `acctdata-posted.dat` is identical across every run, and the
+account it belongs to gained `14.55`, not `900014.55`. Cause not established; a single stray digit
+in one digit position of the first record written, varying between processes, is consistent with
+uninitialised storage on the first store — but that is a hypothesis and is recorded as one.
+
+**Why no existing check saw it.** Every assertion the fixture had asked whether it looked plausible
+*alone*: fifty records, fifty distinct amounts, at most one zero, `TRAN-SOURCE` padded. All four
+pass on the wrong file. This is the check-that-cannot-fail pattern once more — this time in the
+artifact rather than in the code — and the instrument that finally caught it was, again, a number
+compared against another number rather than a review.
+
+**The check now in the suite.** `run-oracle.sh` unloads the account file *between* the stages
+(`acctdata-stage1.dat`, committed), so the interest CBACT04C posted per account is measurable.
+`1050-UPDATE-ACCOUNT` does `ADD WS-TOTAL-INT TO ACCT-CURR-BAL` and nothing else in stage 2 touches
+a balance, so each account's balance gain **is** the interest it was written. Both sides are values
+COBOL produced; Python only sums exact two-decimal values. Recomputing
+`(TRAN-CAT-BAL * DIS-INT-RATE) / 1200` here is what ADR-0021 forbids, and this deliberately does
+not do it.
+
+**Shown to fail first.** Restoring the old fixture and running
+`pytest tests/system/test_cobol_oracle_comparison.py -k credited_exactly`:
+
+```
+AssertionError: 00000000001: balance moved 14.55, transactions total 900014.55
+```
+
+— the account named, both numbers printed, and the direction of the disagreement visible.
+
+**It found a defect in the tenant program on its first run.** `CBACT04C`'s main loop is
+`PERFORM UNTIL END-OF-FILE = 'Y'` with `PERFORM 1050-UPDATE-ACCOUNT` in the `ELSE` of
+`IF END-OF-FILE = 'N'`. `1000-TCATBALF-GET-NEXT` sets the flag at EOF, the loop condition is then
+true, and the loop exits — so that `ELSE` is unreachable and the **last account is written interest
+it is never credited** (account `00000000050`, `18.76`). Pinned by
+`test_the_last_account_is_written_interest_it_is_never_credited`, because ADR-0027's
+`postAccountInterest` step posts every account including the last: a future balance comparison will
+differ here for a reason that is COBOL's defect, not the translation's.
+
+**Also fixed, found by trying to reproduce the fixture.** `run-oracle.sh` was CRLF in a Windows
+working tree (`core.autocrlf=true`), so the container failed at `set -eu` with
+`set: Illegal option -`. `.gitattributes` now pins it LF, as it already did for `mvnw`. And the
+stage-2 account unload had no count assertion; it has one now, for the reason the 94-row finding
+already established.
+
+**Suite after the change**: `pytest tests/system/test_cobol_oracle_comparison.py -q` → **21 passed**.
+
+### The round trip, run — generated logic inside hand-written wiring
+
+**What ran.** `tests/system/test_hand_written_round_trip.py` generates `CBACT04C`'s two processors
+through `run_generate`, copies the hand-written wiring from `tests/fixtures/handwritten/CBACT04C/`
+into the generated project, and builds and runs it with real Maven over the oracle's own inputs
+(`tcatbal-posted.dat`, `acctdata-stage1.dat`, plus the corpus's untouched `discgrp.txt` and
+`cardxref.txt`). The job writes each generated `Tran` as JSON; the Python differential
+(`docs/adr/0029`) compares it field-for-field against `transact.dat`.
+
+```
+JAVA_HOME=... pytest tests/system/test_hand_written_round_trip.py -q
+3 passed in 69.58s
+```
+
+**The result, with the qualifiers that belong to it.** **500 of 500 comparable fields matched across
+50 records; 3 fields excluded by ADR-0026** (`TRAN-ID` and both timestamps). `describe_result`
+renders it as *"500 of 500 fields matched; 3 excluded by decision; wiring hand-written (ADR-0030),
+bodies scripted rather than model-authored"*, and that string exists so the number cannot travel
+without them. **This is not "the platform generated a working program."** The wiring — reader,
+writer, two step beans, job bean — is hand-written, because nothing renders it (G31); and the method
+bodies are step 45's scripted fixtures, so what a *model* would write remains an open question
+needing a live call.
+
+**It found a defect on its first run, and no other check here could have.** `TRAN-SOURCE` is
+`PIC X(10)` (`CVTRA05Y:8`) and the completion body wrote a bare `"System"`, so **fifty records
+disagreed on that field while every amount matched**:
+
+```
+record 0 TRAN-SOURCE: got 'System' want 'System    '
+... 450 of 500 fields matched
+```
+
+The eval judge flagged that same body defect in PR #44 (audit R2.27) and the copybook had said so
+all along — but the equivalence test asserts on `tranAmt` alone, so nothing in the suite could fail
+on it until a whole record was compared against COBOL's own. Third independent agreement on one
+defect, and the first one that a machine could act on.
+
+**The guard is exercised by the run, not asserted about it.** 94 balance rows go in and 50 records
+come out, because `IF DIS-INT-RATE NOT = 0` is running in generated Java. The record-count check
+happens before the field comparison, so "the job wrote nothing" cannot present as fifty mismatches.
+
+**Three defects found only by running it**, each costing one Maven cycle and each recorded in the
+wiring's `README.md` as a finding rather than a fix:
+
+1. `BatchApplication` component-scans `com.modernized.batch`, so the hand-written `@Configuration`
+   joined the context of every Spring Boot test in the generated project and `BaselineStackTest`
+   failed to load. ADR-0030's first bound arriving through a side door — the wiring is now gated
+   behind a `handwritten-wiring` profile.
+2. `TaskExecutorJobOperator` refuses to initialise without a `JobRegistry`.
+3. `MapJobRegistry` registers every `Job` bean itself, so registering the job explicitly throws
+   `DuplicateJobException` — "register the thing you built" is the obvious shape and it is wrong.
+
+**What the stopgap is for.** ADR-0030's third bound requires every fact the wiring needed that
+`design.json` lacks to be recorded, so the eventual renderer starts from practice rather than a
+design session. Five are listed in `tests/fixtures/handwritten/CBACT04C/README.md`: no byte offsets
+or record lengths (only widths, and contiguity happens to hold for these four copybooks); no
+statement of where data comes from or how the four composite components join; no store for the step
+chain's intermediate type; the `'DEFAULT'` rate fallback and abend-on-missing-lookup are business
+rules left to wiring; and the Spring Batch 6 facts above.
+
+**Still true after this run**: `0 of 4 programs round-trip`. The candidate exists and matches, and
+the two things standing between this and the metric are a rendered wiring layer (G31) and a
+model-authored body.
+
+*(superseded 2026-08-19 — both of that sentence's two blockers were removed the same day: the live
+run supplied model-authored bodies, and the account half closed the "only half the output is
+compared" objection. On the maintainer's decision the count is now reported as **`1 of 4`, wiring
+hand-written**, which is exactly what ADR-0030 bound 2 permits. The entry is left standing rather
+than edited, because what it recorded was true when it was written.)*
+
+### The same round trip, with a model writing the bodies
+
+**The run.**
+
+```
+COBOL_MODERNIZER_RUN_LIVE_CLI_TESTS=1 JAVA_HOME=... \
+  pytest tests/system/test_hand_written_round_trip.py -q -s -k live
+1 passed in 164.37s
+```
+
+```
+live round trip: 500 of 500 fields matched; 3 excluded by decision;
+  wiring hand-written (ADR-0030), bodies model-authored
+  steps and attempts: {'computeInterest': 1, 'completeTransaction': 1}
+  2 model call(s), 7563 tokens, notional cost 0.5766754
+```
+
+**What is now established.** Two `claude-opus-5`-authored method bodies, placed in hand-written
+wiring, produce **every comparable field of all fifty transaction records exactly as the unmodified
+`CBACT04C` wrote them under GnuCOBOL**. Both compiled on the first attempt — the heal loop did not
+run — and the differential is the one ADR-0029 built and demonstrated to fail on a one-cent change,
+a short alphanumeric and a record-count mismatch.
+
+**Identical to the scripted run in everything but the bodies.** Same design, same wiring, same
+inputs, same comparison, one shared `wire_build_and_run`. That is deliberate: if any of those
+differed, a disagreement between the two runs would not be attributable to the model.
+
+**The notes are the other half of the result.** The model flagged three gaps unprompted, and every
+one of them is a decision this repo had already recorded:
+
+1. **`ADD WS-MONTHLY-INT TO WS-TOTAL-INT` is not implemented**, because a stateless `ItemProcessor`
+   has nowhere to hold an accumulator that spans an account's records, and *"reproducing it here with
+   a field would be order- and restart-dependent"*. That is ADR-0027's reasoning, arrived at
+   independently.
+2. **`TRAN-ID`, `TRAN-ORIG-TS`, `TRAN-PROC-TS` are job-level facts, not item-level ones** — a run
+   parameter, a monotonic counter and a clock read — and *"reading a clock or a counter inside
+   process() would make the same input produce different records across runs and across a chunk
+   restart"*. That is ADR-0026 and `NonDeterministicBodyError`, restated by the model that would have
+   tripped them.
+3. **It emitted PIC-width spaces rather than empty strings** for fields it could not fill, and said
+   so. G28's lesson, applied without being asked for that field.
+
+It also stated the arithmetic reasoning explicitly: the product is exact at scale 4, the division is
+the only lossy step, and it truncates *"since the `COMPUTE` has no `ROUNDED`"* — ADR-0021's semantic,
+volunteered.
+
+**What this does not establish**, and the list is short and specific:
+
+- **The wiring is still hand-written** (G31). Nothing renders readers, writers, steps or jobs, so
+  what ran is generated logic inside a human's scaffolding.
+- **Only half of `CBACT04C`'s output is compared.** The program writes transactions *and* rewrites
+  the account file; this compares `transact.dat` and not `acctdata-posted.dat`. The account posting
+  step (ADR-0027) is not in this job, which the model's first note independently identifies.
+- **One program, one run.** ADR-0024's lesson about the judge applies here too: one sample of an
+  instrument is not a measurement of its reliability, though unlike the judge this one is checked
+  against a fixed oracle rather than against itself.
+
+**Cost, recorded because this repo records it**: `$0.5766754` notional for 2 calls / 7,563 tokens,
+inside a `RunBudget(max_model_calls=8)` ceiling that was never approached.
+
+### The account half, and a divergence pinned rather than smoothed
+
+**Half of `CBACT04C`'s output was still unmeasured.** It writes interest transactions *and* rewrites
+the account master; the first round trip compared `transact.dat` only. ADR-0027's
+`postAccountInterest` step now runs as a third step in the same hand-written job, over items whose
+interest is already summed by an aggregating reader, and its output is compared against
+`acctdata-posted.dat`.
+
+**The result: `598 of 600` fields, and nothing excluded.** The transaction record gives up `TRAN-ID`
+and both timestamps by ADR-0026; the account record gives up nothing, so every one of its twelve
+fields has to match by being right rather than by being skipped.
+
+**The two that differ are one defect, and it is COBOL's.**
+
+| field | candidate | COBOL |
+|---|---|---|
+| `ACCT-CURR-BAL` (record 49) | 2060.06 | 2041.30 |
+| `ACCT-CURR-CYC-CREDIT` (record 49) | 0 | 1549.30 |
+
+`CBACT04C`'s loop is `PERFORM UNTIL END-OF-FILE = 'Y'` with `PERFORM 1050-UPDATE-ACCOUNT` in the
+`ELSE` of `IF END-OF-FILE = 'N'`, so that branch never runs and the last account is never posted --
+the defect PR #59's cross-artifact identity found. The paragraph does exactly three things (add the
+interest, zero the cycle credit, zero the cycle debit) and **the divergence set is exactly its write
+set**, minus the field that was already zero. The balance difference is `18.76`, which is precisely
+that account's interest read off the transaction oracle.
+
+**The cheap option was available and refused.** Making the reader skip the last account would have
+turned this green by encoding a bug, and the number would then describe the wiring rather than the
+generated logic. `assert_account_half_matches_except_the_last` pins the shape instead: one record,
+fields confined to that paragraph's writes, balance difference equal to the uncredited interest. A
+second diverging account, a different field, or a different amount all fail.
+
+**Both halves, with model-authored bodies:**
+
+```
+COBOL_MODERNIZER_RUN_LIVE_CLI_TESTS=1 JAVA_HOME=...   pytest tests/system/test_hand_written_round_trip.py -q -s -k live
+
+live round trip: 500 of 500 fields matched; 3 excluded by decision;
+  wiring hand-written (ADR-0030), bodies model-authored
+  steps and attempts: {'computeInterest': 1, 'completeTransaction': 1, 'postAccountInterest': 1}
+  account half: 598 of 600 fields matched; 0 excluded by decision
+  3 model call(s), 9802 tokens, notional cost 0.7626982
+```
+
+All three bodies compiled on the first attempt. Session total for both live runs: **$1.339**.
+
+**The third body's notes flagged something the first run's did not**: that `1300-COMPUTE-INTEREST`
+unconditionally performs `1300-B-WRITE-TX`, so it included that paragraph's field moves and said
+*"if the design intended `1300-B-WRITE-TX` to be a separate step, this body needs to be split"* --
+which is exactly the split PR #43 made. The comparison is unaffected because `completeTransaction`
+rebuilds every field, but the model located a design ambiguity from the COBOL alone.
