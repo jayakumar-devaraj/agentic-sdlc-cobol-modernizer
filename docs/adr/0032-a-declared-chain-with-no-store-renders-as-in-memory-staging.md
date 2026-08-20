@@ -82,3 +82,29 @@ property. The generated Javadoc carries that sentence so it is visible at the pl
 **What this does not decide.** Whether the aggregate ever becomes renderable. That needs a way for
 the design to express a control break — which is a `solution_architect` contract question, not a
 rendering one, and is the honest remainder of G31 rather than a detail of it.
+
+## Amendment (2026-08-20) — the design now carries the control break
+
+This ADR refused the aggregate on the grounds that *"the grouping key, the summed field and the
+ordering are facts the design does not carry"*. **It carries them now.**
+`parsing/control_break.py` recognises the idiom -- the break test, the saved key advancing, the
+accumulator reset, the accumulation, and the paragraph performed at the boundary -- and
+`BatchStepDesign.control_break` holds the result (schema 3.6.0). Recognition requires all five
+elements together, so an ordinary inequality test is not mistaken for a group boundary; `CBACT04C`
+has one of each, twelve lines apart.
+
+**The refusal stands, and its reason has changed.** It is no longer *"nothing says how to group"*
+but *"the field it groups by is not reachable from the type the previous step hands over"*. For
+`CBACT04C` the break is on `TRANCAT-ACCT-ID` and the previous step's output is a `Tran`, which
+carries the amount and not the account id. That is a question with a shape: widen the type, or give
+the step an input the design can supply -- and the refusal now says exactly which field is missing
+instead of describing a hole.
+
+**Nothing about the decision above changes.** An aggregate step is still not rendered, still named
+in the job, and still supplied by a human. What changed is that a reader of the refusal learns what
+to do about it.
+
+**The tracing hop worth noting.** `WS-TOTAL-INT` accumulates `WS-MONTHLY-INT`, which is *also* moved
+to `TRAN-AMT`. The accumulator is a program variable no generated record has; the landing field is a
+column an aggregation can sum. Without following that `MOVE`, a rendered aggregation would carry a
+field name it could not find in any type it was given.

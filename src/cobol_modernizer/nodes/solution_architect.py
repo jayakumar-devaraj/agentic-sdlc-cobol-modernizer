@@ -50,6 +50,7 @@ from cobol_modernizer.core.contracts import (
     BatchStepDesign,
     CompositeComponent,
     CompositeType,
+    ControlBreakDesign,
     DomainEntity,
     DomainField,
     FileAccessPath,
@@ -63,6 +64,11 @@ from cobol_modernizer.core.model_client import call_model
 from cobol_modernizer.core.model_routing import RoutingDecision, resolve_routing
 from cobol_modernizer.core.structured_output import strip_code_fence
 from cobol_modernizer.nodes.spec_extractor import group_field_mappings_by_source
+from cobol_modernizer.parsing.control_break import (
+    ControlBreak,
+    extract_control_breaks,
+    landing_field,
+)
 from cobol_modernizer.parsing.field_references import referenced_fields
 from cobol_modernizer.parsing.file_control import (
     RecordBinding,
@@ -185,6 +191,65 @@ def _key_parts_for(
             )
     return parts
 
+
+def attach_control_breaks(
+    worktree_root: Path, jobs: list[BatchJobDesign], programs: list[ProgramDesignEntry]
+) -> list[BatchJobDesign]:
+    """Give each step the control break whose paragraph it declares, if there is one.
+
+    **Attached rather than declared**, for the reason ADR-0030 gave about joins: a control break's
+    key and accumulator are facts the COBOL states, and a model asked for them would produce
+    plausible totals against the wrong groups. `parsing/control_break.py` recognises the idiom, and
+    this puts the result where a renderer can find it -- on the step that declares the paragraph the
+    break performs.
+
+    A break whose paragraph no step declares is dropped rather than attached to a guess. That is
+    visible as a step with no `control_break` rather than as an error, because a program may
+    legitimately do work at a group boundary that this design never split into a step.
+    """
+    by_program: dict[str, list[tuple[ControlBreak, str | None]]] = {}
+    for entry in programs:
+        source_text = resolve_program(worktree_root, entry.program_name).source_text
+        by_program[entry.program_name] = [
+            (found, landing_field(source_text, found.accumulated_from_field))
+            for found in extract_control_breaks(source_text)
+        ]
+
+    updated: list[BatchJobDesign] = []
+    for job in jobs:
+        found = by_program.get(job.program_name, [])
+        steps = []
+        for step in job.steps:
+            paragraphs = {name.upper() for name in step.source_paragraphs}
+            match = next(
+                (
+                    (control, landing)
+                    for control, landing in found
+                    if control.performed_paragraph in paragraphs
+                ),
+                None,
+            )
+            if match is None:
+                steps.append(step)
+                continue
+            control, landing = match
+            steps.append(
+                step.model_copy(
+                    update={
+                        "control_break": ControlBreakDesign(
+                            break_key_field=control.break_key_field,
+                            accumulator_field=control.accumulator_field,
+                            accumulated_from_field=control.accumulated_from_field,
+                            landing_field=landing,
+                            performed_paragraph=control.performed_paragraph,
+                            test_line=control.test_line,
+                            add_line=control.add_line,
+                        )
+                    }
+                )
+            )
+        updated.append(job.model_copy(update={"steps": steps}))
+    return updated
 
 def build_file_access_paths(
     worktree_root: Path, programs: list[ProgramDesignEntry]
@@ -769,7 +834,9 @@ def design_solution(
 
     return UnifiedDesign(
         domain_entities=domain_entities,
-        batch_jobs=batch_jobs,
+        # Deterministic, and attached here rather than asked of the architect above: a control
+        # break's key and accumulator are facts the COBOL states (ADR-0032).
+        batch_jobs=attach_control_breaks(worktree_root, batch_jobs, programs),
         rest_endpoints=rest_endpoints,
         composite_types=composite_types,
         # Deterministic, and built here rather than asked of the model above: the architect decides

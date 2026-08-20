@@ -46,6 +46,17 @@
     "BatchStepDesign": {
       "description": "One step of a `BatchJobDesign`, LLM-authored (ADR-0010 decision 3).\n\n`source_paragraphs` names the real COBOL paragraph(s) (from `SpecExtractionResult.paragraph_names`)\nthis step's logic comes from -- provenance one hop further than `spec_extractor`'s own\nsource-label tracing (ADR-0006), now into the batch design itself.",
       "properties": {
+        "control_break": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ControlBreakDesign"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
         "description": {
           "title": "Description",
           "type": "string"
@@ -160,6 +171,57 @@
         "components"
       ],
       "title": "CompositeType",
+      "type": "object"
+    },
+    "ControlBreakDesign": {
+      "description": "What a step groups by and what it accumulates -- the fact a control break hides in an idiom.\n\n**Why it is on the step rather than in the job.** A control break performs one paragraph at the\ngroup boundary, and that paragraph is what a step declares in `source_paragraphs`. Attaching it\nanywhere else would leave a renderer matching paragraph names to find it.\n\n**`accumulated_from_field` is what to sum, and `landing_field` is where a generated type can\nfind it.** `WS-TOTAL-INT` accumulates `WS-MONTHLY-INT`, which is also moved to `TRAN-AMT`. The\naccumulator is a program variable no generated record has; the landing field is a column an\naggregation can actually sum, which is what makes ADR-0027's \"already-summed item\" renderable\nrather than a note.\n\nDeterministic throughout: every field is read from the COBOL by\n`parsing/control_break.py`, and a program whose idiom does not match completely gets no\n`ControlBreakDesign` at all rather than a partial one.",
+      "properties": {
+        "accumulated_from_field": {
+          "title": "Accumulated From Field",
+          "type": "string"
+        },
+        "accumulator_field": {
+          "title": "Accumulator Field",
+          "type": "string"
+        },
+        "add_line": {
+          "title": "Add Line",
+          "type": "integer"
+        },
+        "break_key_field": {
+          "title": "Break Key Field",
+          "type": "string"
+        },
+        "landing_field": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Landing Field"
+        },
+        "performed_paragraph": {
+          "title": "Performed Paragraph",
+          "type": "string"
+        },
+        "test_line": {
+          "title": "Test Line",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "break_key_field",
+        "accumulator_field",
+        "accumulated_from_field",
+        "performed_paragraph",
+        "test_line",
+        "add_line"
+      ],
+      "title": "ControlBreakDesign",
       "type": "object"
     },
     "DomainEntity": {
@@ -1076,7 +1138,7 @@
       "type": "array"
     },
     "schema_version": {
-      "default": "3.5.0",
+      "default": "3.6.0",
       "title": "Schema Version",
       "type": "string"
     },
