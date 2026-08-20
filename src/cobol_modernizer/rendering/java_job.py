@@ -93,6 +93,46 @@ def _has_file_sink(step: BatchStepDesign, design: UnifiedDesign, program_name: s
     )
 
 
+def aggregation_blockers(
+    step: BatchStepDesign, upstream_type: str | None, design: UnifiedDesign
+) -> list[str]:
+    """Which of a control break's fields the upstream item type cannot reach.
+
+    A rendered aggregation needs two things from the records it groups: the **break key**, to know
+    where a group ends, and the field the accumulated value **lands in**, to know what to sum. Both
+    have to be present in the type the previous step hands over -- an accumulator like
+    `WS-TOTAL-INT` is a program variable that no generated record has, which is exactly why
+    `landing_field` exists.
+
+    Returns the COBOL field names that are missing, empty when the aggregation is renderable, and
+    the break's own names when there is no upstream type at all.
+    """
+    break_design = step.control_break
+    if break_design is None:
+        return []
+
+    wanted = [break_design.break_key_field]
+    if break_design.landing_field:
+        wanted.append(break_design.landing_field)
+
+    if upstream_type is None:
+        return wanted
+
+    composite = next((c for c in design.composite_types if c.name == upstream_type), None)
+    entity_names = (
+        [component.entity_name for component in composite.components]
+        if composite is not None
+        else [upstream_type]
+    )
+    reachable = {
+        field.cobol_field_name
+        for entity in design.domain_entities
+        if entity.name in entity_names
+        for field in entity.fields
+    }
+    return [name for name in wanted if name not in reachable]
+
+
 def plan_steps(
     job: BatchJobDesign, design: UnifiedDesign, program_name: str
 ) -> tuple[list[BatchStepDesign], list[tuple[BatchStepDesign, str]], list[str]]:
@@ -121,6 +161,21 @@ def plan_steps(
         to_chain = following is not None and following.input_type == step.output_type
 
         if not (from_file or from_chain):
+            upstream = previous.output_type if previous else None
+            blockers = aggregation_blockers(step, upstream, design)
+            if step.control_break is not None:
+                control = step.control_break
+                reason = (
+                    f"it aggregates: {control.performed_paragraph} runs at a control break on "
+                    f"{control.break_key_field} (line {control.test_line}), summing "
+                    f"{control.accumulated_from_field} which lands in "
+                    f"{control.landing_field or '(nowhere)'}. Rendering that needs both readable "
+                    f"from {upstream or 'the step before it'}, and "
+                    f"{', '.join(blockers)} {'is' if len(blockers) == 1 else 'are'} not -- widen "
+                    "that type to carry it, or give this step an input the design can supply"
+                )
+                skipped.append((step, reason))
+                continue
             reason = (
                     f"its input {step.input_type!r} is neither readable from a declared file nor "
                     f"the output of the step before it. If it is an aggregate of earlier output, "

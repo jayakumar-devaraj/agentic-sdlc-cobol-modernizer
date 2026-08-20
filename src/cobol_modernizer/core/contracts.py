@@ -132,12 +132,47 @@ class BatchStepDesign(BaseModel):
     #: file opens and the account update too. A model given the paragraph translated it faithfully
     #: and still produced a processor that emits a transaction record COBOL never writes.
     guard_condition: str | None
+    #: The control break this step runs at, when it runs at one (G31, ADR-0032). Deterministic --
+    #: `parsing/control_break.py` recognises the idiom or does not -- so it defaults to `None`
+    #: rather than being a required-but-nullable key like `guard_condition`, which is LLM judgment
+    #: and where silence and "no break" have to look different.
+    control_break: ControlBreakDesign | None = None
     #: Names of the `BatchJobDesign.job_parameters` this step consumes (ADR-0026). Declared per step
     #: rather than injected wholesale so a constructor carries what that step needs and no more --
     #: ADR-0020's posture that a step declares what it needs, applied to invocation facts instead of
     #: types. Optional with an empty default; see `BatchJobDesign.job_parameters` for why an empty
     #: list is a statement here where a `null` guard would not have been.
     job_parameters: list[str] = []
+
+
+class ControlBreakDesign(BaseModel):
+    """What a step groups by and what it accumulates -- the fact a control break hides in an idiom.
+
+    **Why it is on the step rather than in the job.** A control break performs one paragraph at the
+    group boundary, and that paragraph is what a step declares in `source_paragraphs`. Attaching it
+    anywhere else would leave a renderer matching paragraph names to find it.
+
+    **`accumulated_from_field` is what to sum, and `landing_field` is where a generated type can
+    find it.** `WS-TOTAL-INT` accumulates `WS-MONTHLY-INT`, which is also moved to `TRAN-AMT`. The
+    accumulator is a program variable no generated record has; the landing field is a column an
+    aggregation can actually sum, which is what makes ADR-0027's "already-summed item" renderable
+    rather than a note.
+
+    Deterministic throughout: every field is read from the COBOL by
+    `parsing/control_break.py`, and a program whose idiom does not match completely gets no
+    `ControlBreakDesign` at all rather than a partial one.
+    """
+
+    break_key_field: str
+    accumulator_field: str
+    accumulated_from_field: str
+    #: The record field `accumulated_from_field` is also moved into, when there is one. `None` when
+    #: the value never reaches a record, which makes the group total unreachable from what a step
+    #: sees -- a finding rather than a default.
+    landing_field: str | None = None
+    performed_paragraph: str
+    test_line: int
+    add_line: int
 
 
 class CompositeComponent(BaseModel):
@@ -371,7 +406,8 @@ class UnifiedDesign(BaseModel):
 
 #: design.json's own envelope version -- bump this on any breaking change to DesignDocument's
 #: shape, e.g. once solution_architect gives `unified_design` a real type.
-SCHEMA_VERSION = "3.5.0"  # 3.5.0: FileAccessPath write side -- WRITE ... FROM (G31)
+SCHEMA_VERSION = "3.6.0"  # 3.6.0: BatchStepDesign.control_break (G31, ADR-0032)
+#: 3.5.0 added the FileAccessPath write side -- WRITE ... FROM (G31).
 #: 3.4.0 added FileAccessPath.key_parts, the join predicate (G31).
 #: 3.3.0 added DomainField.byte_offset and DomainEntity.record_length (G31 finding F1).
 #: 3.2.0 added UnifiedDesign.file_access_paths (G31, ADR-0030).

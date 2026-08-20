@@ -3148,6 +3148,65 @@ rendered -- so the live run had been reporting a qualifier two stages out of dat
 able to express a control break, which is a `solution_architect` contract question rather than a
 rendering one.
 
+### The control break, recognised — G31's last missing fact
+
+**What was missing.** Every other fact a rendered job needs is *declared*: a `PIC` clause, a
+`SELECT`, a `READ ... INTO`, a `WRITE ... FROM`. A control break is an **idiom** -- four statements
+spread across a loop -- and it is why `postAccountInterest` could not be rendered and why ADR-0027's
+"already-summed item" stayed a note.
+
+**What `CBACT04C` says, now parsed:**
+
+| | |
+|---|---|
+| break key | `TRANCAT-ACCT-ID` (line 194) |
+| saved key | `WS-LAST-ACCT-NUM` |
+| accumulator | `WS-TOTAL-INT`, reset at the break |
+| accumulated from | `WS-MONTHLY-INT` (line 467) |
+| lands in | `TRAN-AMT` |
+| performed at the break | `1050-UPDATE-ACCOUNT` |
+
+**Recognition is a conjunction, and that is the safety.** All five elements must be present: the
+`NOT =` test, the saved key *advancing* from the tested field, the accumulator reset beside it, an
+`ADD` into that accumulator elsewhere, and a `PERFORM`. An inequality test alone is not a break --
+`CBACT04C` has `IF DIS-INT-RATE NOT = 0` twelve lines after the real one, and without the
+saved-key-advances requirement this would report two breaks for that program, one of them on a rate.
+A wrong grouping key produces plausible totals against the wrong accounts, which is `pic_mapper`'s
+objection in a new place.
+
+**Three of the four Track C programs report none**, which is a fact about them rather than a gap.
+
+**The tracing hop that makes it usable.** `WS-TOTAL-INT` is a program variable no generated record
+has. Following `MOVE WS-MONTHLY-INT TO TRAN-AMT` gives the *column* an aggregation can sum -- without
+it, a rendered aggregation would carry a field name it could not find in any type it was given.
+
+**Attached to the step that declares the paragraph**, which is the whole matching rule:
+`1050-UPDATE-ACCOUNT` belongs to `postAccountInterest`. A break whose paragraph no step declares is
+dropped rather than attached to a guess.
+
+**What it unblocks, stated precisely.** The refusal has changed from *"the design carries no
+grouping key"* to:
+
+```
+it aggregates: 1050-UPDATE-ACCOUNT runs at a control break on TRANCAT-ACCT-ID (line 194),
+summing WS-MONTHLY-INT which lands in TRAN-AMT. Rendering that needs both readable from Tran,
+and TRANCAT-ACCT-ID is not -- widen that type to carry it, or give this step an input the
+design can supply
+```
+
+**That surfaced a real discrepancy.** The declared chain puts `postAccountInterest` after
+`completeTransaction`, whose output is a `Tran` -- and a `Tran` carries the account id only inside
+its description text. The hand-written aggregating reader actually consumes the *first* step's
+output, which carries an `Account`. So the design's declared order and the working implementation
+disagree about what this step reads, and nothing had said so before.
+
+**Verification**: `pytest tests/system/test_control_break.py -q` -> **18 passed**, parser at 100%
+including the period-terminated form (`END-IF` is optional in COBOL, and the older style is more
+common in real estates).
+
+**Still refused, deliberately**: the aggregation is not rendered. ADR-0032's amendment records that
+the decision is unchanged and only its reason has narrowed.
+
 ## Not yet covered (honest gaps, not silently skipped)
 
 - *(corrected 2026-08-08 — this entry was stale, not merely incomplete)* This previously read
