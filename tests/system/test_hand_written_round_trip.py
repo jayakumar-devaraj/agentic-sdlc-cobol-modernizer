@@ -41,13 +41,24 @@ from cobol_modernizer.core.contracts import (
     build_design_document,
 )
 from cobol_modernizer.core.model_client import RunBudget, collect_usage
-from cobol_modernizer.graph.generate_pipeline import DEFAULT_DOMAIN_PACKAGE, run_generate
+from cobol_modernizer.graph.generate_pipeline import (
+    DEFAULT_DOMAIN_PACKAGE,
+    DEFAULT_PACKAGE,
+    run_generate,
+)
 from cobol_modernizer.nodes.solution_architect import (
     build_domain_entities,
     build_file_access_paths,
 )
 from cobol_modernizer.nodes.spec_critic import critique_spec
 from cobol_modernizer.nodes.spec_extractor import extract_spec
+from cobol_modernizer.rendering.java_job import (
+    configuration_class_name,
+    plan_steps,
+    render_job_configuration,
+    render_staging,
+    staging_class_name,
+)
 from cobol_modernizer.rendering.java_reader import reader_class_name, render_item_reader
 from cobol_modernizer.rendering.java_writer import render_item_writer, writer_class_name
 from cobol_modernizer.tools.local_compiler import compile_project
@@ -112,6 +123,22 @@ CANDIDATE = Path("roundtrip") / "output" / "transact.dat"
 #: from the hand-written job configuration by path alone.
 READER_PACKAGE = "com.modernized.batch.reader"
 WRITER_PACKAGE = "com.modernized.batch.writer"
+JOB_PACKAGE = "com.modernized.batch.job"
+
+#: The profile the rendered job configuration and the hand-written remainder share, so neither
+#: joins the baseline project's own Spring Boot test context.
+WIRING_PROFILE = "handwritten-wiring"
+
+#: What is rendered and what is not, in one place.
+#:
+#: **It lives here because it drifted.** The scripted path and the live path each carried their own
+#: copy of this sentence, and when the reader started being rendered only one of them was updated --
+#: so for a while the live run reported a qualifier two stages out of date. A number's qualifier is
+#: only worth having if there is one of it.
+WIRING_QUALIFIER = (
+    "reader, writers, staging, two of three steps and the job rendered from design.json; the "
+    "account-posting step and the file paths hand-written (ADR-0032)"
+)
 
 #: What the rendered writers produce: COBOL's own record format, in the same layout the oracle is
 #: read with. The candidate is no longer a harness serialisation -- it is the program's output.
@@ -216,6 +243,46 @@ def render_writers_into(project: Path, design, program_name: str) -> list[Path]:
     return written
 
 
+def render_job_into(project: Path, design, program_name: str) -> list[Path]:
+    """Render the job configuration and any staging it needs. Returns the paths written.
+
+    The job is rendered with the steps it *can* produce and names the ones it cannot, so the
+    hand-written remainder supplies exactly one step bean and the run fails loudly if it does not.
+    """
+    job = design.batch_jobs[0]
+    _renderable, _skipped, staged = plan_steps(job, design, program_name)
+
+    written = []
+    for type_name in staged:
+        source = render_staging(
+            type_name, package=JOB_PACKAGE, domain_package=DEFAULT_DOMAIN_PACKAGE
+        )
+        written.append(_write_java(project, JOB_PACKAGE, staging_class_name(type_name), source))
+
+    configuration = render_job_configuration(
+        job,
+        design,
+        program_name,
+        package=JOB_PACKAGE,
+        domain_package=DEFAULT_DOMAIN_PACKAGE,
+        processor_package=DEFAULT_PACKAGE,
+        profile=WIRING_PROFILE,
+    )
+    written.append(
+        _write_java(project, JOB_PACKAGE, configuration_class_name(job), configuration)
+    )
+    return written
+
+
+def _write_java(project: Path, package: str, class_name: str, source: str) -> Path:
+    destination = (
+        project / "src" / "main" / "java" / Path(package.replace(".", "/")) / f"{class_name}.java"
+    )
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    destination.write_text(source, encoding="utf-8")
+    return destination
+
+
 def render_reader_into(project: Path, design, program_name: str) -> Path:
     """Render the interest step's `ItemReader` into the generated project. Returns its path."""
     source = render_item_reader(
@@ -243,10 +310,7 @@ def describe_result(result: ComparisonResult) -> str:
     less true is how a stopgap turns permanent, and one that quietly becomes broader is how a real
     result gets undersold.
     """
-    return (
-        f"{result.render()}; reader and writers rendered from design.json, job and step wiring "
-        f"hand-written (ADR-0030), bodies scripted rather than model-authored"
-    )
+    return f"{result.render()}; {WIRING_QUALIFIER}, bodies scripted rather than model-authored"
 
 
 def _unified_design(entry, entities) -> UnifiedDesign:
@@ -344,6 +408,7 @@ def wire_build_and_run(project: Path, design_inputs, **generate_kwargs):
     # so it happens on every run rather than being a mode.
     render_reader_into(project, design, entry.program_name)
     render_writers_into(project, design, entry.program_name)
+    render_job_into(project, design, entry.program_name)
 
     staged = project / "roundtrip" / "input"
     staged.mkdir(parents=True, exist_ok=True)
@@ -448,8 +513,7 @@ def test_a_model_authored_run_is_compared_against_the_same_oracle(tmp_path, desi
     notes = [note for step in outcome.compiled for note in step.notes if note.strip()]
 
     print(
-        f"\nlive round trip: {result.render()}; wiring hand-written (ADR-0030), bodies "
-        f"model-authored"
+        f"\nlive round trip: {result.render()}; {WIRING_QUALIFIER}, bodies model-authored"
         f"\n  steps and attempts: {authored}"
         f"\n  account half: {assert_account_half_matches_except_the_last(accounts).render()}"
         f"\n  {usage.model_calls} model call(s), {usage.input_tokens} in / {usage.total_tokens} tokens, "
