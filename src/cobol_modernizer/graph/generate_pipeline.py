@@ -68,7 +68,7 @@ logger = logging.getLogger(__name__)
 #: see the module docstring for why keeping them apart matters.
 MAX_HEAL_ATTEMPTS = 3
 
-#: The baseline Maven project `generate` copies into an empty target repo (ADR-0009, ADR-0019).
+#: The baseline Maven project `generate` copies into an empty target repo (ADR-0009, ADR-0034).
 TEMPLATE_DIR = Path(__file__).resolve().parents[3] / "templates" / "target-spring-boot-baseline"
 
 #: Where generated processors are declared. `card-service`'s own package, not this repo's.

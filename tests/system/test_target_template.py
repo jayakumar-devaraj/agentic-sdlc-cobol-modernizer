@@ -7,7 +7,7 @@ that quietly drops back to Java 21, or grows `--enable-preview`, or acquires ten
 still builds green. These tests fail on all three.
 
 They are deliberately not a substitute for the real build. Compiling on the pinned JDK is what
-proves the ecosystem supports it (ADR-0019's gate); this file only proves the pin says what it is
+proves the ecosystem supports it (ADR-0034's gate); this file only proves the pin says what it is
 supposed to say.
 """
 
@@ -24,7 +24,7 @@ MAVEN_NS = {"m": "http://maven.apache.org/POM/4.0.0"}
 TEMPLATE_ROOT = Path(__file__).resolve().parents[2] / "templates" / "target-spring-boot-baseline"
 POM_PATH = TEMPLATE_ROOT / "pom.xml"
 
-# ADR-0019, decision 1. Changing this number is a decision, not a refactor: it has to move here and
+# ADR-0034. Changing this number is a decision, not a refactor: it has to move here and
 # in the workflow's `java-version` together, or the build compiles for one release and runs on
 # another.
 PINNED_JAVA_RELEASE = "25"
@@ -127,7 +127,7 @@ def test_ci_builds_through_the_wrapper_not_a_bare_mvn() -> None:
 def test_the_spring_boot_parent_is_pinned_to_an_exact_version() -> None:
     """No ranges, no properties, no `LATEST`.
 
-    ADR-0019 declines to name a Spring Boot version *in the ADR* precisely so that the pin lives
+    ADR-0034 declines to name a Spring Boot version *in the ADR* precisely so that the pin lives
     somewhere a build verifies it. That only works if the pin is a literal.
     """
     root = ElementTree.parse(POM_PATH).getroot()
@@ -141,7 +141,7 @@ def test_the_spring_boot_parent_is_pinned_to_an_exact_version() -> None:
 
 
 def test_preview_features_are_not_enabled_anywhere() -> None:
-    """ADR-0019 keeps `--enable-preview` off permanently.
+    """ADR-0034 keeps `--enable-preview` off permanently.
 
     A preview feature changes between releases, so generated code using one compiles today and
     stops compiling on the next JDK - a failure the self-healing loop cannot diagnose, because

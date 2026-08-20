@@ -7,7 +7,7 @@ spring:
   datasource:
     # No embedded fallback on purpose. An in-memory database that silently stands in for PostgreSQL
     # would let a job pass its tests against different NUMERIC semantics than it runs against -
-    # and NUMERIC(p,s) fidelity to the COBOL PIC clause is the whole reason ADR-0019 chose
+    # and NUMERIC(p,s) fidelity to the COBOL PIC clause is the whole reason ADR-0036 chose
     # PostgreSQL. A missing URL should fail at startup, loudly.
     url: ${DATABASE_URL:}
     username: ${DATABASE_USER:}
@@ -17,7 +17,7 @@ spring:
     open-in-view: false
     hibernate:
       # Never generated from entities. The schema is derived from the COBOL copybooks via
-      # pic_mapper's precision and scale (ADR-0019); letting Hibernate infer it instead would
+      # pic_mapper's precision and scale (ADR-0036); letting Hibernate infer it instead would
       # replace a mapping this platform can verify with one it cannot.
       ddl-auto: none
 
@@ -31,7 +31,7 @@ spring:
 # generator will walk into unless the schema is owned somewhere explicit. It is: the metadata
 # schema ships as `org/springframework/batch/core/schema-postgresql.sql` inside spring-batch-core
 # and is applied by whatever owns migrations, alongside the domain schema pic_mapper derives
-# (ADR-0019).
+# (ADR-0036).
 
 management:
   endpoints:

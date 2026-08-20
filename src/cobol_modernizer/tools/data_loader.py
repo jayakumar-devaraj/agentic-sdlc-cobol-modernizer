@@ -246,8 +246,8 @@ def spring_batch_schema_sql(jar_path: Path) -> str:
     **Extracted rather than copied into this repo, and this step owns applying it at all.** PR #27
     found that Spring Boot 4 removed `spring.batch.jdbc.*` from `BatchProperties` entirely, so
     `initialize-schema=always` is silently ignored and *nothing* creates `BATCH_JOB_INSTANCE` and
-    friends -- the first CI run set it and counted zero tables. ADR-0019 was amended to move schema
-    ownership here as a result.
+    friends -- the first CI run set it and counted zero tables. ADR-0036 puts schema ownership here
+    as a result (it was ADR-0019's amendment, before that record was split).
 
     Reading it from the jar keeps it pinned to the Spring Batch version the target project resolves.
     A copy in this repo would be a second source of truth that goes stale on the next version bump,
@@ -273,7 +273,7 @@ def load_file(
 ) -> int:
     """Create `table_name` from the copybook and insert every record of `data_path`. Returns the count.
 
-    One migration concern, not two (ADR-0019's amendment): the table's shape and the data that goes
+    One migration concern, not two (ADR-0036): the table's shape and the data that goes
     into it both come from the same `pic_mapper` output, so a column cannot be narrower than the
     value it will hold. That is not a theoretical tidiness -- PostgreSQL rounds a value into a
     narrower `NUMERIC` silently rather than raising, so a schema derived separately from the reader

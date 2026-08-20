@@ -80,7 +80,7 @@ jobs:
           echo "no extraction node yet, or guardrail test present"
 
   # Compiles and tests templates/target-spring-boot-baseline on the exact JDK it pins.
-  # ADR-0019 makes this a gate rather than an intention: the Java 25 risk is not the language but
+  # ADR-0034 makes this a gate rather than an intention: the Java 25 risk is not the language but
   # the ecosystem's bytecode tooling (Hibernate/ByteBuddy, Mockito's instrumentation agent,
   # Testcontainers), which fails at *runtime*. Running it here means an unsupported transitive
   # dependency surfaces at step 38 instead of inside the self-healing compile loop at step 42,

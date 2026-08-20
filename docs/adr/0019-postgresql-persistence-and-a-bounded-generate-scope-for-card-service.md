@@ -2,8 +2,26 @@
 
 ## Status
 
-Accepted (2026-08-09). Prerequisite for Milestone C4 — step 38 cannot write a `pom.xml` without a
-language level, and step 40a cannot load data into a store nobody has chosen.
+**Superseded** (2026-08-20) by three records, one per decision. Accepted 2026-08-09; amended the
+same day. Prerequisite for Milestone C4 — step 38 cannot write a `pom.xml` without a language
+level, and step 40a cannot load data into a store nobody has chosen.
+
+**Nothing below was reversed.** This record bundled three independent decisions, so a reference to
+"ADR-0019" could not say which one it meant, and none of the three could be superseded without
+reopening the other two. The text below is left exactly as accepted — it is the historical record,
+and the corrections it contains (the withdrawn VSAM claim, the withdrawn packed-decimal argument)
+are the part worth not editing. The decisions **in force** live here:
+
+| This ADR's decision | Now recorded in |
+|---|---|
+| 1. Java 25, Maven not Gradle, framework version pinned in the build | [ADR-0034](0034-java-25-on-maven-with-the-framework-version-pinned-in-the-build.md) |
+| 2. Fixed `OCCURS` scoped out of `generate`; `PicMapping` unchanged | [ADR-0035](0035-fixed-occurs-stays-unrepresentable-and-cbact01c-demo-outputs-stay-out-of-generate.md) |
+| 3. PostgreSQL, loaded once from CardDemo's ASCII files — and the amendment on schema ownership | [ADR-0036](0036-the-generated-jobs-persist-to-postgresql-loaded-once-from-carddemo-ascii-files.md) |
+
+The `SELECT` inventory in the Context below is carried forward verbatim into ADR-0036, which is the
+record that rests on it. ADRs 0021, 0023, 0026–0030 and 0032 cite this one as it stood on their own
+dates and are deliberately not rewritten; live pointers in code, config and the construct matrix
+were moved to the successor that owns the decision they name.
 
 Builds on [ADR-0009](0009-generated-java-targets-a-new-repo-card-service.md), which decided *where*
 generated Java lives (`card-service`) and *what execution model* it uses (Spring Batch), and

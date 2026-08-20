@@ -99,3 +99,23 @@ not have. ADRs are single-decision records by construction and stay whole, inclu
 (ADR-0019, 290 lines). `tests/fixtures/golden/CBACT04C/spec.md` is a hand-verified regression
 baseline that tests compare against; it is a fixture, not documentation, and must not be
 restructured.
+
+## Amendment (2026-08-20, same day)
+
+The sentence above — *"ADRs are single-decision records by construction and stay whole, including
+the longest (ADR-0019, 290 lines)"* — asserted the premise and the instance in one breath, and only
+the premise holds. **ADR-0019 was not a single-decision record.** It bundled the target stack, the
+`generate` scope and the persistence choice, which is why it was the longest: three decisions'
+worth of context, evidence and consequences in one file, cited roughly sixty times across the repo
+in ways that could not say which of the three they meant.
+
+It has since been superseded by [ADR-0034](0034-java-25-on-maven-with-the-framework-version-pinned-in-the-build.md),
+[ADR-0035](0035-fixed-occurs-stays-unrepresentable-and-cbact01c-demo-outputs-stay-out-of-generate.md)
+and [ADR-0036](0036-the-generated-jobs-persist-to-postgresql-loaded-once-from-carddemo-ascii-files.md),
+one per decision, with ADR-0019 left in place and unedited as the historical record.
+
+**The rule this record states did not change, and is what caught the exception**: an ADR stays
+whole because it holds one decision. Length was never the criterion — ADR-0019 was long *because*
+it held three, and the fix is superseding records, not a hub-and-spoke split. Recorded as an
+amendment rather than an edit because "no other document was split" was the claim, and it stopped
+being true the same day it was written.
