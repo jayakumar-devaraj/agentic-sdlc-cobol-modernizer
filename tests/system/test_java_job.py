@@ -171,7 +171,6 @@ def test_the_job_names_every_declared_step_including_the_one_it_did_not_render(d
 
 def test_the_unrendered_step_is_documented_in_the_configuration_itself(design):
     """A reviewer opening the generated file learns what it left out and why, without the ADR."""
-    rendered = render(design)
     narrowed = design.model_copy(
         update={
             "composite_types": [
