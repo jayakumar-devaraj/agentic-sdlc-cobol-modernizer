@@ -94,7 +94,7 @@ divergence is exactly the fields `1050-UPDATE-ACCOUNT` writes. Skipping that acc
 would have made the comparison green by encoding a bug, and is refused on the record.
 
 **Still true.** Nothing has been written to the real `card-service` repository; the reachable
-maximum is `2 of 4` (G17, `docs/adr/0019`), since `CBCUS01C` and `CBACT01C` contribute a read and a
+maximum is `2 of 4` (G17, `docs/adr/0035`), since `CBCUS01C` and `CBACT01C` contribute a read and a
 print; and generating a stateful control-break writer is out of scope. The round trip found a real
 defect on its first pass — `TRAN-SOURCE` is `PIC X(10)` and the body wrote a bare `"System"`,
 disagreeing with COBOL on fifty records while every amount matched.
@@ -150,12 +150,13 @@ this repo worktree paths (`docs/adr/0001`).
 phase's write target — not this repo's own output, and not `carddemo-tenant-service`'s, which
 stays read-only source of truth throughout. **The repository itself is still an empty scaffold** —
 `generate` can now write a compiling project into a target directory, but nothing has been committed
-to `card-service` itself, and doing that is control-plane's job through its own clone (ADR-0001). What that target looks like is decided: Java 25 on Spring Batch over **PostgreSQL**,
+to `card-service` itself, and doing that is control-plane's job through its own clone (ADR-0001). What that target looks like is decided: Java 25 on Spring Batch over **PostgreSQL**
+(`docs/adr/0034`, `docs/adr/0036`),
 with CardDemo's data files as a one-time migration source rather than the runtime store, and
-`CBACT01C`'s fixed-`OCCURS` demo outputs scoped out of generation entirely (`docs/adr/0019`). This repo has **no Postgres edge in the diagram on purpose**: two modules can talk to
+`CBACT01C`'s fixed-`OCCURS` demo outputs scoped out of generation entirely (`docs/adr/0035`). This repo has **no Postgres edge in the diagram on purpose**: two modules can talk to
 PostgreSQL — `tools/knowledge_store.py` for the knowledge store's own schema, and
 `tools/data_loader.py` for migrating CardDemo's data files into the target's tables — but neither is
-called from the `design` or `generate` path (`docs/adr/0016`, `docs/adr/0019`), so today both
+called from the `design` or `generate` path (`docs/adr/0016`, `docs/adr/0036`), so today both
 connections are exercised only by their own tests against a local container. When it is wired, the credential arrives as a mounted file path and never
 as an embedded value or an environment variable (`docs/adr/0005`). Durable orchestration state
 stays entirely control-plane's concern either way.

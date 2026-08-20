@@ -4,7 +4,7 @@
 what the *unmodified* `CBACT04C` wrote when run under GnuCOBOL over the shipped corpus, and this
 module parses it into fields and compares a candidate set of records against it.
 
-**Why field-for-field** (ADR-0029). The target persists to PostgreSQL (ADR-0019) and nothing renders
+**Why field-for-field** (ADR-0029). The target persists to PostgreSQL (ADR-0036) and nothing renders
 a fixed-width writer, so there is no file to compare byte-for-byte -- building a serialiser whose only
 consumer is the assertion about it would be a check written to match whatever it needed to match. And
 byte equality is unreachable by *accepted decision*: ADR-0026 leaves `TRAN-ID` unpopulated and

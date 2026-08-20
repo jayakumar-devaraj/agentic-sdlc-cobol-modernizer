@@ -1,7 +1,7 @@
 ﻿<?xml version="1.0" encoding="UTF-8"?>
 <!--
   Baseline Maven project that generated COBOL-to-Java batch code is seeded into (ADR-0009,
-  ADR-0019). Deliberately a real, buildable project rather than a file of placeholders: it is
+  ADR-0034). Deliberately a real, buildable project rather than a file of placeholders: it is
   compiled on JDK 25 by this repo's own CI on every push, which is the only way an ecosystem
   dependency that has not caught up to a new JDK surfaces here (step 38) instead of inside the
   self-healing compile loop (step 42), where the loop would be diagnosing a dependency problem it
@@ -17,7 +17,7 @@
   <modelVersion>4.0.0</modelVersion>
 
   <!--
-    Pinned to an exact version, never a range. ADR-0019 deliberately does not name a Spring Boot
+    Pinned to an exact version, never a range. ADR-0034 deliberately does not name a Spring Boot
     version, because an ADR that carries one is wrong within a quarter and nobody re-reads an
     accepted ADR to bump a number. The pin lives here, where a build proves it.
   -->
@@ -42,7 +42,7 @@
 
   <properties>
     <!--
-      Java 25 (ADR-0019, decision 1). maven.compiler.release is set explicitly as well as
+      Java 25 (ADR-0034). maven.compiler.release is set explicitly as well as
       java.version so the pin is greppable and so tests/system/test_target_template.py can assert
       it without knowing how the Spring Boot parent wires its own property through.
 
@@ -58,14 +58,14 @@
 
   <dependencies>
     <!-- Spring Batch: the execution model ADR-0009 chose. Its JobRepository is also the reason
-         ADR-0019 chose a relational store - restart-from-checkpoint needs one regardless. -->
+         ADR-0036 chose a relational store - restart-from-checkpoint needs one regardless. -->
     <dependency>
       <groupId>org.springframework.boot</groupId>
       <artifactId>spring-boot-starter-batch</artifactId>
     </dependency>
 
     <!-- JPA, for the keyed lookups that COBOL does with ACCESS MODE IS RANDOM. Those become
-         repositories injected into an ItemProcessor, not additional ItemReaders (ADR-0019). -->
+         repositories injected into an ItemProcessor, not additional ItemReaders (ADR-0036). -->
     <dependency>
       <groupId>org.springframework.boot</groupId>
       <artifactId>spring-boot-starter-data-jpa</artifactId>
@@ -148,7 +148,7 @@
             itself. Dynamic self-attach is deprecated and warns on modern JDKs; this flag keeps it
             working and, more importantly, makes the dependency explicit rather than leaving the
             build one JDK release away from a failure nobody predicted. That agent path is the
-            actual Java 25 risk ADR-0019 names - not the language level.
+            actual Java 25 risk ADR-0034 names - not the language level.
           -->
           <argLine>-XX:+EnableDynamicAgentLoading</argLine>
         </configuration>

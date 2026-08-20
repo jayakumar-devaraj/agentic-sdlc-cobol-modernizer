@@ -82,14 +82,14 @@ read by -- including the alternate-key case this finding is about. What remains 
 the *layout* half (F1) and the writer side, since only `READ ... INTO` is parsed.
 
 The reader also reads flat files rather than PostgreSQL, and uses a `ResourcelessJobRepository`
-rather than a `DataSource`. That is a divergence from ADR-0019's target, taken because a container
+rather than a `DataSource`. That is a divergence from ADR-0036's target, taken because a container
 and a schema would add failure modes to a run whose subject is the generated logic. It does not
 change what is measured: the processors receive the same records either way.
 
 ### F3 · A declared step chain with nowhere for the intermediate to live
 
 `computeInterest` outputs a `TranWithContext` and `completeTransaction` consumes one, so the value
-crosses a step boundary. `TranWithContext` corresponds to no copybook and no table, and ADR-0019's
+crosses a step boundary. `TranWithContext` corresponds to no copybook and no table, and ADR-0036's
 target persists `Tran`. `TranWithContextStaging` holds it in memory, which is **not restartable** —
 a real limitation of this stopgap, and a question a renderer has to answer rather than inherit.
 

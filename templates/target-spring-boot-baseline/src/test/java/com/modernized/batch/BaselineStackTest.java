@@ -21,7 +21,7 @@ import org.testcontainers.junit.jupiter.Testcontainers;
 import org.testcontainers.utility.DockerImageName;
 
 /**
- * The gate ADR-0019 put on step 38: prove the ecosystem's bytecode tooling actually works on the
+ * The gate ADR-0034 put on step 38: prove the ecosystem's bytecode tooling actually works on the
  * pinned JDK <em>by running it</em>, not by reading release notes.
  *
  * <p>The risk Java 25 carries is not the language — a model that does not know Java 25 writes Java
@@ -116,7 +116,7 @@ class BaselineStackTest {
     @Test
     @DisplayName("NUMERIC(p,s) enforces the COBOL PIC clause at the schema level")
     void numeric_precision_and_scale_are_enforced_by_the_database() {
-        // ADR-0019's fourth reason for choosing PostgreSQL, checked rather than asserted: a value
+        // ADR-0036's fourth reason for choosing PostgreSQL, checked rather than asserted: a value
         // too large for the declared precision is rejected by the database, not silently truncated
         // the way a COBOL MOVE would.
         JdbcTemplate jdbc = new JdbcTemplate(dataSource);

@@ -3,7 +3,8 @@
 The Maven project generated COBOL-to-Java batch code is seeded into. It is the `generate` phase's
 starting point ([ADR-0009](../../docs/adr/0009-generated-java-targets-a-new-repo-card-service.md)),
 and its stack is decided by
-[ADR-0019](../../docs/adr/0019-postgresql-persistence-and-a-bounded-generate-scope-for-card-service.md).
+[ADR-0034](../../docs/adr/0034-java-25-on-maven-with-the-framework-version-pinned-in-the-build.md) and
+[ADR-0036](../../docs/adr/0036-the-generated-jobs-persist-to-postgresql-loaded-once-from-carddemo-ascii-files.md).
 
 **Domain-agnostic on purpose**: nothing tenant-specific belongs here, only what any modernized
 batch program needs regardless of which one it is. `tests/system/test_target_template.py` enforces
@@ -31,7 +32,7 @@ so no `.java` file is ever string-substituted during seeding. Only `groupId`, `a
 | Layer | Choice | Where the pin lives |
 |---|---|---|
 | Language | Java 25 | `pom.xml` `maven.compiler.release`, asserted by `test_target_template.py` |
-| Framework | Spring Boot, exact version | `pom.xml` `<parent>` — deliberately **not** named in ADR-0019 |
+| Framework | Spring Boot, exact version | `pom.xml` `<parent>` — deliberately **not** named in ADR-0034 |
 | Batch | Spring Batch | `spring-boot-starter-batch` |
 | Persistence | PostgreSQL + JPA | `spring-boot-starter-data-jpa`, `org.postgresql:postgresql` |
 | Numerics | `BigDecimal` + `CobolArithmetic` | `src/main/java/com/modernized/batch/cobol/` |
@@ -44,7 +45,7 @@ cannot diagnose, because nothing about the source is wrong.
 
 ## The shape the COBOL actually implies
 
-Verified against the real source, not assumed from a Spring Batch tutorial (ADR-0019 carries the
+Verified against the real source, not assumed from a Spring Batch tutorial (ADR-0036 carries the
 full 16-file inventory):
 
 - **Only the driving dataset is an `ItemReader`.** One driving file is an indexed dataset read
@@ -84,7 +85,7 @@ container and does not skip without one. A test that skips silently is how a gat
 decoration, which this repo has already had to correct once.
 
 CI builds this on every push (`.github/workflows/ci.yml`, job `template-build`). That is the gate
-ADR-0019 put on step 38: the Java 25 risk is not the language but the ecosystem's bytecode tooling
+ADR-0034 put on step 38: the Java 25 risk is not the language but the ecosystem's bytecode tooling
 — Hibernate/ByteBuddy, Mockito's instrumentation agent, Testcontainers — all of which fail at
 *runtime*, where a compile-error-driven self-healing loop cannot help. `BaselineStackTest` exercises
 each of them, and asserts `Runtime.version().feature() == 25` so a workflow that silently resolved a

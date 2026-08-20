@@ -568,7 +568,7 @@ def test_the_write_paragraphs_logic_is_generated_java(
 ):
     """`1300-B-WRITE-TX` as its own step, end to end rather than merely declared.
 
-    Splitting it out is only real if the pipeline sees it. A `writer` is not rendered (ADR-0019
+    Splitting it out is only real if the pipeline sees it. A `writer` is not rendered (ADR-0036
     scopes generation to processors), and ADR-0023 is why that now produces a `not_generated`
     outcome naming the paragraph instead of a silent `continue`. So the honest end state is
     visible: the step exists, is owned, and its logic is declared as not yet produced.
