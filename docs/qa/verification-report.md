@@ -3057,6 +3057,50 @@ unreachable). The end-to-end proof is the round trip above.
 **What G31 still leaves open**: the writer, the step beans and the job bean. `WRITE ... FROM` is not
 parsed, so a written file appears in the design as a declaration with no entity.
 
+### G31 stage 3d — the writers are rendered, and the candidate becomes COBOL's own format
+
+**What changed.** `rendering/java_writer.py` renders both of `CBACT04C`'s writers from
+`design.json`: an appending writer for the interest transactions and an **in-place `REWRITE`**
+writer for the account master. The hand-written JSON writers are deleted, and with them the last
+piece of *harness* serialisation -- the candidate files are now the program's own output, parsed
+with the same layout the oracle is read with.
+
+**`WRITE` and `REWRITE` are not rendered alike, and that distinction is the point.** A writer that
+appended in both cases would turn an update of fifty accounts into fifty new records. Every record
+would still be individually correct; only the file's *length* would say otherwise, which is exactly
+what a field-level differential cannot see. The update writer loads the file it is updating, replaces
+records by key, and writes the result back -- so an account the job never posts survives untouched.
+
+**The result is unchanged, which is the claim.** 500 of 500 transaction fields and 598 of 600 account
+fields, with reader and writers both rendered.
+
+**What the parse added** (schema 3.5.0): `WRITE ... FROM` and `REWRITE ... FROM`, attributed to a
+file through the `FD` record areas -- a write names the record *area*, not the file, so without that
+association it cannot be attributed at all. Read positionally (the `01` after an `FD` is that file's
+record) rather than by matching names, which only rhyme by convention. `CBTRN02C` both creates and
+updates `TCATBAL` rows, and both bindings are kept: collapsing them would erase the fact that the
+program can *create* a balance row, which is the difference between 50 rows and 94.
+
+**A runtime helper gained an encoder**: `CobolRecord.zoned`. Positive values are written as plain
+digits, which is what the reference run's COBOL produced; negatives take the standard overpunch,
+because a `-` has nowhere to live in a field whose width is its digit count. The positive
+representation is compiler-dependent and on the oracle's own known-unverified list -- which is
+exactly why the differential compares field *values* rather than bytes. A value too large for its
+field throws rather than being truncated into a smaller number that looks valid.
+
+**On rendering a fixed-width serialiser at all.** ADR-0029 declined to build one, on the grounds that
+a serialiser whose only consumer is the assertion about it is a check written to match whatever it
+needs to match. That reasoning does not apply here and the difference is worth stating: this writer
+is the *program's output*, not the test's. A batch program that cannot write its file is not
+finished.
+
+**Verification**: `pytest tests/system/test_java_writer.py -q` -> **13 passed**, renderer at 100%;
+`parsing/file_control.py` back to 100% with the write side covered; the template's `CobolRecordTest`
+at 15 tests. The end-to-end proof is the round trip.
+
+**What G31 still leaves open**: the job bean, the three step beans, the staging between steps, and
+the aggregating reader for the account-posting step.
+
 ## Not yet covered (honest gaps, not silently skipped)
 
 - *(corrected 2026-08-08 — this entry was stale, not merely incomplete)* This previously read

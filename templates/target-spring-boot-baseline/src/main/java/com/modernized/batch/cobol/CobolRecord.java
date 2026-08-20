@@ -94,6 +94,45 @@ public final class CobolRecord {
         return records;
     }
 
+    /**
+     * Stores a number into a zoned-decimal {@code DISPLAY} field: {@code width} characters, the
+     * decimal point implied at {@code scale}.
+     *
+     * <p><b>Positive values are written as plain digits</b>, which is what the reference run's
+     * COBOL produced — its own output files carry no overpunch on positive amounts. Negative values
+     * take the standard overpunch on the final digit, because a {@code -} sign has nowhere to live
+     * in a field whose width is its digit count.
+     *
+     * <p>The positive representation is compiler-dependent and is on the oracle's own
+     * known-unverified list, which is exactly why the differential compares field <em>values</em>
+     * rather than bytes: a run whose COBOL writes {@code 194.00} as {@code 0000001940{} and one
+     * that writes {@code 00000019400} agree on the number and differ on disk.
+     *
+     * @throws IllegalArgumentException if the value does not fit, rather than writing a truncated
+     *     number that looks like a smaller one.
+     */
+    public static String zoned(BigDecimal value, int width, int scale) {
+        BigDecimal scaled = value.setScale(scale, java.math.RoundingMode.DOWN);
+        String digits = scaled.abs().unscaledValue().toString();
+        if (digits.length() > width) {
+            throw new IllegalArgumentException(
+                    "value " + value + " needs " + digits.length() + " digits for a " + width
+                            + "-character field");
+        }
+        StringBuilder padded = new StringBuilder();
+        for (int i = digits.length(); i < width; i++) {
+            padded.append('0');
+        }
+        padded.append(digits);
+
+        if (scaled.signum() < 0) {
+            int last = padded.length() - 1;
+            int finalDigit = padded.charAt(last) - '0';
+            padded.setCharAt(last, NEGATIVE_OVERPUNCH.charAt(finalDigit));
+        }
+        return padded.toString();
+    }
+
     /** One {@code PIC X(width)} field, exactly as stored — padding included. */
     public static String text(String record, int offset, int width) {
         return record.substring(offset, offset + width);

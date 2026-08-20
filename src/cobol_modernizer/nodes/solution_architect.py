@@ -66,8 +66,10 @@ from cobol_modernizer.nodes.spec_extractor import group_field_mappings_by_source
 from cobol_modernizer.parsing.field_references import referenced_fields
 from cobol_modernizer.parsing.file_control import (
     RecordBinding,
+    WriteBinding,
     extract_file_declarations,
     extract_record_bindings,
+    extract_write_bindings,
 )
 from cobol_modernizer.parsing.key_assignments import (
     KeyAssignment,
@@ -206,6 +208,10 @@ def build_file_access_paths(
     for entry in programs:
         source_text = resolve_program(worktree_root, entry.program_name).source_text
         bindings = extract_record_bindings(source_text)
+        writes = extract_write_bindings(source_text)
+        first_write: dict[str, WriteBinding] = {}
+        for write in writes:
+            first_write.setdefault(write.file_name, write)
         declarations = extract_file_declarations(source_text)
 
         # Every field any lookup key is made of, resolved through group keys, so the MOVEs that
@@ -254,6 +260,23 @@ def build_file_access_paths(
                     ),
                     declared_record_key=declaration.record_key,
                     alternate_record_keys=list(declaration.alternate_record_keys),
+                    written_entity_name=(
+                        entity_name_from_record(
+                            first_write[declaration.select_name].record_name
+                        )
+                        if declaration.select_name in first_write
+                        else ""
+                    ),
+                    is_update=(
+                        first_write[declaration.select_name].is_update
+                        if declaration.select_name in first_write
+                        else False
+                    ),
+                    write_line=(
+                        first_write[declaration.select_name].source_line
+                        if declaration.select_name in first_write
+                        else None
+                    ),
                     key_parts=_key_parts_for(
                         key_components(
                             source_text,

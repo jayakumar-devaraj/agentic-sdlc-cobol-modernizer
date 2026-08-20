@@ -9,6 +9,8 @@ import com.modernized.batch.processor.CompleteTransactionProcessor;
 import com.modernized.batch.processor.ComputeInterestProcessor;
 import com.modernized.batch.processor.PostAccountInterestProcessor;
 import com.modernized.batch.reader.ComputeInterestItemReader;
+import com.modernized.batch.writer.CompleteTransactionItemWriter;
+import com.modernized.batch.writer.PostAccountInterestItemWriter;
 import com.modernized.batch.processor.PostAccountInterestProcessor;
 import java.nio.file.Path;
 import org.springframework.batch.core.job.Job;
@@ -22,6 +24,7 @@ import org.springframework.batch.core.repository.support.ResourcelessJobReposito
 import org.springframework.batch.core.step.Step;
 import org.springframework.batch.core.step.builder.StepBuilder;
 import org.springframework.batch.infrastructure.item.ItemReader;
+import org.springframework.batch.infrastructure.item.ItemWriter;
 import org.springframework.batch.infrastructure.support.transaction.ResourcelessTransactionManager;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
@@ -68,10 +71,15 @@ public class InterestJobConfiguration {
     /** Where the Python harness stages the oracle's inputs and collects the candidate output. */
     static final Path INPUT = Path.of("roundtrip", "input");
 
-    static final Path OUTPUT = Path.of("roundtrip", "output", "candidate.jsonl");
+    /** COBOL's own record format, written by a rendered writer -- not a harness serialisation. */
+    static final Path OUTPUT = Path.of("roundtrip", "output", "transact.dat");
 
-    /** `CBACT04C` writes two files, so a round trip that measures one of them measures half. */
-    static final Path ACCOUNT_OUTPUT = Path.of("roundtrip", "output", "candidate-accounts.jsonl");
+    /**
+     * `CBACT04C` writes two files, so a round trip that measures one of them measures half. The
+     * account file is rewritten in place, which is why this names the input path rather than an
+     * output one.
+     */
+    static final Path ACCOUNT_OUTPUT = INPUT.resolve("acctdata-stage1.dat");
 
     @Bean
     JobRepository jobRepository() {
@@ -106,9 +114,10 @@ public class InterestJobConfiguration {
         return new TranWithContextStaging();
     }
 
+    /** Rendered from the program's own `WRITE FD-TRANFILE-REC FROM TRAN-RECORD` (G31). */
     @Bean
-    TranJsonLinesItemWriter tranJsonLinesItemWriter() throws Exception {
-        return new TranJsonLinesItemWriter(OUTPUT);
+    ItemWriter<Tran> tranItemWriter() throws Exception {
+        return new CompleteTransactionItemWriter(OUTPUT);
     }
 
     @Bean
@@ -117,9 +126,14 @@ public class InterestJobConfiguration {
         return new AccountInterestPostingItemReader(staging);
     }
 
+    /**
+     * Rendered from `REWRITE FD-ACCTFILE-REC FROM ACCOUNT-RECORD`, and it updates the account file
+     * **in place** as the COBOL does -- so the file this job read its accounts from is the file it
+     * leaves behind, and the comparison reads that.
+     */
     @Bean
-    AccountJsonLinesItemWriter accountJsonLinesItemWriter() throws Exception {
-        return new AccountJsonLinesItemWriter(ACCOUNT_OUTPUT);
+    ItemWriter<Account> accountItemWriter() throws Exception {
+        return new PostAccountInterestItemWriter(INPUT.resolve("acctdata-stage1.dat"));
     }
 
     @Bean
@@ -142,7 +156,7 @@ public class InterestJobConfiguration {
             JobRepository jobRepository,
             PlatformTransactionManager transactionManager,
             TranWithContextStaging staging,
-            TranJsonLinesItemWriter writer) {
+            ItemWriter<Tran> writer) {
         return new StepBuilder("completeTransaction", jobRepository)
                 .<TranWithContext, Tran>chunk(10)
                 .reader(staging)
@@ -164,7 +178,7 @@ public class InterestJobConfiguration {
             JobRepository jobRepository,
             PlatformTransactionManager transactionManager,
             AccountInterestPostingItemReader reader,
-            AccountJsonLinesItemWriter writer) {
+            ItemWriter<Account> writer) {
         return new StepBuilder("postAccountInterest", jobRepository)
                 .<AccountInterestPosting, Account>chunk(10)
                 .reader(reader)

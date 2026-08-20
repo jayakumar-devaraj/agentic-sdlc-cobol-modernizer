@@ -94,4 +94,36 @@ class CobolRecordTest {
         // own output depends on that staying true.
         assertEquals("System    ", CobolRecord.text("xxSystem    yy", 2, 10));
     }
+
+    @Test
+    void writesAPositiveValueAsPlainZeroPaddedDigits() {
+        // What the reference run's COBOL actually wrote: no overpunch on positives.
+        assertEquals("00000019400", CobolRecord.zoned(new BigDecimal("194.00"), 11, 2));
+    }
+
+    @Test
+    void writesANegativeValueWithAnOverpunchOnItsLastDigit() {
+        // A '-' has nowhere to live in a field whose width is its digit count.
+        assertEquals("0000001941J", CobolRecord.zoned(new BigDecimal("-194.11"), 11, 2));
+    }
+
+    @Test
+    void roundTripsThroughItsOwnReader() {
+        String stored = CobolRecord.zoned(new BigDecimal("-19.41"), 11, 2);
+        assertEquals(new BigDecimal("-19.41"), CobolRecord.number(stored, 0, 11, 2));
+    }
+
+    @Test
+    void truncatesExtraScaleTowardZeroRatherThanRounding() {
+        // COBOL stores into a fixed scale by truncation; rounding here would invent a cent.
+        assertEquals("00000000194", CobolRecord.zoned(new BigDecimal("1.9499"), 11, 2));
+    }
+
+    @Test
+    void aValueTooLargeForTheFieldThrows() {
+        // Writing it truncated would produce a smaller number that looks entirely valid.
+        assertThrows(
+                IllegalArgumentException.class,
+                () -> CobolRecord.zoned(new BigDecimal("12345.67"), 4, 2));
+    }
 }
