@@ -76,10 +76,13 @@ width (`docs/adr/0029`):
 The method bodies were written by a real `claude-opus-5` run; all three compiled on the first
 attempt, and the self-healing loop never ran.
 
-**What the qualifier means, and it is not decoration.** The **reader and both writers are now
-rendered** from `design.json` — access paths, keys, joins, record layouts and `WRITE`/`REWRITE`
-modes, all parsed from the COBOL (G31) — so the candidate compared above is the program's own output
-in COBOL's record format. What stays hand-written is the job and step wiring
+**What the qualifier means, and it is not decoration.** The reader, both writers, the
+control-break aggregation, the staging, all three steps and the job are **rendered** from
+`design.json` — access paths, keys, joins, record layouts, `WRITE`/`REWRITE` modes and the group-by
+the COBOL performs at an account break, all parsed from the source (G31, `docs/adr/0032`) — so the
+candidate compared above is the program's own output in COBOL's record format. What stays
+hand-written is **the file paths**, and they are arguably not design at all: the COBOL says
+`ASSIGN TO TCATBALF`, an environment name, and nothing anywhere says what it resolves to
 (`tests/fixtures/handwritten/CBACT04C/`, `docs/adr/0030`). The claim is therefore
 *generated logic matches COBOL's own output inside wiring a human wrote* — **not** *this platform
 generated a working program*. A test fails if this file states the count without the qualifier in

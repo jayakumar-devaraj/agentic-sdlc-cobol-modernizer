@@ -47,12 +47,18 @@ from cobol_modernizer.graph.generate_pipeline import (
     run_generate,
 )
 from cobol_modernizer.nodes.solution_architect import (
+    attach_control_breaks,
     build_domain_entities,
     build_file_access_paths,
 )
 from cobol_modernizer.nodes.spec_critic import critique_spec
 from cobol_modernizer.nodes.spec_extractor import extract_spec
+from cobol_modernizer.rendering.java_aggregation import (
+    aggregating_reader_class_name,
+    render_aggregating_reader,
+)
 from cobol_modernizer.rendering.java_job import (
+    aggregation_source,
     configuration_class_name,
     plan_steps,
     render_job_configuration,
@@ -136,8 +142,8 @@ WIRING_PROFILE = "handwritten-wiring"
 #: so for a while the live run reported a qualifier two stages out of date. A number's qualifier is
 #: only worth having if there is one of it.
 WIRING_QUALIFIER = (
-    "reader, writers, staging, two of three steps and the job rendered from design.json; the "
-    "account-posting step and the file paths hand-written (ADR-0032)"
+    "reader, writers, aggregation, staging, all three steps and the job rendered from design.json; "
+    "only the file paths hand-written"
 )
 
 #: What the rendered writers produce: COBOL's own record format, in the same layout the oracle is
@@ -259,6 +265,27 @@ def render_job_into(project: Path, design, program_name: str) -> list[Path]:
         )
         written.append(_write_java(project, JOB_PACKAGE, staging_class_name(type_name), source))
 
+    # The aggregating reader for any step that runs at a control break (ADR-0032's amendment).
+    for step in job.steps:
+        source = aggregation_source(job, step, design)
+        if source is None:
+            continue
+        written.append(
+            _write_java(
+                project,
+                READER_PACKAGE,
+                aggregating_reader_class_name(step),
+                render_aggregating_reader(
+                    step,
+                    source,
+                    design,
+                    package=READER_PACKAGE,
+                    domain_package=DEFAULT_DOMAIN_PACKAGE,
+                    staging_package=JOB_PACKAGE,
+                ),
+            )
+        )
+
     configuration = render_job_configuration(
         job,
         design,
@@ -266,6 +293,7 @@ def render_job_into(project: Path, design, program_name: str) -> list[Path]:
         package=JOB_PACKAGE,
         domain_package=DEFAULT_DOMAIN_PACKAGE,
         processor_package=DEFAULT_PACKAGE,
+        reader_package=READER_PACKAGE,
         profile=WIRING_PROFILE,
     )
     written.append(
@@ -304,11 +332,18 @@ def render_reader_into(project: Path, design, program_name: str) -> Path:
 def describe_result(result: ComparisonResult) -> str:
     """The metric, with the qualifiers ADR-0030 requires it never to appear without.
 
-    **The first one narrowed when the reader started being rendered** (G31). It used to say the
-    wiring was hand-written, full stop; the reader now comes from `design.json` and the job and step
-    beans do not. Narrowing it rather than dropping it is the point: a qualifier that quietly becomes
-    less true is how a stopgap turns permanent, and one that quietly becomes broader is how a real
-    result gets undersold.
+    **It has narrowed four times**, and each narrowing is the point. It began as *the wiring was
+    hand-written*, full stop. The reader went first, then the writers, then the job with its staging
+    and two of its three steps -- and finally the control-break aggregation, once the break was
+    parsed and the composite widened to carry what it groups by.
+
+    What is left is **file paths**, which are arguably not design at all: the COBOL says
+    `ASSIGN TO TCATBALF`, an environment name, and nothing anywhere says what it resolves to.
+
+    A qualifier that quietly becomes less true is how a stopgap turns permanent; one that quietly
+    becomes broader is how a real result gets undersold. Both are avoided by rewriting it whenever
+    the thing it describes changes -- which is also how the drift that had left it two stages out of
+    date was caught.
     """
     return f"{result.render()}; {WIRING_QUALIFIER}, bodies scripted rather than model-authored"
 
@@ -322,15 +357,20 @@ def _unified_design(entry, entities) -> UnifiedDesign:
     return UnifiedDesign(
         domain_entities=entities,
         composite_types=[COMPOSITE, OUTPUT_COMPOSITE, POSTING],
-        batch_jobs=[
-            BatchJobDesign(
-                job_name="interestJob",
-                program_name=PROGRAM,
-                description="Monthly interest calculation.",
-                domain_entities=[entity.name for entity in entities],
-                steps=[STEP, COMPLETE_STEP, POSTING_STEP],
-            )
-        ],
+        # Control breaks attached exactly as `design` attaches them: the posting step aggregates,
+        # and without its break nothing says what to group by (ADR-0032's amendment).
+        batch_jobs=attach_control_breaks(
+            FIXTURE_ROOT,
+            [
+                BatchJobDesign(
+                    job_name="interestJob",
+                    program_name=PROGRAM,
+                    domain_entities=[entity.name for entity in entities],
+                    steps=[STEP, COMPLETE_STEP, POSTING_STEP],
+                )
+            ],
+            [entry],
+        ),
         rest_endpoints=[],
         # What the rendered reader is built from (G31): access paths, keys and record layouts.
         file_access_paths=build_file_access_paths(FIXTURE_ROOT, [entry]),

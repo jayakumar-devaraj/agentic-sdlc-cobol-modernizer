@@ -245,21 +245,42 @@ def test_the_schema_carries_the_control_break():
 # --- what it unblocks, and what it does not ----------------------------------------------------------
 
 
-def test_the_refusal_now_names_the_field_that_is_missing(design):
-    """Before this, the reason was *"the design carries no grouping key"*. It carries one now.
+def test_the_refusal_names_the_missing_field_when_no_stream_carries_it(design):
+    """The refusal that asked for the composite to be widened, kept as a test after it was.
 
-    So the refusal has narrowed from "nothing says how to group" to "this exact field is not
-    reachable from the type the previous step hands over" -- which is a question a human can answer
-    by widening a composite, rather than a hole with no shape.
+    `TranWithContext` carries `TranCatBal` now, so the aggregation renders and nothing is refused --
+    which would leave this message untested. Narrowing the composite back reproduces the state the
+    design was in, and the point of the message: not *"nothing says how to group"* but *"this exact
+    field is not reachable"*, which is a question a human can answer.
     """
-    job = design.batch_jobs[0]
-    _renderable, skipped, _staged = plan_steps(job, design, "CBACT04C")
+    narrowed = design.model_copy(
+        update={
+            "composite_types": [
+                composite.model_copy(update={"components": composite.components[:3]})
+                if composite.name == "TranWithContext"
+                else composite
+                for composite in design.composite_types
+            ]
+        }
+    )
+    _renderable, skipped, _staged = plan_steps(narrowed.batch_jobs[0], narrowed, "CBACT04C")
     _step, reason = skipped[0]
 
     assert "control break on TRANCAT-ACCT-ID" in reason
     assert "summing WS-MONTHLY-INT which lands in TRAN-AMT" in reason
     assert "TRANCAT-ACCT-ID is not" in reason
     assert "widen that type" in reason
+
+
+def test_the_widened_composite_makes_the_step_renderable(design):
+    """The other half: with the break key on the stream, nothing is refused.
+
+    Both directions matter. A test that only ever saw the refusal would keep passing if widening the
+    composite had changed nothing.
+    """
+    renderable, skipped, _staged = plan_steps(design.batch_jobs[0], design, "CBACT04C")
+    assert skipped == []
+    assert "postAccountInterest" in [step.step_name for step in renderable]
 
 
 def test_the_blockers_are_exactly_what_the_upstream_type_cannot_reach(design):
@@ -272,10 +293,13 @@ def test_the_blockers_are_exactly_what_the_upstream_type_cannot_reach(design):
     job = design.batch_jobs[0]
     posting = next(step for step in job.steps if step.step_name == "postAccountInterest")
 
+    # A `Tran` carries the amount and not the account id -- the account id is only inside its
+    # description text, which is not a field anything can group on.
     assert aggregation_blockers(posting, "Tran", design) == ["TRANCAT-ACCT-ID"]
-    # Handed the earlier step's output instead, only the key is still missing -- TranWithContext
-    # carries Account, whose ACCT-ID is a different field name than the break's.
-    assert aggregation_blockers(posting, "TranWithContext", design) == ["TRANCAT-ACCT-ID"]
+    # `TranWithContext` was widened to carry `TranCatBal`, so it reaches both. That widening is what
+    # made the aggregation renderable, and asserting the pair is what shows the difference is real
+    # rather than a check that never fires.
+    assert aggregation_blockers(posting, "TranWithContext", design) == []
 
 
 def test_a_step_with_no_control_break_reports_no_blockers(design):
