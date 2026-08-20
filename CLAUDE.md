@@ -68,6 +68,45 @@ a TODO.
 - A doc claim not backed by a command actually run against real containers/code is a bug, not
   documentation — verify before writing, not after.
 
+## Refactoring an oversized document: hub-and-spoke
+
+A markdown file that has grown so large that reading one section costs the whole file is a defect,
+not a filing preference. It burns context windows and bleeds tokens through every downstream LLM
+pipeline that follows a pointer into it. Refactor it into a **hub-and-spoke** layout, split by
+logical scope — milestones, features, phases of work, whatever boundary the document itself
+already uses.
+
+1. **The hub keeps the original path.** Count the inbound references first
+   (`grep -rn "<filename>"`) — they live in source docstrings, config comments, ADRs, tests and
+   CI, and a renamed hub breaks every one. The hub carries the framing and an index: **no logs, no
+   commands, no metrics of its own.** Spokes go in a sibling directory named for the hub.
+2. **Split on contiguous boundaries, in document order.** Never regroup a *running record* into
+   thematic buckets: its entries refer to "the entry above", and some exist only to correct an
+   earlier one. Reordering silently detaches each correction from what it corrects.
+3. **Bodies are byte-verbatim slices — only the wrapper header is new.** Slice the source's line
+   list; do not retype. **Prove it**: reassemble the spokes in order and diff against a copy of the
+   pre-split file. "It looks complete" is not verification, and a lost metric is invisible.
+4. **Name spokes so they sort in document order**, carrying the source's own section number where
+   it has one (`05-s3b-…` is § 3b), so a cross-reference like *"see § 3.3"* still resolves.
+5. **Where the document tracks work in flight, the index carries a Status column** — Complete /
+   In Progress / To Do — so a new session opens the live files and skips the settled ones. Derive
+   each status from the repository, never from the document being indexed, and date the
+   derivation. `docs/qa/verification-report.md` has no such column on purpose: every entry in it is
+   a completed verification, so the column would carry no information.
+6. **Update whatever states the maintenance rules** in the same change, naming the spoke each rule
+   now applies to. A rule that says "edit § 6" is wrong the moment § 6 is a separate file.
+
+**Do not apply this to:** an **ADR** (one decision per record — if it holds several, the fix is
+superseding records, one per decision, with the original left in place and marked `Superseded`;
+see ADR-0019 → ADR-0034/0035/0036), **`README.md`** (its section order above is fixed at six
+sections, "nothing else"), or a **test fixture** such as
+`tests/fixtures/golden/CBACT04C/spec.md`, which tests compare against byte-for-byte.
+
+One cost to state rather than hide: prose cross-references of the form "the entry below" may now
+span files. Leave them as written — rewriting verified prose in bulk for navigational convenience
+is its own risk — and convert one to a real link when you next touch that entry for another
+reason. ADR-0033 records this decision and its costs.
+
 ## AI-assisted engineering practice
 
 This platform demonstrates AI-assisted engineering across three roles per repo. The objective is
