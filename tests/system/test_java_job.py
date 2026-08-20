@@ -23,6 +23,7 @@ from cobol_modernizer.core.contracts import (
     UnifiedDesign,
 )
 from cobol_modernizer.nodes.solution_architect import (
+    attach_control_breaks,
     build_domain_entities,
     build_file_access_paths,
 )
@@ -61,17 +62,19 @@ def design() -> UnifiedDesign:
         critique=critique_spec(FIXTURE_ROOT, extraction, critique=lambda m, s, u: "[]"),
     )
     entities = build_domain_entities(FIXTURE_ROOT, [entry])
+    job = BatchJobDesign(
+        job_name="interestJob",
+        program_name="CBACT04C",
+        domain_entities=[entity.name for entity in entities],
+        steps=[STEP, COMPLETE_STEP, POSTING_STEP],
+    )
     return UnifiedDesign(
         domain_entities=entities,
         composite_types=[COMPOSITE, OUTPUT_COMPOSITE, POSTING],
-        batch_jobs=[
-            BatchJobDesign(
-                job_name="interestJob",
-                program_name="CBACT04C",
-                domain_entities=[entity.name for entity in entities],
-                steps=[STEP, COMPLETE_STEP, POSTING_STEP],
-            )
-        ],
+        # Attached as the real pipeline does. Without it no step carries a control break, the
+        # aggregation has no source, and every assertion here would be about a design the `design`
+        # phase never produces.
+        batch_jobs=attach_control_breaks(FIXTURE_ROOT, [job], [entry]),
         rest_endpoints=[],
         file_access_paths=build_file_access_paths(FIXTURE_ROOT, [entry]),
     )
@@ -85,6 +88,7 @@ def render(design: UnifiedDesign, **kwargs) -> str:
         package=JOB_PACKAGE,
         domain_package=DOMAIN,
         processor_package=PROCESSORS,
+        reader_package="com.modernized.batch.reader",
         **kwargs,
     )
 
@@ -92,28 +96,49 @@ def render(design: UnifiedDesign, **kwargs) -> str:
 # --- the plan ------------------------------------------------------------------------------------
 
 
-def test_the_plan_renders_the_chain_and_refuses_the_aggregate(design):
-    """The whole decision in one assertion.
+def test_the_plan_renders_all_three_steps_once_the_break_key_is_reachable(design):
+    """The whole decision in one assertion, and it changed when the composite was widened.
 
-    `computeInterest` reads files and hands off to `completeTransaction`, which writes a file -- both
-    renderable. `postAccountInterest` consumes an aggregate that no file yields and no step outputs,
-    so it is not.
+    `computeInterest` reads files and hands off to `completeTransaction`, which writes a file.
+    `postAccountInterest` aggregates -- and its source is not the step before it but the nearest
+    earlier step whose output carries both the break key and the summed column, which is
+    `computeInterest`.
     """
     renderable, skipped, staged = plan_steps(design.batch_jobs[0], design, "CBACT04C")
 
-    assert [step.step_name for step in renderable] == ["computeInterest", "completeTransaction"]
-    assert [step.step_name for step, _reason in skipped] == ["postAccountInterest"]
+    assert [step.step_name for step in renderable] == [
+        "computeInterest",
+        "completeTransaction",
+        "postAccountInterest",
+    ]
+    assert skipped == []
     assert staged == ["TranWithContext"], "the chain's intermediate needs a handoff and no file"
 
 
-def test_the_refusal_says_what_is_missing_rather_than_that_it_failed(design):
-    """A reader of this message should learn which fact the design lacks, not that something broke."""
-    _renderable, skipped, _staged = plan_steps(design.batch_jobs[0], design, "CBACT04C")
+def test_the_refusal_still_says_what_is_missing_when_the_break_key_is_out_of_reach(design):
+    """Narrowing the composite puts the step back out of reach, and the message has to say why.
+
+    This is the state the design was in before it was widened: the break key exists, the parse found
+    it, and no stream the step can read carries it.
+    """
+    narrowed = design.model_copy(
+        update={
+            "composite_types": [
+                composite.model_copy(
+                    update={"components": composite.components[:3]}
+                )
+                if composite.name == "TranWithContext"
+                else composite
+                for composite in design.composite_types
+            ]
+        }
+    )
+    _renderable, skipped, _staged = plan_steps(narrowed.batch_jobs[0], narrowed, "CBACT04C")
     _step, reason = skipped[0]
 
-    assert "AccountInterestPosting" in reason
-    assert "grouping key" in reason and "control break" in reason
-    assert "ADR-0032" in reason
+    assert "control break on TRANCAT-ACCT-ID" in reason
+    assert "TRANCAT-ACCT-ID is not" in reason
+    assert "widen that type" in reason
 
 
 def test_a_job_with_no_steps_is_refused(design):
@@ -147,8 +172,19 @@ def test_the_job_names_every_declared_step_including_the_one_it_did_not_render(d
 def test_the_unrendered_step_is_documented_in_the_configuration_itself(design):
     """A reviewer opening the generated file learns what it left out and why, without the ADR."""
     rendered = render(design)
-    assert "postAccountInterest" in rendered.split("public class")[0]
-    assert "control break" in rendered.split("public class")[0]
+    narrowed = design.model_copy(
+        update={
+            "composite_types": [
+                composite.model_copy(update={"components": composite.components[:3]})
+                if composite.name == "TranWithContext"
+                else composite
+                for composite in design.composite_types
+            ]
+        }
+    )
+    header = render(narrowed).split("public class")[0]
+    assert "postAccountInterest" in header
+    assert "control break" in header
 
 
 def test_the_chain_is_wired_through_the_staging_bean(design):

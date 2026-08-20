@@ -3207,6 +3207,47 @@ common in real estates).
 **Still refused, deliberately**: the aggregation is not rendered. ADR-0032's amendment records that
 the decision is unchanged and only its reason has narrowed.
 
+### The control-break aggregation, rendered — G31 closes except for file paths
+
+**What changed.** The control break parsed in the previous PR is now *used*: the aggregating reader
+that turns a stream of transactions into one already-summed item per account is generated, the
+`postAccountInterest` step renders with it, and the hand-written reader is deleted. **Result
+unchanged**: 500 of 500 transaction fields and 598 of 600 account fields.
+
+**The design change that unblocked it.** `TranWithContext` was widened to carry `TranCatBal`, so the
+stream carries what the break groups by. Before that, the account id reached the posting step only
+inside `TRAN-DESC`'s text -- not something anything can group on. That is the same move PR #40 made
+for G26, and the refusal that asked for it named the exact field.
+
+**Which stream an aggregate reads is derived, not declared.** A chain says each step consumes its
+predecessor's output; an aggregate does not. `aggregation_source` walks backwards to the nearest
+earlier step whose output carries **both** the break key and the summed column -- `computeInterest`,
+not the `completeTransaction` that immediately precedes it. That resolves the discrepancy the
+previous PR surfaced between the declared order and what the implementation actually reads.
+
+**The summed record copies rather than fabricates.** The hand-written version filled every
+non-total field with PIC-width spaces and zeros; the rendered one takes the group's first record and
+replaces the accumulated column. Both are choices, and copying carries values that exist -- so a
+body reading more than the total sees real data rather than padding.
+
+**Found by javac**: the first version reached the copied fields as `first.tranId()` where `first` is
+the *source item*, not a `Tran`. It needed the component that holds the entity --
+`first.tran().tranId()`. A compile error rather than a silent one, which is the only reason it was
+cheap.
+
+**A duplication removed while covering it.** Two functions walked the same components -- one to
+build an accessor string, one to find the owning entity -- and the second had a branch nothing could
+reach, because callers always asked the first. Merged into one `_locate`, which made the branch both
+reachable and tested.
+
+**Verification**: `pytest tests/system/test_java_aggregation.py -q` -> **14 passed**, renderer at
+100%. The Maven-backed suites (`test_hand_written_round_trip`, `test_interest_equivalence`,
+`test_account_break_posting`) -> **30 passed, 1 skipped**, which matters here because widening the
+composite changed what every `computeInterest` body has to construct.
+
+**What is left of G31**: file paths. The COBOL says `ASSIGN TO TCATBALF` -- an environment name --
+and nothing anywhere says what it resolves to, so binding it is deployment rather than design.
+
 ## Not yet covered (honest gaps, not silently skipped)
 
 - *(corrected 2026-08-08 — this entry was stale, not merely incomplete)* This previously read

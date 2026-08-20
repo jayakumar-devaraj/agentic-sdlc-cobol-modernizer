@@ -84,6 +84,14 @@ OUTPUT_COMPOSITE = CompositeType(
         CompositeComponent(field_name="tran", entity_name="Tran"),
         CompositeComponent(field_name="account", entity_name="Account"),
         CompositeComponent(field_name="cardXref", entity_name="CardXref"),
+        # **Widened for the control break** (ADR-0032's amendment). `1050-UPDATE-ACCOUNT` groups on
+        # `TRANCAT-ACCT-ID`, a field of `TranCatBal`, so a step aggregating this stream has to be
+        # able to see what it groups by. Without it the account id reaches the posting step only
+        # inside `TRAN-DESC`'s text, which is not something anything can group on.
+        #
+        # The same move PR #40 made for G26: when a step needs data its declared type cannot reach,
+        # the composite is where this design carries it.
+        CompositeComponent(field_name="balance", entity_name="TranCatBal"),
     ],
 )
 
@@ -177,7 +185,7 @@ _CORRECT_BODY = _PRELUDE + (
     "java.math.BigDecimal monthlyInterest = CobolArithmetic.divide("
     'balance.multiply(rate), new java.math.BigDecimal("1200"), 2);\n'
     f"return new TranWithContext({_TRAN.format(amount='monthlyInterest')},"
-    " item.account(), item.cardXref());"
+    " item.account(), item.cardXref(), item.balance());"
 )
 
 #: One token different, and wrong. `divideRounded` is `HALF_UP`, so it disagrees with COBOL on every
@@ -186,7 +194,7 @@ _ROUNDING_BODY = _PRELUDE + (
     "java.math.BigDecimal monthlyInterest = CobolArithmetic.divideRounded("
     'balance.multiply(rate), new java.math.BigDecimal("1200"), 2);\n'
     f"return new TranWithContext({_TRAN.format(amount='monthlyInterest')},"
-    " item.account(), item.cardXref());"
+    " item.account(), item.cardXref(), item.balance());"
 )
 
 #: Emits a zero-amount transaction for a zero rate instead of none. Every arithmetic row still
@@ -197,7 +205,7 @@ _ALWAYS_WRITES_BODY = (
     "java.math.BigDecimal monthlyInterest = CobolArithmetic.divide("
     'balance.multiply(rate), new java.math.BigDecimal("1200"), 2);\n'
     f"return new TranWithContext({_TRAN.format(amount='monthlyInterest')},"
-    " item.account(), item.cardXref());"
+    " item.account(), item.cardXref(), item.balance());"
 )
 
 #: The imports the body needs. Supplied with the body because that is the real contract: the

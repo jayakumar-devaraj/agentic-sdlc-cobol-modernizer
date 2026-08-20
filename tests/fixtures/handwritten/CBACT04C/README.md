@@ -16,17 +16,20 @@ writer for the interest transactions and an in-place `REWRITE` writer for the ac
 the candidate the round trip compares is now COBOL's own record format, produced by generated code
 and parsed with the same layout the oracle is read with.
 
-**The job, its infrastructure, the staging and two of its three steps are rendered too**
-(ADR-0032). What is left in this directory is exactly what the renderers refuse to produce, and each
-refusal has a reason rather than a backlog entry:
+**The job, its infrastructure, the staging, all three steps and the control-break aggregation are
+rendered too** (ADR-0032 and its amendment). **Finding F6 is closed**: the break is parsed --
+`1050-UPDATE-ACCOUNT` groups on `TRANCAT-ACCT-ID` and sums what lands in `TRAN-AMT` -- and
+`TranWithContext` was widened to carry what it groups by, which is the same move PR #40 made for
+G26.
+
+What is left in this directory is **one thing**:
 
 | still hand-written | why |
 |---|---|
-| the **account-posting step** and its aggregating reader | its input is an aggregate of earlier output, and the design carries no grouping key, summed field or ordering — a control break in the COBOL (finding **F6**) |
-| the **file paths** | `ASSIGN TO TCATBALF` names an environment, not a location. Binding it is deployment |
+| the **file paths** | `ASSIGN TO TCATBALF` names an environment, not a location. Binding it is deployment, and arguably never belongs in a design |
 
-The rendered job **names the step it did not render**, so the missing bean is a startup failure that
-names itself rather than a step that silently does not run.
+So this directory is no longer a stopgap holding the wiring up. It is the boundary between a
+generated program and where its files happen to live.
 
 ## The three bounds ADR-0030 put on it
 

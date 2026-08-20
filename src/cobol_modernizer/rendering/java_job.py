@@ -59,6 +59,17 @@ def configuration_class_name(job: BatchJobDesign) -> str:
     return f"{base}Configuration"
 
 
+def aggregating_reader_class_name(step: BatchStepDesign) -> str:
+    """`postAccountInterest` -> `PostAccountInterestItemReader`.
+
+    Duplicated from `java_aggregation` deliberately: that module imports this one for
+    `staging_class_name`, and importing it back would make the pair circular. Two lines of naming
+    is a smaller cost than a lazy import, and a test asserts the two agree.
+    """
+    base = step.step_name[:1].upper() + step.step_name[1:]
+    return f"{base}ItemReader"
+
+
 def _bean_name(class_name: str) -> str:
     """`TranWithContextStaging` -> `tranWithContextStaging`.
 
@@ -133,6 +144,32 @@ def aggregation_blockers(
     return [name for name in wanted if name not in reachable]
 
 
+def aggregation_source(
+    job: BatchJobDesign, step: BatchStepDesign, design: UnifiedDesign
+) -> BatchStepDesign | None:
+    """Which earlier step's output an aggregating step groups over.
+
+    **A chain says each step consumes its predecessor's output, and an aggregate does not.**
+    `postAccountInterest` groups the interest transactions by account, and the account id is not on
+    a `Tran` -- it reaches the stream on the `TranWithContext` the step *before* that produced. So
+    the source is found by walking backwards to the nearest step whose output type carries both the
+    break key and the field the accumulated value lands in.
+
+    Derived rather than declared, for the same reason as everything else here: the two fields come
+    from the COBOL, and which stream carries them is then a property of the types, not a judgment.
+    `None` when no earlier step's output carries them, which is a refusal with a shape.
+    """
+    if step.control_break is None:
+        return None
+    index = next((i for i, other in enumerate(job.steps) if other.step_name == step.step_name), None)
+    if index is None:
+        return None
+    for candidate in reversed(job.steps[:index]):
+        if not aggregation_blockers(step, candidate.output_type, design):
+            return candidate
+    return None
+
+
 def plan_steps(
     job: BatchJobDesign, design: UnifiedDesign, program_name: str
 ) -> tuple[list[BatchStepDesign], list[tuple[BatchStepDesign, str]], list[str]]:
@@ -161,6 +198,16 @@ def plan_steps(
         to_chain = following is not None and following.input_type == step.output_type
 
         if not (from_file or from_chain):
+            source = aggregation_source(job, step, design)
+            if source is not None:
+                # It aggregates an earlier step's output, and that output carries what it groups by
+                # and what it sums. Renderable, and staged from the step it reads rather than from
+                # the one that happens to precede it in the chain.
+                renderable.append(step)
+                if source.output_type not in staged:
+                    staged.append(source.output_type)
+                continue
+
             upstream = previous.output_type if previous else None
             blockers = aggregation_blockers(step, upstream, design)
             if step.control_break is not None:
@@ -254,6 +301,8 @@ def _step_bean(
     *,
     domain_package: str,
     processor_package: str,
+    reader_package: str,
+    job: BatchJobDesign | None = None,
 ) -> str:
     """One `@Bean Step`, wired to whichever reader and writer this step's data comes from and to.
 
@@ -269,7 +318,18 @@ def _step_bean(
     input_type = f"{domain_package}.{step.input_type}"
     output_type = f"{domain_package}.{step.output_type}"
 
-    if _has_file_source(step, design, program_name):
+    aggregates_from = aggregation_source(job, step, design) if job is not None else None
+    if aggregates_from is not None:
+        # A control-break step reads a *rendered aggregation* over an earlier step's staged output,
+        # not the stream that happens to precede it. Constructed here rather than injected because
+        # it needs no path: everything it groups and sums is already in memory.
+        staging = staging_class_name(aggregates_from.output_type)
+        reader_parameter = f"{staging} {_bean_name(staging)}"
+        reader_expression = (
+            f"new {reader_package}.{aggregating_reader_class_name(step)}"
+            f"({_bean_name(staging)})"
+        )
+    elif _has_file_source(step, design, program_name):
         reader_parameter = f"ItemReader<{input_type}> reader"
         reader_expression = "reader"
     else:
@@ -310,6 +370,7 @@ def render_job_configuration(
     package: str,
     domain_package: str,
     processor_package: str,
+    reader_package: str,
     profile: str | None = None,
 ) -> str:
     """Render the job, its steps and its infrastructure beans.
@@ -334,6 +395,8 @@ def render_job_configuration(
             program_name,
             domain_package=domain_package,
             processor_package=processor_package,
+            reader_package=reader_package,
+            job=job,
         )
         for step in renderable
     )
