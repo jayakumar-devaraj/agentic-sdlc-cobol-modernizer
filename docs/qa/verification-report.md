@@ -3101,6 +3101,53 @@ at 15 tests. The end-to-end proof is the round trip.
 **What G31 still leaves open**: the job bean, the three step beans, the staging between steps, and
 the aggregating reader for the account-posting step.
 
+### G31 stage 3e — the job, its steps and the handoff between them
+
+**What is rendered now.** `rendering/java_job.py` produces the `JobRepository`, the transaction
+manager, the registry and operator, the staging that carries a value across a step boundary, one
+`Step` bean per renderable step, and the `Job` that chains them. For `CBACT04C` that is two of three
+steps and everything around them.
+
+**What it refuses, and why that is the useful part.** `postAccountInterest` consumes an *aggregate*
+of earlier output. The design carries no grouping key, no summed field and no ordering -- those are a
+control break in the COBOL -- so the renderer declines and says so in the generated file's own
+Javadoc. It still **names the step in the job**, and the job looks every declared step up by name, so
+a missing bean is a startup failure naming itself rather than a job that quietly runs two steps
+instead of three.
+
+**The chain handoff is rendered as in-memory staging, and the generated class says it is not
+restartable** (ADR-0032). Two alternatives were available: fusing the two steps into one chunk step,
+which removes the question along with the step boundary a human approved at the gate; and a staging
+table, which is the restartable answer and needs a schema for a type that corresponds to no copybook.
+The middle option keeps the design's shape and carries its cost in writing, at the place the cost
+applies.
+
+**Readers and writers are injected rather than constructed.** A rendered step declares
+`ItemReader<TranCatBalWithRate>` and takes it as a bean, because binding a reader to a *path* is
+deployment: the COBOL says `ASSIGN TO TCATBALF`, an environment name, and nothing anywhere says what
+that resolves to.
+
+**Chunk size is rendered as a named constant that says it is not a COBOL fact.** Nothing in the
+source implies a batch size.
+
+**Result unchanged**: 500 of 500 transaction fields and 598 of 600 account fields, now with the job
+itself rendered.
+
+**Found by running it**: the hand-written remainder reads the rendered `CHUNK_SIZE` so its one step
+is chunked like the others, and package-private was not enough -- the two live in different packages.
+Made public with the reason in its Javadoc rather than copied.
+
+**A drift caught while narrowing the qualifier.** The scripted and live paths each carried their own
+copy of the "what is rendered" sentence, and only one was updated when the reader started being
+rendered -- so the live run had been reporting a qualifier two stages out of date. There is now one
+`WIRING_QUALIFIER` and both read it.
+
+**Verification**: `pytest tests/system/test_java_job.py -q` -> **13 passed**, renderer at 100%.
+
+**What remains of G31**: the account-posting step and the paths. The first needs the design to be
+able to express a control break, which is a `solution_architect` contract question rather than a
+rendering one.
+
 ## Not yet covered (honest gaps, not silently skipped)
 
 - *(corrected 2026-08-08 — this entry was stale, not merely incomplete)* This previously read

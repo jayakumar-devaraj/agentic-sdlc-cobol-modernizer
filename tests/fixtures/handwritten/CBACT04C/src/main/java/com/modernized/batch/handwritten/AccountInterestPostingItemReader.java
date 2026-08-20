@@ -5,6 +5,7 @@ import com.modernized.batch.domain.Account;
 import com.modernized.batch.domain.AccountInterestPosting;
 import com.modernized.batch.domain.Tran;
 import com.modernized.batch.domain.TranWithContext;
+import com.modernized.batch.job.TranWithContextStaging;
 import java.math.BigDecimal;
 import java.util.ArrayList;
 import java.util.List;
@@ -26,7 +27,9 @@ import org.springframework.batch.infrastructure.item.ItemReader;
  * `WS-TOTAL-INT` and written to `TRAN-AMT` inside `1300-COMPUTE-INTEREST` under the same guard, so
  * the sum of an account's interest transactions <em>is</em> its `WS-TOTAL-INT`.
  *
- * <p><b>It reads from the previous step's staged output, in account-key order.</b> That order is
+ * <p><b>It reads from the previous step's staged output, in account-key order.</b> That staging
+ * bean is now rendered (ADR-0032); this reader is what remains hand-written, because the design
+ * carries no grouping key, summed field or ordering for the aggregate it builds -- finding F6. That order is
  * what makes the emitted records line up with an account file the COBOL wrote sequentially by key.
  * Accounts with no interest row never reach this reader, exactly as they never reach
  * `1050-UPDATE-ACCOUNT`.

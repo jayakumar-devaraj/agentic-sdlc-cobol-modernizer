@@ -16,9 +16,17 @@ writer for the interest transactions and an in-place `REWRITE` writer for the ac
 the candidate the round trip compares is now COBOL's own record format, produced by generated code
 and parsed with the same layout the oracle is read with.
 
-**What is still hand-written**, and what the qualifier on the round-trip number refers to: the job
-bean, the three step beans, the staging between steps 1 and 2, and the aggregating reader for the
-account-posting step.
+**The job, its infrastructure, the staging and two of its three steps are rendered too**
+(ADR-0032). What is left in this directory is exactly what the renderers refuse to produce, and each
+refusal has a reason rather than a backlog entry:
+
+| still hand-written | why |
+|---|---|
+| the **account-posting step** and its aggregating reader | its input is an aggregate of earlier output, and the design carries no grouping key, summed field or ordering — a control break in the COBOL (finding **F6**) |
+| the **file paths** | `ASSIGN TO TCATBALF` names an environment, not a location. Binding it is deployment |
+
+The rendered job **names the step it did not render**, so the missing bean is a startup failure that
+names itself rather than a step that silently does not run.
 
 ## The three bounds ADR-0030 put on it
 
