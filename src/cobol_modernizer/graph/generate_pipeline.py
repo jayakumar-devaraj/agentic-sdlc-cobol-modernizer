@@ -508,7 +508,7 @@ def run_generate(
             # **`reads_own_writes` no longer refuses here.** ADR-0040 reported such a step
             # `not_generated` because nothing could run it correctly: a stateless processor decides
             # an item against state as the job found it, and `CBTRN02C` writes 287 records that way
-            # where COBOL writes 257 (ADR-0039). ADR-0041 built what runs it -- a working set the
+            # where COBOL writes 262 (ADR-0039). ADR-0041 built what runs it -- a working set the
             # reader and writer share, at chunk 1 -- and the refusal is lifted now that a rendered
             # sequential job compiles and runs against a real Maven build rather than on the
             # argument that it should.

@@ -153,9 +153,9 @@ class BatchStepDesign(BaseModel):
     #: **Measured on `CBTRN02C`, which is the reason this exists.** Its `1500-B-LOOKUP-ACCT`
     #: decides whether a transaction is accepted by comparing the credit limit against cycle
     #: fields that `2800-UPDATE-ACCOUNT-REC` rewrites for every accepted transaction, so the
-    #: decision for item *n* reads what items *1..n-1* wrote. Judged independently, **30 of that
-    #: program's 43 rejections disappear**: a stateless implementation writes 287 records where
-    #: the program writes 257, every one of them individually correct, so only a count sees it.
+    #: decision for item *n* reads what items *1..n-1* wrote. Judged independently, **25 of that
+    #: program's 38 rejections disappear**: a stateless implementation writes 287 records where
+    #: the program writes 262, every one of them individually correct, so only a count sees it.
     #:
     #: **Declared, not derived, and the distinction is the whole point.** The derivable
     #: condition -- a file that is both a keyed lookup and written back -- is *also* true of
