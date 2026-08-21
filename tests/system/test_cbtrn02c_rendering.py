@@ -298,3 +298,82 @@ def test_a_component_written_by_key_with_no_store_holding_it_is_refused(design):
             package="com.modernized.batch.writer",
             domain_package="com.modernized.domain",
         )
+
+
+POSTING_INPUT = CompositeType(
+    name="PostingInput",
+    components=[
+        CompositeComponent(field_name="dalytran", entity_name="Dalytran"),
+        CompositeComponent(field_name="xref", entity_name="CardXref"),
+        CompositeComponent(field_name="account", entity_name="Account"),
+        CompositeComponent(field_name="balance", entity_name="TranCatBal"),
+    ],
+)
+
+
+def _sequential_reader(design: UnifiedDesign) -> str:
+    step = _sequential_step().model_copy(update={"input_type": "PostingInput"})
+    return render_item_reader(
+        step,
+        design.model_copy(update={"composite_types": [POSTING_INPUT, POSTING_RESULT]}),
+        PROGRAM,
+        package="com.modernized.batch.reader",
+        domain_package="com.modernized.domain",
+    )
+
+
+def test_a_sequential_reader_takes_its_updated_lookups_from_the_shared_store(design):
+    """**The point of the whole exercise.** `ACCOUNT` and `TCATBAL` come from the working set.
+
+    A private map loaded in this reader's constructor would answer from the file as the job found
+    it and never see a single write, which is the 287-record failure ADR-0039 measured. The store
+    is asked by method rather than by reaching into a map inside it, so exactly one place knows how
+    its records are keyed.
+    """
+    source = _sequential_reader(design)
+    assert "state.account(" in source
+    assert "state.tranCatBal(" in source
+    assert "accountRecords" not in source
+    assert "trancatbalRecords" not in source
+
+
+def test_the_lookups_it_does_not_write_are_still_its_own(design):
+    """`XREF` is read and never written, so nothing is shared and nothing changes for it.
+
+    Without this the assertion above would pass for a reader that had moved *every* lookup into the
+    store, which would be a different design and a worse one -- the store exists for records the
+    step mutates, not as a general cache.
+    """
+    source = _sequential_reader(design)
+    assert "cardxrefRecords.get(" in source
+    assert "Path xreffile" in source
+
+
+def test_the_shared_lookups_are_not_constructor_paths_any_more(design):
+    """The reader cannot be handed the account file: it must not have a second copy of it."""
+    source = _sequential_reader(design)
+    constructor = next(line for line in source.splitlines() if "public PostTransactionItemReader" in line)
+    assert "PostTransactionWorkingSet state" in constructor
+    assert "acctfile" not in constructor
+    assert "tcatbalf" not in constructor
+
+
+def test_an_ordinary_step_reader_is_unchanged_by_any_of_this(design):
+    """`CBACT04C` is the regression risk, and this is the shape of the assertion that guards it.
+
+    A step that does not declare `reads_own_writes` gets no working set, keeps every lookup in its
+    own map, and takes a `Path` per file -- exactly as it did before the store existed.
+    """
+    source = render_item_reader(
+        _step("postTransaction", "Tran").model_copy(update={"input_type": "PostingInput"}),
+        design.model_copy(update={"composite_types": [POSTING_INPUT]}),
+        PROGRAM,
+        package="com.modernized.batch.reader",
+        domain_package="com.modernized.domain",
+    )
+    assert "WorkingSet" not in source
+    assert "accountRecords.get(" in source
+    # `_camel` rather than the working set's `_member`, which is how this reader has always
+    # named its own maps. Asserted in its existing spelling rather than tidied: renaming a
+    # rendered field to match a newer module would change every generated reader for nothing.
+    assert "trancatbalRecords.get(" in source

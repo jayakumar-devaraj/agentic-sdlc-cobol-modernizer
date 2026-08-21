@@ -121,6 +121,19 @@ def _owning_entity(design: UnifiedDesign, resolved: list[str], cobol_field: str)
     return None
 
 
+def _lookup(entity_name: str, key: str, shared: set[str]) -> str:
+    """Where this reader gets a lookup record from: its own map, or the step's working set.
+
+    The shared form is a method call rather than a map access on purpose -- the working set
+    owns how its records are keyed, and a reader reaching into a map inside it would be a
+    second place that has to agree about the key position.
+    """
+    if entity_name in shared:
+        member = entity_name[:1].lower() + entity_name[1:]
+        return f"state.{member}({key})"
+    return f"{_camel(entity_name)}Records.get({key})"
+
+
 def _order_lookups(
     design: UnifiedDesign, driving: str, lookups: dict[str, FileAccessPath]
 ) -> list[str]:
@@ -260,8 +273,31 @@ def render_item_reader(
     for name in order:
         variables[name] = f"{_camel(name)}Record"
 
+    # **Which lookups this reader must not own a copy of.** A step that declares `reads_own_writes`
+    # decides an item's outcome from records it is also updating, so its lookups have to be the
+    # ones the writer has been changing -- a private map loaded in this constructor would answer
+    # from the file as the job found it and never see a single write (ADR-0041). For every other
+    # step this set is empty and the reader is rendered exactly as it was.
+    #
+    # Imported here rather than at module scope: `java_working_set` imports this module for
+    # `_entity` and `_camel`, so a top-level import would be a cycle. Kept as one definition in
+    # one place anyway -- the alternative was to restate what "read-modify-written" means in a
+    # second module, which is how two definitions of one fact start disagreeing.
+    from cobol_modernizer.rendering.java_working_set import (
+        read_modify_written,
+        working_set_class_name,
+    )
+
+    shared = (
+        {path.written_entity_name for path in read_modify_written(design, program_name)}
+        if step.reads_own_writes
+        else set()
+    )
+    held = [name for name in order if name not in shared]
+
     parameters = ", ".join(
-        f"Path {_camel(paths[name].assign_to)}" for name in [driving, *order]
+        ([f"{working_set_class_name(step)} state"] if shared else [])
+        + [f"Path {_camel(paths[name].assign_to)}" for name in [driving, *held]]
     )
     loads = [
         (
@@ -269,7 +305,9 @@ def render_item_reader(
             f"{_camel(paths[driving].assign_to)}, {entities[driving].record_length});"
         )
     ]
-    for name in order:
+    if shared:
+        loads.insert(0, f"{_INDENT * 2}this.state = state;")
+    for name in held:
         path = paths[name]
         key_offset = path.key_parts[0].key_offset
         key_width = sum(
@@ -298,7 +336,9 @@ def render_item_reader(
             for part in primary
         )
         variable = variables[name]
-        body.append(f"{_INDENT * 2}String {variable} = {_camel(name)}Records.get({key});")
+        body.append(
+            f"{_INDENT * 2}String {variable} = {_lookup(name, key, shared)};"
+        )
 
         fallbacks = [part for part in path.key_parts if part.is_fallback]
         if fallbacks:
@@ -316,7 +356,7 @@ def render_item_reader(
             body += [
                 f"{_INDENT * 2}if ({variable} == null) {{",
                 # The COBOL retries on file status 23 -- record not found -- which is a null here.
-                f"{_INDENT * 3}{variable} = {_camel(name)}Records.get({retry});",
+                f"{_INDENT * 3}{variable} = {_lookup(name, retry, shared)};",
                 f"{_INDENT * 2}}}",
             ]
         body.append(
@@ -330,8 +370,11 @@ def render_item_reader(
     )
 
     maps = "\n".join(
-        f"{_INDENT}private final Map<String, String> {_camel(name)}Records = new HashMap<>();"
-        for name in order
+        ([f"{_INDENT}private final {working_set_class_name(step)} state;"] if shared else [])
+        + [
+            f"{_INDENT}private final Map<String, String> {_camel(name)}Records = new HashMap<>();"
+            for name in held
+        ]
     )
     parsers = "\n\n".join(_record_parser(entities[name], domain_package) for name in paths)
     sources = ", ".join(
