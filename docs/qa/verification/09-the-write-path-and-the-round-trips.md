@@ -734,3 +734,56 @@ in a negative overpunch — so a change that alters the cause fails rather than 
 
 **The round-trip metric does not move.** `CBTRN02C` is not `2 of 4`: two of its three comparable
 outputs differ, for a reason now named precisely instead of generally.
+
+### The overpunch, hand-derived and then put to the compiler
+
+**The question.** `CBTRN02C`'s run and its oracle disagree on seven decisions, all of them on
+amounts whose final byte is a sign overpunch. Which side is right is a question about a number, so
+it got ADR-0021's treatment: derive it by hand, write the literals down, make the runtime match
+them.
+
+**Four independent lines, none of which needs a mainframe.**
+
+1. **The standard.** `PIC S9(09)V99` carries the sign on the trailing digit: `{` is `+0`, `A`-`I`
+   are `+1`..`+9`, `}` is `-0`, `J`-`R` are `-1`..`-9`. So `0000005047G` is **504.77**, not 504.70.
+
+2. **The corpus corroborates the table from its own construction.** All twenty characters appear in
+   `dailytran.txt`, and in every record the digit *before* the overpunch equals the digit the
+   overpunch carries -- `...4161A` reads 416.**11**, `...0709R` reads -70.**99**. A wrong table
+   breaks that for eighteen of the twenty. It breaks for none.
+
+3. **GnuCOBOL's own arithmetic carries the loss.** Account `00000000030` has exactly one posted
+   transaction, `0000000294D` (29.44), and a starting cycle-credit of zero. The oracle's run ends it
+   at `000000002940` -- 29.40 -- and moves its balance 2.00 -> 31.40. The missing digit is inside a
+   *computed total*, so the value was already wrong when it entered the `ADD`. Not an output
+   formatting artifact.
+
+4. **The compiler, asked directly** (`tools/cobol-oracle/OPTEST.cbl`, same image and dialect):
+
+```
+0000005047G (G = +7) ->        504.70
+0000000567P (P = -7) ->         56.70
+0000000294D (D = +4) ->         29.40
+0000009190} (} = -0) ->        919.00
+0000003250{ ({ = +0) ->        325.00
+```
+
+GnuCOBOL 3.1.2 reads the overpunch byte as digit `0` and drops the sign, `-std=ibm` included. Where
+the carried digit is itself zero the magnitude survives, which is exactly why `CBACT04C` -- whose
+signed inputs all end in `{` or carry no overpunch -- is untouched.
+
+**Verification**: `pytest tests/system/test_overpunch_derivation.py -q` -> **23 passed** (twenty
+hand-derived literals plus three structural checks). `./mvnw test -Dtest=CobolRecordTest` ->
+**16 passed**, the same twenty literals against the decoder that ships *inside every generated
+project*, which is what a migrated program reads its own input with.
+
+**The literals are hand-written, not computed**, and the module says so: deriving them with the
+decoder under test would compare two renderings of one interpretation -- ADR-0021's refused option
+(c), the check that cannot fail.
+
+**What it changes**: nothing in this repo's decoders, which agree with the standard. ADR-0043 puts
+the fix in the oracle pipeline beside `LOADIDX` and `DALYCONV`, where the corpus's other
+representation quirks are already normalised. **The round-trip metric stays `1 of 4`** -- "our
+number is right and the oracle is wrong" is the claim that needs the strongest evidence, not the
+loudest assertion, and even four lines of it do not license moving a number that means *measured
+against COBOL*.
