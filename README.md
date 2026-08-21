@@ -95,11 +95,18 @@ would have made the comparison green by encoding a bug, and is refused on the re
 
 **Still true.** Nothing has been written to the real `card-service` repository; the reachable
 maximum is `2 of 4` (G17, `docs/adr/0035`), since `CBCUS01C` and `CBACT01C` contribute a read and a
-print; and generating a stateful control-break writer is out of scope. **And `2 of 4` is not
-reachable by generating more of `CBTRN02C`** (`docs/adr/0039`): its acceptance decision reads
-account state the job itself writes, so 30 of its 43 rejections are caused by ordering rather than
-by the transaction. A stateless implementation writes **287** records where the program writes 257,
-each of them individually correct — measured against the program's own output, not argued. The round trip found a real
+print; and generating a stateful control-break writer is out of scope. **`CBTRN02C` now builds and runs, and `2 of 4` is still
+not reachable** — for a reason that moved. Its acceptance decision reads account state the job
+itself writes, so a stateless implementation writes **287** records where the program writes 257,
+each individually correct (`docs/adr/0039`). Rendering it needed four facts `CBACT04C` never did: an
+`upsert` write mode (`docs/adr/0037`), a declared `reads_own_writes` step (`docs/adr/0040`), a
+working set its reader and writer share at chunk 1 (`docs/adr/0041`), and a declared optional lookup
+for the read that *creates* a balance row (`docs/adr/0042`). With those, the rendered job completes
+under real Maven and produces **256 of its oracle's 257 transactions and the account file exactly**.
+The seven differing decisions are **the oracle's**: the runtime that produced it reads this corpus's
+IBM sign overpunches as digit `0`, so its own credit-limit comparisons ran on amounts missing a
+digit (`docs/adr/0043`, four independent lines of evidence). `CBACT04C` is unaffected — checked, not
+assumed: its signed inputs end in `{` or carry no overpunch, exactly where the two readings agree. The round trip found a real
 defect on its first pass — `TRAN-SOURCE` is `PIC X(10)` and the body wrote a bare `"System"`,
 disagreeing with COBOL on fifty records while every amount matched.
 
@@ -310,10 +317,10 @@ Milestone C4.
 ./.venv/Scripts/python -m pytest --cov=cobol_modernizer --cov-report=term-missing --cov-fail-under=90
 ```
 
-827 tests passing (12 skipped — the opt-in live-CLI tests), 98.87% coverage — CI's own numbers from
+1070 tests passing (13 skipped — the opt-in live-CLI tests), 98.80% coverage — CI's own numbers from
 the run on this change, not a local approximation of them. The Postgres-backed
 `tools/knowledge_store.py` suite is included and skips nothing there, because CI provides a real
-service container. The target template's own 20 Java tests are not in that
+service container. The target template's own 36 Java tests are not in that
 figure; CI runs them separately on JDK 25 (`mvn -B verify`, job `template-build`). Some tests (`tools/knowledge_store.py`'s) need the local
 Postgres+pgvector instance above; they skip with a clear reason rather than failing if it isn't
 running, and CI runs them for real against its own service container rather than letting them skip
