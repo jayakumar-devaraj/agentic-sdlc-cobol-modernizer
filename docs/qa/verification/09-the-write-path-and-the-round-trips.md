@@ -686,3 +686,51 @@ impossible amount and accept an impossibly negative one.
 one. A mechanical check is deliberately not built — "reads a file it writes back" is true of
 `CBACT04C`'s account writer too, which is correct and shipped, and the distinguishing fact (can two
 input items reach the same written key) is not established by any parse here.
+
+### The second program built and run, and where it disagrees with COBOL
+
+**What ran.** `run_generate` produced `CBTRN02C`'s domain records and its one `ItemProcessor`; the
+reader, the writer, the working set, the step and the job were rendered from `design.json`;
+`tests/fixtures/handwritten/CBTRN02C/` supplied file paths and nothing else. Real Maven built it and
+a plain `AnnotationConfigApplicationContext` ran the job to `COMPLETED`.
+
+```
+pytest tests/system/test_cbtrn02c_round_trip.py -q   ->  4 passed (mvn verify inside)
+```
+
+**This is what lifted ADR-0040's refusal.** That refusal existed because nothing could run such a
+step correctly; ADR-0041 built what runs it, and the refusal came off when a build showed it working
+rather than when an argument said it should.
+
+**What matched.** 256 of the oracle's 257 transactions, and the account file exactly — 50 in, 50
+out, no account created, dropped or duplicated. That last one is worth separating: it says the
+`replace` write mode and the shared store handle an update correctly, independent of whether the
+decision feeding them was right.
+
+**What did not, and why it is the interesting half.** Seven decisions differ — six transactions
+accepted here that `CBTRN02C` rejected, one the reverse — and the balance file holds 100 rows where
+COBOL leaves 94.
+
+**Every one of the six carries an amount whose last byte is a negative zoned-decimal overpunch**
+(`}JKLMNOPQR`); the corpus has 50 such records. This pipeline reads that byte as a negative sign
+(G16 finding 2, and `decode_signed`'s own docstring), so the projected balance *falls* and the
+credit-limit check passes. GnuCOBOL rejected them as `0102 OVERLIMIT`, which is only possible if it
+**added** the amount rather than subtracting it. The seventh divergence carries no overpunch and
+follows from the other six: once a transaction is accepted that should not have been, every later
+decision reads a different running balance — this program's order dependence (ADR-0039) amplifying a
+single-record disagreement into a seventh.
+
+**The oracle's bytes cannot settle whose reading is right.** An input `0000009190}` comes back as
+`00000091900` — the same magnitude, with no overpunch at all — and the fixture's own `PROVENANCE.md`
+already lists *"the zoned-decimal sign representation on REWRITE"* among the things **not**
+corroborated by ADR-0021's hand-derived table. So the disagreement is about the tenant's compiler,
+not about this code, and it is recorded rather than resolved. Resolving it needs either IBM
+Enterprise COBOL or a hand-derivation of the kind ADR-0021 built for the interest arithmetic.
+
+**The counts are asserted at what the run produces, not at what it should produce.** A test
+asserting 94 against a pipeline that writes 100 is a failing test with no diagnosis in it, and the
+diagnosis is the finding. The characterisation is asserted too — *every* extra record's amount ends
+in a negative overpunch — so a change that alters the cause fails rather than shifting a number.
+
+**The round-trip metric does not move.** `CBTRN02C` is not `2 of 4`: two of its three comparable
+outputs differ, for a reason now named precisely instead of generally.
