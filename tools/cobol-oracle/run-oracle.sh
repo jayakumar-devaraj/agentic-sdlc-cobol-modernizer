@@ -35,6 +35,7 @@ cobc -x -std=ibm "$CO/DALYCONV.cbl" -o dalyconv
 cobc -x -std=ibm "$CO/ORACHK.cbl"   -o orachk
 cobc -x -std=ibm "$CO/UNLOADAC.cbl" -o unloadac
 cobc -x -std=ibm "$CO/UNLOADTC.cbl" -o unloadtc
+cobc -x -std=ibm "$CO/UNLOADTR.cbl" -o unloadtr
 
 # --- file mapping -------------------------------------------------------------------------------
 # Every ASSIGN is an environment name; CLAUDE.md forbids machine paths in committed files.
@@ -130,6 +131,19 @@ export dd_ACCOUT="$OUT/acctdata-stage1.dat"
 ./unloadac | tee stage1-unload.log
 expect_count_in stage1-unload.log "ACCTFILE unloaded" 50
 
+# --- unload CBTRN02C's own transaction master -------------------------------------------------
+# Its other two outputs are captured above and below; this one was written to the work directory
+# and never unloaded, so the program's *primary* output existed only inside the container. A
+# CBTRN02C comparison had two of its three in-scope targets and no way to check the third.
+# (DALYREJS is out of scope for generation by ADR-0038, and is not a comparison target.)
+#
+# **300 processed minus 43 rejected is 257**, and that is asserted rather than displayed for the
+# same reason every other count here is: a truncated or partially-posted master would still look
+# like a plausible file of correct records.
+export dd_TRNOUT="$OUT/transact-stage1.dat"
+./unloadtr | tee stage1-tran-unload.log
+expect_count_in stage1-tran-unload.log "TRANFILE unloaded" 257
+
 # --- stage 2: compute interest (CBACT04C), unmodified --------------------------------------------
 echo "--- stage 2: CBACT04C ---"
 ./runcb04 | tee stage2.log
@@ -180,6 +194,13 @@ expect_count "TCATBALF unloaded" 94
   echo "1. CBTRN02C posts dailytran into tcatbal (the shipped tcatbal is the PRE-posting state)."
   echo "2. CBACT04C computes interest on the posted balances and writes transact.dat."
   echo
+  echo "**This directory is the run's oracle, not one program's.** It is named for"
+  echo "CBACT04C because that is what it was built for; stage 1's own outputs are here"
+  echo "too, and renaming the directory would break every reference into it."
+  echo "CBTRN02C's comparable outputs are transact-stage1.dat (its transaction master),"
+  echo "tcatbal-posted.dat and acctdata-stage1.dat. dalyrejs.txt is produced but is out"
+  echo "of scope for generation (ADR-0038) and is not committed."
+  echo
   echo "tcatbal-posted.dat is the state *between* the two stages -- the input any"
   echo "candidate implementation must start from to be comparable with transact.dat."
   echo "acctdata-stage1.dat is the account file at the same instant, so the interest"
@@ -202,7 +223,8 @@ expect_count "TCATBALF unloaded" 94
   echo "- CBTRN02C: $(grep -h TRANSACTIONS stage1.log | tr -s ' ' | paste -sd'; ' -)"
   echo
   echo "## Output"
-  for f in transact.dat acctdata-stage1.dat acctdata-posted.dat tcatbal-posted.dat dalyrejs.txt; do
+  for f in transact.dat transact-stage1.dat acctdata-stage1.dat acctdata-posted.dat \
+           tcatbal-posted.dat dalyrejs.txt; do
     [ -f "$OUT/$f" ] && echo "- $f  $(wc -c < "$OUT/$f") bytes  sha256 $(sha256sum "$OUT/$f" | cut -d' ' -f1)"
   done
   echo

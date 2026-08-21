@@ -21,3 +21,10 @@ templates/target-spring-boot-baseline/mvnw text eol=lf
 # option -` -- a message that points at the shell rather than at the line endings, and one that
 # only appears for the person trying to reproduce the fixture. Same reasoning as mvnw above.
 tools/cobol-oracle/*.sh text eol=lf
+
+# The oracle is a byte-exact record of what COBOL wrote, and its records are fixed-length with no
+# terminators -- git infers "binary" today only because no LF happens to appear in them. That is an
+# accident of the data, not a guarantee: a future corpus whose bytes contain an 0x0A would be
+# silently line-ending-converted on a Windows checkout, and the comparison would fail against
+# records that were correct when they were produced.
+tests/fixtures/golden/**/oracle/*.dat -text

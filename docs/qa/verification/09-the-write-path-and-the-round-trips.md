@@ -567,3 +567,73 @@ unconditionally performs `1300-B-WRITE-TX`, so it included that paragraph's fiel
 *"if the design intended `1300-B-WRITE-TX` to be a separate step, this body needs to be split"* --
 which is exactly the split PR #43 made. The comparison is unaffected because `completeTransaction`
 rebuilds every field, but the model located a design ambiguity from the COBOL alone.
+
+### `CBTRN02C`'s own output captured, and the oracle re-run to prove the addition changed nothing
+
+**What was missing.** Stage 1 has always run `CBTRN02C`, and two of its outputs were already
+committed because `CBACT04C` needs them as *inputs* — the posted `tcatbal` and the account file
+between the stages. Its **primary** output, the transaction master it `OPEN OUTPUT`s and writes
+every accepted daily transaction to, went to `/work/idx/tranmaster` and vanished with the container.
+A comparison for that program had two of its three in-scope targets and no way to check the third.
+(`DALYREJS` is the fourth and is out of scope for generation by ADR-0038.)
+
+**What was added.** `tools/cobol-oracle/UNLOADTR.cbl`, beside the existing `UNLOADTC` and `UNLOADAC`
+and built the same way — `ORGANIZATION IS SEQUENTIAL` on output, because `LINE SEQUENTIAL` trims
+trailing spaces and a 350-byte record would come out short with every field past the last non-blank
+lost. `run-oracle.sh` runs it immediately after stage 1's account snapshot and **asserts the count**:
+
+```
+expect_count_in stage1-tran-unload.log "TRANFILE unloaded" 257
+```
+
+257 rather than 300 because `CBTRN02C` rejects 43 — the program's own reported figures, and the
+assertion is what makes a partially-posted run fail loudly instead of producing a plausible file of
+individually-correct records.
+
+**The run, and what it proves.** The pinned image, same command and same read-only mounts as the
+regeneration above:
+
+```
+docker run --rm -v <repo>/tests/fixtures/tenant_repo_sample/app:/src:ro \
+                -v <repo>/tools/cobol-oracle:/co:ro -v <out>:/out \
+                cobol-oracle:gnucobol3 sh /co/run-oracle.sh
+```
+
+Reached `--- done ---`, every count assertion passing, and produced `transact-stage1.dat` at
+**89,950 bytes = 257 × 350**.
+
+**Three of the four committed artifacts came back byte-identical** — `acctdata-stage1.dat`,
+`acctdata-posted.dat` and `tcatbal-posted.dat` all `cmp`-clean against the files already in the
+fixture. `transact.dat` differs, and it differs in exactly the place the fixture's own
+*Known-unverified* section names: the two DB2 timestamps.
+
+```
+new:  ...96802941546036972026-08-21-11.59.05.590000 2026-08-21-11.59.05.590000
+old:  ...96802941546036972026-08-19-00.20.25.590000 2026-08-19-00.20.25.590000
+```
+
+Both are `FUNCTION CURRENT-DATE`, both are already `EXCLUSIONS` entries citing ADR-0026, and no
+other byte of any of the 50 records moved. That is the evidence the pipeline change is inert: adding
+an unload after stage 1 did not perturb what either program wrote.
+
+**The whole set was re-committed rather than the one new file**, because `PROVENANCE.md` is written
+by the run and must describe the artifacts beside it. Committing a new file with an old provenance —
+or a new provenance with an old `transact.dat` — would leave a directory whose contents came from
+two different runs and whose own record said otherwise. The regenerated provenance carries the three
+unchanged hashes verbatim, which is itself the byte-identity claim in the artifact.
+
+**Verification**: `pytest tests/system/test_cbtrn02c_oracle.py -q` → **4 passed**; the existing
+oracle suites (`test_cobol_oracle_comparison`, `test_cobol_oracle_check`, `test_interest_oracle`) →
+**36 passed** against the regenerated fixture.
+
+The new module checks the fixture against the run's own report rather than against a number typed
+into it — records written must equal *processed minus rejected*, both parsed out of `PROVENANCE.md`
+— and **both of its checks are shown to fail first**, on in-memory damaged copies: one record short
+breaks the identity, and two records swapped break the key-order assertion. Damaged in memory
+deliberately: the fixture is the artifact, and a test that rewrites it to prove a point is a test
+that can leave it rewritten.
+
+**A property pinned for later, not decided here.** `UNLOADTR` reads an INDEXED file `ACCESS MODE IS
+SEQUENTIAL`, so the oracle is in **key order**. A rendered writer that appends records as it
+produces them emits the same records in a different order. That is ADR-0037's stated open question,
+and this makes the premise it rests on a checked fact rather than an assumption.
