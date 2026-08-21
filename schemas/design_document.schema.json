@@ -400,11 +400,6 @@
           "title": "Is Keyed Lookup",
           "type": "boolean"
         },
-        "is_update": {
-          "default": false,
-          "title": "Is Update",
-          "type": "boolean"
-        },
         "key_parts": {
           "default": [],
           "items": {
@@ -445,17 +440,30 @@
           "title": "Select Name",
           "type": "string"
         },
-        "write_line": {
+        "write_lines": {
+          "default": [],
+          "items": {
+            "type": "integer"
+          },
+          "title": "Write Lines",
+          "type": "array"
+        },
+        "write_mode": {
           "anyOf": [
             {
-              "type": "integer"
+              "enum": [
+                "append",
+                "replace",
+                "upsert"
+              ],
+              "type": "string"
             },
             {
               "type": "null"
             }
           ],
           "default": null,
-          "title": "Write Line"
+          "title": "Write Mode"
         },
         "written_entity_name": {
           "default": "",
@@ -1138,7 +1146,7 @@
       "type": "array"
     },
     "schema_version": {
-      "default": "3.6.0",
+      "default": "3.7.0",
       "title": "Schema Version",
       "type": "string"
     },

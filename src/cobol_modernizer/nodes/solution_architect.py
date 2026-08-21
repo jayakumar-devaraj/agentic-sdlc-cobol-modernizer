@@ -58,6 +58,7 @@ from cobol_modernizer.core.contracts import (
     ProgramDesignEntry,
     RestEndpointDesign,
     UnifiedDesign,
+    WriteMode,
 )
 from cobol_modernizer.core.guardrails import wrap_untrusted_cobol
 from cobol_modernizer.core.model_client import call_model
@@ -251,6 +252,27 @@ def attach_control_breaks(
         updated.append(job.model_copy(update={"steps": steps}))
     return updated
 
+
+def _write_mode(bindings: list[WriteBinding]) -> WriteMode | None:
+    """`append`, `replace`, or `upsert` -- read off every binding for one file, never the first.
+
+    The three are distinguishable only in aggregate: one `WRITE` appends, one `REWRITE` replaces,
+    and **both in the same program is neither**. `CBTRN02C` reads a `TCATBAL` row by key, `REWRITE`s
+    it when it exists and `WRITE`s it when it does not, which is a create-or-update over one file
+    and cannot be represented by picking one of its two statements.
+
+    Returns `None` for a file the program never writes, so "not written" stays distinct from
+    "written by appending" -- a default of `append` would make every read-only lookup file look like
+    an output.
+    """
+    if not bindings:
+        return None
+    modes = {binding.is_update for binding in bindings}
+    if modes == {False, True}:
+        return "upsert"
+    return "replace" if modes == {True} else "append"
+
+
 def build_file_access_paths(
     worktree_root: Path, programs: list[ProgramDesignEntry]
 ) -> list[FileAccessPath]:
@@ -274,9 +296,16 @@ def build_file_access_paths(
         source_text = resolve_program(worktree_root, entry.program_name).source_text
         bindings = extract_record_bindings(source_text)
         writes = extract_write_bindings(source_text)
-        first_write: dict[str, WriteBinding] = {}
+        # **Every binding per file, not the first.** A file can be written two ways in one program
+        # -- `CBTRN02C` creates a `TCATBAL` row when its lookup finds none and updates it when it
+        # does -- and reducing that to whichever statement appears first drops the other mode
+        # silently. `extract_write_bindings` was built to keep both; this is where they arrive.
+        writes_by_file: dict[str, list[WriteBinding]] = {}
         for write in writes:
-            first_write.setdefault(write.file_name, write)
+            writes_by_file.setdefault(write.file_name, []).append(write)
+        first_write: dict[str, WriteBinding] = {
+            name: group[0] for name, group in writes_by_file.items()
+        }
         declarations = extract_file_declarations(source_text)
 
         # Every field any lookup key is made of, resolved through group keys, so the MOVEs that
@@ -332,16 +361,11 @@ def build_file_access_paths(
                         if declaration.select_name in first_write
                         else ""
                     ),
-                    is_update=(
-                        first_write[declaration.select_name].is_update
-                        if declaration.select_name in first_write
-                        else False
-                    ),
-                    write_line=(
-                        first_write[declaration.select_name].source_line
-                        if declaration.select_name in first_write
-                        else None
-                    ),
+                    write_mode=_write_mode(writes_by_file.get(declaration.select_name, [])),
+                    write_lines=[
+                        write.source_line
+                        for write in writes_by_file.get(declaration.select_name, [])
+                    ],
                     key_parts=_key_parts_for(
                         key_components(
                             source_text,
