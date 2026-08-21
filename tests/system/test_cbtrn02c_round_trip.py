@@ -440,3 +440,85 @@ def test_the_transactions_differ_from_the_oracle_only_on_overpunched_amounts(bui
 def _ids(raw: str) -> set[str]:
     """`TRAN-ID` of every 350-byte record in a transaction file."""
     return {raw[i : i + 16] for i in range(0, len(raw), 350)}
+
+
+# --- what the disagreement turned out to be (measured after the run) -------------------------------
+
+_POSITIVE_OVERPUNCH = "{ABCDEFGHI"
+_NEGATIVE_OVERPUNCH = "}JKLMNOPQR"
+
+
+def _oracle(name: str) -> Path:
+    return Path(__file__).resolve().parents[1] / "fixtures" / "golden" / "CBACT04C" / "oracle" / name
+
+
+def test_the_oracle_wrote_every_amount_with_its_overpunch_digit_replaced_by_zero():
+    """**The disagreement is data loss in the oracle, and this is the proof.**
+
+    A trailing zoned-decimal overpunch carries the final digit *and* the sign: `G` is `+7`, `P` is
+    `-7`, `{` is `+0`, `}` is `-0`. `dailytran.txt` amounts are overpunched in every posted record,
+    and GnuCOBOL wrote **all 257 of them back with the last byte replaced by `0`** -- so
+    `0000005047G`, which is `504.77`, came out as `00000050470`, which is `504.70`.
+
+    No reading of the standard produces that. It is what happens when a runtime does not recognise
+    the overpunch byte as a digit and coerces it to zero, and it is exactly the caveat the fixture's
+    own `PROVENANCE.md` records as *"the zoned-decimal sign representation"* being unverified
+    against IBM Enterprise COBOL.
+
+    So the six transactions this pipeline accepts and `CBTRN02C` rejects are not this pipeline being
+    wrong about a sign: the oracle's own decisions were computed from amounts missing a digit.
+    """
+    daily = {
+        line[0:16]: line[132:143]
+        for line in (CORPUS / "dailytran.txt").read_text(encoding="latin-1").splitlines()
+        if line.strip()
+    }
+    raw = _oracle("transact-stage1.dat").read_bytes().decode("latin-1")
+    written = {raw[i : i + 16]: raw[i + 132 : i + 143] for i in range(0, len(raw), 350)}
+
+    overpunched = {
+        tran_id: source
+        for tran_id, source in daily.items()
+        if tran_id in written and source[-1] in _POSITIVE_OVERPUNCH + _NEGATIVE_OVERPUNCH
+    }
+    assert len(overpunched) == 257, "every posted amount in this corpus carries an overpunch"
+
+    zeroed = [t for t, source in overpunched.items() if written[t] == source[:-1] + "0"]
+    assert len(zeroed) == 257
+
+    # `{` and `}` carry the digit zero, so replacing them with `0` loses only the sign. Every other
+    # overpunch carries 1-9, and for those a digit is simply gone.
+    carrying_a_digit = [t for t, source in overpunched.items() if source[-1] not in "{}"]
+    assert len(carrying_a_digit) > 200, (
+        "most posted amounts end in an overpunch carrying 1-9, so the loss is the common case "
+        "rather than an edge of the corpus"
+    )
+
+
+def test_cbact04c_is_not_affected_by_it():
+    """The green round trip stays green, and this is why -- checked rather than assumed.
+
+    Zeroing the overpunch byte only loses something when that byte carries a **non-zero** digit.
+    `CBACT04C` reads `tcatbal.txt`, whose balances end in a plain `0` and are not overpunched at
+    all, and `acctdata.txt`, whose three signed fields all end in `{` -- positive zero, where the
+    lossy reading and the correct one agree exactly.
+
+    The only field in this corpus where the loss bites is `DALYTRAN-AMT`, which `CBACT04C` never
+    reads. So `500 of 500` and `598 of 600` are untouched by the finding above.
+    """
+    corpus = CORPUS
+    balances = [
+        line[17:29]
+        for line in (corpus / "tcatbal.txt").read_text(encoding="latin-1").splitlines()
+        if line.strip()
+    ]
+    assert all(value[-1] not in _POSITIVE_OVERPUNCH + _NEGATIVE_OVERPUNCH for value in balances)
+
+    accounts = [
+        line for line in (corpus / "acctdata.txt").read_text(encoding="latin-1").splitlines()
+        if line.strip()
+    ]
+    for lo, hi in ((12, 24), (78, 90), (90, 102)):
+        assert all(line[lo:hi][-1] == "{" for line in accounts), (
+            "positive zero: the only overpunch whose digit is nothing to lose"
+        )
