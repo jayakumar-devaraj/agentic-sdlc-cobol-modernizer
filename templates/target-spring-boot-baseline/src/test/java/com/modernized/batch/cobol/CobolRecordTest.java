@@ -126,4 +126,41 @@ class CobolRecordTest {
                 IllegalArgumentException.class,
                 () -> CobolRecord.zoned(new BigDecimal("12345.67"), 4, 2));
     }
+
+    /**
+     * The twenty overpunch characters, against values derived by hand from the standard.
+     *
+     * <p>Every one of these is a real signed amount taken from a tenant's own data, and the
+     * expected values are written out rather than computed -- deriving them with this decoder and
+     * then asserting this decoder would compare two renderings of one interpretation.
+     *
+     * <p>It matters here rather than only in the generator's own suite because this class ships
+     * inside every generated project: it is what a migrated program reads its own input with. At
+     * least one COBOL runtime, given the same bytes, returns 504.70 for the first of these -- the
+     * digit the overpunch carries is dropped -- so a decoder that agreed with it would compute a
+     * different answer from the one the field actually holds.
+     */
+    @Test
+    void readsEveryTrailingSignOverpunchTheStandardDefines() {
+        assertEquals(new BigDecimal("325.00"), CobolRecord.number("0000003250{", 0, 11, 2));
+        assertEquals(new BigDecimal("416.11"), CobolRecord.number("0000004161A", 0, 11, 2));
+        assertEquals(new BigDecimal("250.22"), CobolRecord.number("0000002502B", 0, 11, 2));
+        assertEquals(new BigDecimal("94.33"), CobolRecord.number("0000000943C", 0, 11, 2));
+        assertEquals(new BigDecimal("29.44"), CobolRecord.number("0000000294D", 0, 11, 2));
+        assertEquals(new BigDecimal("829.55"), CobolRecord.number("0000008295E", 0, 11, 2));
+        assertEquals(new BigDecimal("454.66"), CobolRecord.number("0000004546F", 0, 11, 2));
+        assertEquals(new BigDecimal("504.77"), CobolRecord.number("0000005047G", 0, 11, 2));
+        assertEquals(new BigDecimal("67.88"), CobolRecord.number("0000000678H", 0, 11, 2));
+        assertEquals(new BigDecimal("849.99"), CobolRecord.number("0000008499I", 0, 11, 2));
+        assertEquals(new BigDecimal("-919.00"), CobolRecord.number("0000009190}", 0, 11, 2));
+        assertEquals(new BigDecimal("-835.11"), CobolRecord.number("0000008351J", 0, 11, 2));
+        assertEquals(new BigDecimal("-75.22"), CobolRecord.number("0000000752K", 0, 11, 2));
+        assertEquals(new BigDecimal("-215.33"), CobolRecord.number("0000002153L", 0, 11, 2));
+        assertEquals(new BigDecimal("-358.44"), CobolRecord.number("0000003584M", 0, 11, 2));
+        assertEquals(new BigDecimal("-445.55"), CobolRecord.number("0000004455N", 0, 11, 2));
+        assertEquals(new BigDecimal("-945.66"), CobolRecord.number("0000009456O", 0, 11, 2));
+        assertEquals(new BigDecimal("-56.77"), CobolRecord.number("0000000567P", 0, 11, 2));
+        assertEquals(new BigDecimal("-535.88"), CobolRecord.number("0000005358Q", 0, 11, 2));
+        assertEquals(new BigDecimal("-70.99"), CobolRecord.number("0000000709R", 0, 11, 2));
+    }
 }
