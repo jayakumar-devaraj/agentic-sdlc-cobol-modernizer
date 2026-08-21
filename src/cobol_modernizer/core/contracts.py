@@ -36,6 +36,10 @@ from cobol_modernizer.nodes.spec_extractor import SpecExtractionResult
 
 BatchStepRole = Literal["reader", "processor", "writer", "tasklet"]
 RestMethod = Literal["GET", "POST", "PUT", "DELETE"]
+#: How a program writes one file. `append` is `WRITE` alone (an `OPEN OUTPUT` sequential file),
+#: `replace` is `REWRITE` alone (a record found by key is replaced in place), and `upsert` is both
+#: in the same program -- COBOL's read-by-key, `REWRITE` if found, `WRITE` if not.
+WriteMode = Literal["append", "replace", "upsert"]
 
 
 class DomainField(BaseModel):
@@ -333,11 +337,21 @@ class FileAccessPath(BaseModel):
     #: rewrites it, and a single field would have to lose one of those. Empty when the program never
     #: writes this file.
     written_entity_name: str = ""
-    #: True when the write is a `REWRITE` -- replacing a record found by key rather than appending.
-    #: A renderer that treated the two alike would turn an update of fifty accounts into fifty new
-    #: ones, which no comparison of the *records* would catch, only one of the file's length.
-    is_update: bool = False
-    write_line: int | None = None
+    #: How the program writes this file, derived from **every** `WRITE`/`REWRITE ... FROM` that
+    #: names it rather than from the first one found. `None` when the program never writes it.
+    #:
+    #: A renderer that treated `WRITE` and `REWRITE` alike would turn an update of fifty accounts
+    #: into fifty new ones, which no comparison of the *records* would catch, only one of the file's
+    #: length. **`upsert` exists because a file can be written both ways and one program does it**:
+    #: `CBTRN02C` `WRITE`s a `TCATBAL` row when its lookup finds none and `REWRITE`s it when it does
+    #: (lines 510 and 528), creating 44 rows on top of the 50 it loads. Reducing that to the first
+    #: binding said `append`, which over the same input leaves 144 rows where the program leaves 94
+    #: -- every record individually correct, and only the count wrong.
+    write_mode: WriteMode | None = None
+    #: Provenance for the write side: every `WRITE`/`REWRITE` line that names this file, in source
+    #: order. A list rather than one line because `upsert` is two statements, and citing only the
+    #: first would attribute a create-or-update to the create.
+    write_lines: list[int] = []
     #: What this lookup is looked up *by*, in key order. Empty for a driving stream, and empty for
     #: a keyed file whose key nothing fills -- which is a finding rather than a default, since a
     #: lookup with no source cannot be rendered.
@@ -406,7 +420,8 @@ class UnifiedDesign(BaseModel):
 
 #: design.json's own envelope version -- bump this on any breaking change to DesignDocument's
 #: shape, e.g. once solution_architect gives `unified_design` a real type.
-SCHEMA_VERSION = "3.6.0"  # 3.6.0: BatchStepDesign.control_break (G31, ADR-0032)
+SCHEMA_VERSION = "3.7.0"  # 3.7.0: FileAccessPath.write_mode/write_lines (upsert, CBTRN02C)
+#: 3.6.0 added BatchStepDesign.control_break (G31, ADR-0032).
 #: 3.5.0 added the FileAccessPath write side -- WRITE ... FROM (G31).
 #: 3.4.0 added FileAccessPath.key_parts, the join predicate (G31).
 #: 3.3.0 added DomainField.byte_offset and DomainEntity.record_length (G31 finding F1).

@@ -8,24 +8,28 @@ six files where `CBACT04C` reaches four, and it is the only Track C program that
 different ways. This module renders its reader and its writers and records what happens -- the
 answer, measured rather than argued, being **four of five render and the fifth refuses by name**.
 
-**One of the four that renders is wrong, and that is the finding.** `TCATBAL-FILE` is written by
-`WRITE` at line 510 and `REWRITE` at line 528: the program creates a balance row when the lookup
-finds none and updates it when it does. `extract_write_bindings` finds both -- deliberately, with
+**One of the four rendered wrongly, and that was the finding.** `TCATBAL-FILE` is written by `WRITE`
+at line 510 and `REWRITE` at line 528: the program creates a balance row when the lookup finds none
+and updates it when it does. `extract_write_bindings` finds both -- deliberately, with
 `test_file_control.test_a_file_written_both_ways_keeps_both_bindings` saying why -- and
-`build_file_access_paths` then keeps `first_write` only, so `design.json` carries the `WRITE` and
-loses the `REWRITE`. The rendered writer therefore appends.
+`build_file_access_paths` then kept `first_write` only, so `design.json` carried the `WRITE` and
+lost the `REWRITE`. The rendered writer appended.
 
-**What that costs, in the oracle's own numbers**: 50 balance rows are loaded, `CBTRN02C` creates 44
+**What that cost, in the oracle's own numbers**: 50 balance rows are loaded, `CBTRN02C` creates 44
 more, and the file it leaves has 94 (`tools/cobol-oracle/run-oracle.sh` asserts exactly this). An
 appending writer over the same input leaves **144** -- the original 50, plus 94 written on top --
 and *every one of the 144 records is individually correct*. No field comparison sees it. Only the
 row count does, which is the failure mode `java_writer`'s own module docstring exists to prevent,
 arriving through the contract rather than through the renderer.
 
-**Pinned, not fixed.** Carrying both modes is a contract change (`FileAccessPath` holds one
-`is_update`), and so is deciding what a create-or-update writer should render as. The tests below
-assert the behaviour that exists and name the defect in place, so a fix has a failing test waiting
--- the shape G30 used for the same reason.
+**Fixed by `write_mode` (schema 3.7.0), derived from every binding rather than the first**:
+`append`, `replace`, or `upsert`. The mode is a fact about the program, so summarising it from one
+of its two statements was the defect -- the same shape as G21, G24 and G28, where a fact the
+parser already held was dropped one step before its consumer. `CBACT04C` could never have shown it:
+each of its files is written exactly one way.
+
+**The fifth is refused rather than rendered**, and stays refused by decision -- see the reject test
+below.
 """
 
 from __future__ import annotations
@@ -144,28 +148,29 @@ def test_the_account_writer_replaces_by_key_because_the_account_file_is_rewritte
     assert "StandardOpenOption.APPEND" not in source
 
 
-def test_the_balance_writer_appends_a_file_the_program_creates_and_updates(design):
-    """**The defect.** `TCATBAL-FILE` is written both ways and the design keeps the `WRITE`.
+def test_the_balance_writer_creates_or_updates_because_the_program_does_both(design):
+    """`TCATBAL-FILE` is `WRITE`n at 510 and `REWRITE`n at 528, so its mode is `upsert`.
 
-    `is_update` is `False` and `write_line` is 510 -- the `WRITE` that *creates* a row -- while the
-    `REWRITE` at 528 that updates one is absent from the contract entirely. So the rendered writer
-    appends, and the Javadoc it renders cites line 510 as the whole story.
-
-    Asserted as it is rather than as it should be: the fix is a contract change, and pinning the
-    current behaviour is what gives that change a test that fails today.
+    **This is the case that found the defect.** The design used to keep whichever binding appeared
+    first, which said `append` -- and over the oracle's 50 loaded rows an appending writer leaves
+    144 where `CBTRN02C` leaves 94, every record individually correct and only the count wrong.
     """
     path = _path(design, "TCATBAL-FILE")
     assert path.written_entity_name == "TranCatBal"
-    assert path.is_update is False, "the design keeps the WRITE at 510"
-    assert path.write_line == 510, "and loses the REWRITE at 528"
+    assert path.write_mode == "upsert"
+    assert path.write_lines == [510, 528], "both statements, in source order"
 
     source = _render_writer(design, "updateCategoryBalance", "TranCatBal")
-    assert "StandardOpenOption.APPEND" in source, (
-        "rendered as an append: over the oracle's 50 loaded rows this leaves 144 where CBTRN02C "
-        "leaves 94, with every individual record correct"
+    assert "StandardOpenOption.APPEND" not in source
+    assert "records.put(key, record)" in source, "replaced when present, added when not"
+    assert "REWRITE of a record that is not in " not in source, (
+        "the absent-key guard belongs to `replace` alone -- rendered here it would abend on the "
+        "first of the 44 rows this program creates"
     )
-    assert "REWRITE of a record that is not in " not in source
-    assert "at line 510" in source, "the generated provenance cites the create and not the update"
+    assert "at lines 510 and 528" in source, (
+        "provenance cites both statements; citing the create alone is what made a create-or-update "
+        "look like an append"
+    )
 
 
 def test_the_reject_writer_refuses_by_name_rather_than_inventing_a_type(design):

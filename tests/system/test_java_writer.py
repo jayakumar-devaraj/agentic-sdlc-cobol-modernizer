@@ -179,7 +179,7 @@ def test_a_rewrite_with_no_key_position_is_refused(design):
             ]
         }
     )
-    with pytest.raises(UnrenderableWriterError, match="REWRITTEN and nothing says where"):
+    with pytest.raises(UnrenderableWriterError, match=r"written by key \(replace\)"):
         render(POSTING_STEP, keyless)
 
 

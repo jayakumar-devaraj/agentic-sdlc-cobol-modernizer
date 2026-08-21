@@ -46,6 +46,18 @@ class UnrenderableWriterError(Exception):
     """
 
 
+def _lines(write_lines: list[int]) -> str:
+    """`line 510` / `lines 510 and 528` -- provenance for however many statements wrote this file.
+
+    An `upsert` is two statements, and citing only the first would attribute a create-or-update to
+    the create, which is the misreading that produced this mode in the first place.
+    """
+    if len(write_lines) == 1:
+        return f"line {write_lines[0]}"
+    listed = ", ".join(str(line) for line in write_lines[:-1])
+    return f"lines {listed} and {write_lines[-1]}"
+
+
 def writer_class_name(step: BatchStepDesign) -> str:
     """`completeTransaction` -> `CompleteTransactionItemWriter`."""
     base = step.step_name[:1].upper() + step.step_name[1:]
@@ -117,14 +129,16 @@ def render_item_writer(
         )
     path = written[0]
 
+    by_key = path.write_mode in ("replace", "upsert")
+
     key_offset = key_width = None
-    if path.is_update:
+    if by_key:
         keys = [part for part in path.key_parts if part.key_offset is not None]
         if not keys:
             raise UnrenderableWriterError(
-                f"{path.select_name} is REWRITTEN and nothing says where its record key sits, so a "
-                "record to replace cannot be found. Appending instead would leave the original rows "
-                "in place and add new ones"
+                f"{path.select_name} is written by key ({path.write_mode}) and nothing says where "
+                "its record key sits, so a record to replace cannot be found. Appending instead "
+                "would leave the original rows in place and add new ones"
             )
         key_offset, key_width = keys[0].key_offset, keys[0].key_width
 
@@ -132,7 +146,20 @@ def render_item_writer(
     parameter = _camel(path.assign_to)
     qualified = f"{domain_package}.{entity.name}"
 
-    if path.is_update:
+    if by_key:
+        # The `replace` guard is the only difference between the two keyed modes, and it is
+        # load-bearing in both directions: a `REWRITE`-only file must never gain a record, and an
+        # `upsert` file must be allowed to -- `CBTRN02C` creates 44 of its 94 balance rows. Rendering
+        # the guard for `upsert` would abend on the first created row; dropping it for `replace`
+        # would silently append the fifty accounts it was written to prevent.
+        absent = (
+            f"{_INDENT * 3}if (!records.containsKey(key)) {{\n"
+            f"{_INDENT * 4}throw new IllegalStateException(\n"
+            f'{_INDENT * 5}"REWRITE of a record that is not in " + output + ": key " + key);\n'
+            f"{_INDENT * 3}}}\n"
+            if path.write_mode == "replace"
+            else ""
+        )
         state = (
             f"{_INDENT}private final Path output;\n"
             f"{_INDENT}private final Map<String, String> records = new LinkedHashMap<>();"
@@ -149,10 +176,7 @@ def render_item_writer(
             f"{_INDENT * 2}for ({qualified} item : chunk.getItems()) {{\n"
             f"{_INDENT * 3}String record =\n{_INDENT * 4}{serialiser};\n"
             f"{_INDENT * 3}String key = CobolRecord.text(record, {key_offset}, {key_width});\n"
-            f"{_INDENT * 3}if (!records.containsKey(key)) {{\n"
-            f"{_INDENT * 4}throw new IllegalStateException(\n"
-            f'{_INDENT * 5}"REWRITE of a record that is not in " + output + ": key " + key);\n'
-            f"{_INDENT * 3}}}\n"
+            f"{absent}"
             f"{_INDENT * 3}records.put(key, record);\n"
             f"{_INDENT * 2}}}\n"
             f"{_INDENT * 2}Files.writeString(\n"
@@ -160,8 +184,16 @@ def render_item_writer(
             "StandardCharsets.ISO_8859_1);"
         )
         mode = (
-            "REWRITE: records are replaced by key and the file keeps its original order and "
-            "membership. Appending would leave the originals in place"
+            (
+                "REWRITE: records are replaced by key and the file keeps its original order and "
+                "membership. Appending would leave the originals in place"
+            )
+            if path.write_mode == "replace"
+            else (
+                "WRITE and REWRITE both: a record replaces the one with its key when the file has "
+                "one and is added when it does not, which is COBOL's read-by-key create-or-update. "
+                "Rendering this as an append would leave the replaced originals in place"
+            )
         )
     else:
         state = f"{_INDENT}private final Path output;"
@@ -200,7 +232,7 @@ import org.springframework.batch.infrastructure.item.ItemWriter;
  *
  * <p>Rendered from design.json. The record layout, the file and the write mode all come from
  * {program_name}'s own declarations: {path.select_name} at line {path.select_line}, written from
- * {entity.name} at line {path.write_line}.
+ * {entity.name} at {_lines(path.write_lines)}.
  *
  * <p>{mode}.
  */
