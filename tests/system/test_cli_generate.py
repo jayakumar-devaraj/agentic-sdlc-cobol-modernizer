@@ -379,3 +379,71 @@ def test_a_non_processor_step_is_reported_rather_than_silently_dropped(tmp_path,
     # Reported, not failed: the pipeline is right not to render it, and right not to hide it.
     assert outcome.succeeded
     assert len(outcome.compiled) == 1
+
+
+# --- ADR-0039/0040: a processor whose decision reads its own writes -------------------------------
+
+
+def test_a_step_that_reads_its_own_writes_is_reported_rather_than_rendered(tmp_path, entry):
+    """`reads_own_writes` is refused for the opposite reason to the role check above.
+
+    That one is refused because this pipeline renders `ItemProcessor`s and the step is not one.
+    This one *is* a processor by role, and rendering it would **succeed** -- producing a class that
+    compiles, runs, and emits individually-correct records in the wrong set.
+
+    Measured on `CBTRN02C` (ADR-0039): its acceptance test compares a credit limit against cycle
+    fields its own posting rewrites, so judged per item, 30 of its 43 rejections disappear and it
+    writes 287 records where COBOL writes 257. A field-level differential passes on every one of
+    them; only the count disagrees. That is why silence here is worse than a refusal, and why the
+    refusal has to be mechanical rather than a note in an ADR.
+    """
+    sequential = PROCESSOR.model_copy(
+        update={
+            "step_name": "postTransaction",
+            "source_paragraphs": ["1500-B-LOOKUP-ACCT", "2800-UPDATE-ACCOUNT-REC"],
+            "reads_own_writes": True,
+        }
+    )
+    # Declared beside an ordinary step, the way a real job would be: a run with nothing generable
+    # in it is not a success by design, and asserting the refusal on its own would conflate
+    # "this step was refused" with "the run produced nothing".
+    design_path = _design_json(tmp_path, entry, PROCESSOR, sequential)
+    outcome = run_generate(
+        design_path, FIXTURE_ROOT, tmp_path / "proj", author=_author(), advise=_advise()
+    )
+
+    not_generated = [o for o in outcome.outcomes if o.status == "not_generated"]
+    assert [o.step_name for o in not_generated] == ["postTransaction"]
+    reason = not_generated[0].reason
+    # The reason has to say what is wrong, not merely that something is: a reviewer who reads
+    # "not generated" and nothing else cannot tell this from the role case above.
+    assert "reads state it writes" in reason
+    assert "1500-B-LOOKUP-ACCT" in reason
+    assert "ADR-0039" in reason
+
+    # Reported, not failed: the other step compiled, and the refusal is surfaced beside it rather
+    # than turning an honest run into an error.
+    assert outcome.succeeded
+    assert [o.step_name for o in outcome.compiled] == [PROCESSOR.step_name]
+    assert not [o for o in outcome.outcomes if o.step_name == "postTransaction" and o.class_name]
+
+
+def test_the_same_step_without_the_flag_is_rendered(tmp_path, entry):
+    """The discrimination case: `reads_own_writes` is what refuses it, not its name or paragraphs.
+
+    Without this, the assertion above would pass for a pipeline that had stopped rendering
+    processors altogether.
+    """
+    ordinary = PROCESSOR.model_copy(
+        update={
+            "step_name": "postTransaction",
+            "source_paragraphs": ["1500-B-LOOKUP-ACCT", "2800-UPDATE-ACCOUNT-REC"],
+        }
+    )
+    design_path = _design_json(tmp_path, entry, ordinary)
+    outcome = run_generate(
+        design_path, FIXTURE_ROOT, tmp_path / "proj", author=_author(), advise=_advise()
+    )
+
+    assert not [o for o in outcome.outcomes if o.status == "not_generated"]
+    assert [o.step_name for o in outcome.compiled] == ["postTransaction"]
