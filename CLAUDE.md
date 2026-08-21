@@ -55,6 +55,52 @@ behavior, a dependency pin changes — update the relevant documentation (README
 platform's planning document) in the same change, not as a follow-up. Stale docs are a bug, not
 a TODO.
 
+## Declaring a capability complete
+
+**A capability is complete when a second, independent instance exercises it — not when the first
+one passes.** This rule exists because the repository violated it and paid for it, and the price is
+recorded rather than paraphrased.
+
+Gap **G31** ("nothing renders readers, writers or job configuration") was closed on a grep: did
+`rendering/` contain `JobBuilder`, `StepBuilder`, `ItemReader`, `@Bean`. It did — for `CBACT04C`,
+the only program the renderer had ever been run against. The audit, the README and this file all
+inherited *"wiring is rendered"* when the defensible claim was *"wiring is rendered for one
+program"*. The second program with real business logic, `CBTRN02C`, then needed **four new declared
+contract facts and three schema versions** before it would build at all (ADR-0037, ADR-0040,
+ADR-0041, ADR-0042). None of them was exotic; each was visible in its COBOL from the first day.
+
+So, concretely:
+
+- **Do not close a gap, or mark a construct supported, on one instance.** State the scope in the
+  closure itself — *"closed for X"* is an honest closure; *"closed"* is a claim about instances
+  nobody has tried.
+- **Reconnaissance precedes implementation, per instance.** Before generating a program the
+  pipeline has not seen, parse it and list every fact its COBOL needs that the contract does not
+  carry. This is cheap — the four facts above were all findable in one pass — and it converts a
+  sequence of build failures into one planned change.
+- **A recurring defect class gets a mechanism, not another instance fix.** This repo's register
+  names the same shape at least five times — *a fact the deterministic layer already held that was
+  dropped one step before its consumer* (G21, G24, G26, G28, G30) — and counted them without
+  stopping them. When a fix is the *n*-th of a kind, the change worth making is the one that makes
+  the *n+1*-th impossible or loud.
+
+## An unverified caveat needs a probe or an owner
+
+**A caveat recorded in prose and left there is a defect with a delay on it.** The oracle's own
+`PROVENANCE.md` listed *"the zoned-decimal sign representation"* as not corroborated from the day it
+was generated. Everything downstream then treated that oracle as ground truth, and the caveat came
+due much later, as seven wrong decisions in a round trip (ADR-0043, audit G33).
+
+Every entry on a known-unverified list is therefore one of two things, and says which:
+
+1. **Probed** — an executable check exists and is named. `tools/cobol-oracle/OPTEST.cbl` is the
+   pattern: eleven bytes, one runtime, an answer that settles the question in seconds.
+2. **Accepted, untested** — with the consequence written out: what would be wrong, and how anyone
+   would notice.
+
+`docs/qa/oracle-caveats.md` holds that register, and a test asserts every caveat the provenance
+names appears there with a status. A list nothing checks is how this one aged into a defect.
+
 ## Documentation standard
 
 - README.md section order, fixed: Tech stack -> Architecture -> Quickstart -> Local development
