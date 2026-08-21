@@ -147,6 +147,24 @@ class BatchStepDesign(BaseModel):
     #: types. Optional with an empty default; see `BatchJobDesign.job_parameters` for why an empty
     #: list is a statement here where a `null` guard would not have been.
     job_parameters: list[str] = []
+    #: True when this step's own logic reads state that this step writes, so items cannot be
+    #: processed independently of one another (ADR-0039, ADR-0040).
+    #:
+    #: **Measured on `CBTRN02C`, which is the reason this exists.** Its `1500-B-LOOKUP-ACCT`
+    #: decides whether a transaction is accepted by comparing the credit limit against cycle
+    #: fields that `2800-UPDATE-ACCOUNT-REC` rewrites for every accepted transaction, so the
+    #: decision for item *n* reads what items *1..n-1* wrote. Judged independently, **30 of that
+    #: program's 43 rejections disappear**: a stateless implementation writes 287 records where
+    #: the program writes 257, every one of them individually correct, so only a count sees it.
+    #:
+    #: **Declared, not derived, and the distinction is the whole point.** The derivable
+    #: condition -- a file that is both a keyed lookup and written back -- is *also* true of
+    #: `CBACT04C`'s account writer, which is correct as it stands because its input is aggregated
+    #: to one item per account. A derivation right about one program and wrong about the other
+    #: would be worse than a declaration (ADR-0039). Defaults to `False`, which is the safe
+    #: direction: a step that does not say this renders exactly as it did before the field
+    #: existed.
+    reads_own_writes: bool = False
 
 
 class ControlBreakDesign(BaseModel):
@@ -420,7 +438,8 @@ class UnifiedDesign(BaseModel):
 
 #: design.json's own envelope version -- bump this on any breaking change to DesignDocument's
 #: shape, e.g. once solution_architect gives `unified_design` a real type.
-SCHEMA_VERSION = "3.7.0"  # 3.7.0: FileAccessPath.write_mode/write_lines (upsert, CBTRN02C)
+SCHEMA_VERSION = "3.8.0"  # 3.8.0: BatchStepDesign.reads_own_writes (ADR-0040)
+#: 3.7.0 added FileAccessPath.write_mode/write_lines -- the upsert mode (ADR-0037).
 #: 3.6.0 added BatchStepDesign.control_break (G31, ADR-0032).
 #: 3.5.0 added the FileAccessPath write side -- WRITE ... FROM (G31).
 #: 3.4.0 added FileAccessPath.key_parts, the join predicate (G31).

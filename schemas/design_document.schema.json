@@ -88,6 +88,11 @@
           "title": "Output Type",
           "type": "string"
         },
+        "reads_own_writes": {
+          "default": false,
+          "title": "Reads Own Writes",
+          "type": "boolean"
+        },
         "role": {
           "enum": [
             "reader",
@@ -1146,7 +1151,7 @@
       "type": "array"
     },
     "schema_version": {
-      "default": "3.7.0",
+      "default": "3.8.0",
       "title": "Schema Version",
       "type": "string"
     },
