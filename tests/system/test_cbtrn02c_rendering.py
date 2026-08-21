@@ -40,6 +40,8 @@ import pytest
 
 from cobol_modernizer.core.contracts import (
     BatchStepDesign,
+    CompositeComponent,
+    CompositeType,
     ProgramDesignEntry,
     UnifiedDesign,
 )
@@ -191,3 +193,108 @@ def test_the_reject_writer_refuses_by_name_rather_than_inventing_a_type(design):
         "the file access path names the entity the program writes even though the design has no "
         "such type -- which is precisely what makes the refusal possible"
     )
+
+
+# --- the composite writer a sequential step needs (ADR-0041) --------------------------------------
+
+POSTING_RESULT = CompositeType(
+    name="PostingResult",
+    components=[
+        CompositeComponent(field_name="tran", entity_name="Tran"),
+        CompositeComponent(field_name="account", entity_name="Account"),
+        CompositeComponent(field_name="balance", entity_name="TranCatBal"),
+    ],
+)
+
+
+def _sequential_design(design: UnifiedDesign) -> UnifiedDesign:
+    return design.model_copy(update={"composite_types": [POSTING_RESULT]})
+
+
+def _sequential_step() -> BatchStepDesign:
+    return _step("postTransaction", "PostingResult").model_copy(
+        update={"reads_own_writes": True}
+    )
+
+
+def test_a_composite_output_sends_each_component_where_its_own_file_says(design):
+    """One item, three records, three destinations -- and none of them chosen by this renderer.
+
+    `CBTRN02C` posts a transaction, a balance and an account from one daily record. Splitting that
+    across three steps would re-decide acceptance three times against three different states, so the
+    step produces all three and this writer routes them by the access path each entity already has.
+    """
+    source = render_item_writer(
+        _sequential_step(),
+        _sequential_design(design),
+        PROGRAM,
+        package="com.modernized.batch.writer",
+        domain_package="com.modernized.domain",
+    )
+
+    # Appended, because TRANSACT-FILE is OPEN OUTPUT and written once.
+    assert "tranBatch.append(" in source
+    assert "StandardOpenOption.APPEND" in source
+    # Into the shared store, because these two are read back by the step's own decision.
+    assert "state.putAccount(" in source
+    assert "state.putTranCatBal(" in source
+    # Each component's fields are reached through the component, not off the item.
+    assert "item.tran().tranAmt()" in source
+    assert "item.account().acctCurrCycCredit()" in source
+
+
+def test_the_composite_writer_cites_where_every_component_goes(design):
+    """A reviewer reading the class has to be able to see all three destinations and their modes."""
+    source = render_item_writer(
+        _sequential_step(),
+        _sequential_design(design),
+        PROGRAM,
+        package="com.modernized.batch.writer",
+        domain_package="com.modernized.domain",
+    )
+    assert "<li>Tran -> TRANSACT-FILE -- append, line 564</li>" in source
+    assert "<li>Account -> ACCOUNT-FILE -- replace, line 554</li>" in source
+    assert "<li>TranCatBal -> TCATBAL-FILE -- upsert, lines 510 and 528</li>" in source
+
+
+def test_a_composite_output_is_still_refused_for_an_ordinary_step(design):
+    """The refusal that was there before this feature stands, and that is the discrimination case.
+
+    Without `reads_own_writes` nothing says these records belong together or that anything holds
+    the ones being replaced -- so an ordinary step outputting a composite is exactly as unrenderable
+    as it was, and this asserts the new branch did not quietly relax it.
+    """
+    with pytest.raises(UnrenderableWriterError, match="nothing says which file each part"):
+        render_item_writer(
+            _step("postTransaction", "PostingResult"),
+            _sequential_design(design),
+            PROGRAM,
+            package="com.modernized.batch.writer",
+            domain_package="com.modernized.domain",
+        )
+
+
+def test_a_component_written_by_key_with_no_store_holding_it_is_refused(design):
+    """A `replace` component outside the working set has nothing to replace *in*.
+
+    Appending it instead would leave the original rows in place and add new ones -- ADR-0037's
+    defect, reintroduced through the composite path. Refused rather than degraded.
+    """
+    detached = _sequential_design(design).model_copy(
+        update={
+            "file_access_paths": [
+                path.model_copy(update={"is_keyed_lookup": False})
+                if path.select_name == "ACCOUNT-FILE"
+                else path
+                for path in design.file_access_paths
+            ]
+        }
+    )
+    with pytest.raises(UnrenderableWriterError, match="nothing holding the records it would"):
+        render_item_writer(
+            _sequential_step(),
+            detached,
+            PROGRAM,
+            package="com.modernized.batch.writer",
+            domain_package="com.modernized.domain",
+        )
