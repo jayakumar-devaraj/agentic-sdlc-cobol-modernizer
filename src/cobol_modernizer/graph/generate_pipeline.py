@@ -505,44 +505,17 @@ def run_generate(
                 )
                 continue
 
-            if step.reads_own_writes:
-                # A processor by role, and still not one this pipeline can render: the step's own
-                # logic reads state the step writes, so what it decides for an item depends on the
-                # items before it (ADR-0039, ADR-0040).
-                #
-                # **This is reported rather than rendered because rendering it would look right.**
-                # `CBTRN02C`'s acceptance test compares a credit limit against cycle fields its own
-                # posting rewrites; judged per item, 30 of its 43 rejections disappear and it
-                # writes 287 records where COBOL writes 257 -- each one individually correct, so a
-                # field-level differential passes and only the count disagrees. That is the same
-                # blindness ADR-0037 found one level down, and the reason a silent render is worse
-                # here than no render at all.
-                reason = (
-                    f"not generated: {step.step_name!r} reads state it writes, so an item's "
-                    f"outcome depends on the items before it and a stateless ItemProcessor cannot "
-                    f"reproduce which items are accepted. Its COBOL is "
-                    f"{', '.join(step.source_paragraphs) or '(none recorded)'}. Rendering it "
-                    f"per-item would produce individually-correct records and the wrong set of "
-                    f"them (ADR-0039)."
-                )
-                logger.warning(
-                    "generate: %s/%s not generated (reads_own_writes, paragraphs=%s)",
-                    job.program_name,
-                    step.step_name,
-                    ", ".join(step.source_paragraphs) or "(none)",
-                )
-                outcomes.append(
-                    StepOutcome(
-                        program_name=job.program_name,
-                        step_name=step.step_name,
-                        class_name="",
-                        status="not_generated",
-                        attempts=0,
-                        reason=reason,
-                    )
-                )
-                continue
-
+            # **`reads_own_writes` no longer refuses here.** ADR-0040 reported such a step
+            # `not_generated` because nothing could run it correctly: a stateless processor decides
+            # an item against state as the job found it, and `CBTRN02C` writes 287 records that way
+            # where COBOL writes 257 (ADR-0039). ADR-0041 built what runs it -- a working set the
+            # reader and writer share, at chunk 1 -- and the refusal is lifted now that a rendered
+            # sequential job compiles and runs against a real Maven build rather than on the
+            # argument that it should.
+            #
+            # The processor is rendered exactly as any other, which is the point: what makes the
+            # step sequential is its *wiring*, so a body stays a pure function of the item and the
+            # state as the step currently has it.
             types = processor_types(step, design, domain_package=domain_package)
             if types is None:
                 outcomes.append(
