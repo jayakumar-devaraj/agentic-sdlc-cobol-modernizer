@@ -13,6 +13,12 @@
       * It is the same class of step as LOADIDX: the corpus ships a text
       * *representation*, and the program expects the record format the
       * mainframe gave it.
+      *
+      * "Does not touch anything else" is kept literally true: the sign
+      * conversion ADR-0047 adds is a separate program, SIGNCONV, run
+      * after this one. Framing and content are different claims and a
+      * pipeline listing should show both. This writes DALYRAW; SIGNCONV
+      * reads it and writes DALYTRAN.
       *****************************************************************
        IDENTIFICATION DIVISION.
        PROGRAM-ID. DALYCONV.
@@ -22,7 +28,7 @@
            SELECT DLY-IN  ASSIGN TO DLYIN
                   ORGANIZATION IS LINE SEQUENTIAL
                   FILE STATUS IS ST-IN.
-           SELECT DLY-OUT ASSIGN TO DALYTRAN
+           SELECT DLY-OUT ASSIGN TO DALYRAW
                   ORGANIZATION IS SEQUENTIAL
                   FILE STATUS IS ST-OUT.
 
