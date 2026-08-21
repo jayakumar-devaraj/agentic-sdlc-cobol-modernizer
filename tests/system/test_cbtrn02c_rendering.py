@@ -39,6 +39,7 @@ from pathlib import Path
 import pytest
 
 from cobol_modernizer.core.contracts import (
+    BatchJobDesign,
     BatchStepDesign,
     CompositeComponent,
     CompositeType,
@@ -51,6 +52,7 @@ from cobol_modernizer.nodes.solution_architect import (
 )
 from cobol_modernizer.nodes.spec_critic import critique_spec
 from cobol_modernizer.nodes.spec_extractor import extract_spec
+from cobol_modernizer.rendering.java_job import render_job_configuration
 from cobol_modernizer.rendering.java_reader import render_item_reader
 from cobol_modernizer.rendering.java_writer import (
     UnrenderableWriterError,
@@ -99,6 +101,11 @@ def _step(step_name: str, output_type: str) -> BatchStepDesign:
     )
 
 
+#: Where a rendered working set lands. Passed everywhere a sequential step is rendered, because a
+#: reader or writer referring to that class unqualified would compile only by accident of packaging.
+WORKING_SET_PACKAGE = "com.modernized.batch.state"
+
+
 def _render_writer(design: UnifiedDesign, step_name: str, output_type: str) -> str:
     return render_item_writer(
         _step(step_name, output_type),
@@ -106,6 +113,7 @@ def _render_writer(design: UnifiedDesign, step_name: str, output_type: str) -> s
         PROGRAM,
         package="com.modernized.batch.writer",
         domain_package="com.modernized.domain",
+        working_set_package=WORKING_SET_PACKAGE,
     )
 
 
@@ -230,6 +238,7 @@ def test_a_composite_output_sends_each_component_where_its_own_file_says(design)
         PROGRAM,
         package="com.modernized.batch.writer",
         domain_package="com.modernized.domain",
+        working_set_package=WORKING_SET_PACKAGE,
     )
 
     # Appended, because TRANSACT-FILE is OPEN OUTPUT and written once.
@@ -251,6 +260,7 @@ def test_the_composite_writer_cites_where_every_component_goes(design):
         PROGRAM,
         package="com.modernized.batch.writer",
         domain_package="com.modernized.domain",
+        working_set_package=WORKING_SET_PACKAGE,
     )
     assert "<li>Tran -> TRANSACT-FILE -- append, line 564</li>" in source
     assert "<li>Account -> ACCOUNT-FILE -- replace, line 554</li>" in source
@@ -271,6 +281,7 @@ def test_a_composite_output_is_still_refused_for_an_ordinary_step(design):
             PROGRAM,
             package="com.modernized.batch.writer",
             domain_package="com.modernized.domain",
+            working_set_package=WORKING_SET_PACKAGE,
         )
 
 
@@ -297,6 +308,7 @@ def test_a_component_written_by_key_with_no_store_holding_it_is_refused(design):
             PROGRAM,
             package="com.modernized.batch.writer",
             domain_package="com.modernized.domain",
+            working_set_package=WORKING_SET_PACKAGE,
         )
 
 
@@ -319,6 +331,7 @@ def _sequential_reader(design: UnifiedDesign) -> str:
         PROGRAM,
         package="com.modernized.batch.reader",
         domain_package="com.modernized.domain",
+        working_set_package=WORKING_SET_PACKAGE,
     )
 
 
@@ -377,3 +390,83 @@ def test_an_ordinary_step_reader_is_unchanged_by_any_of_this(design):
     # named its own maps. Asserted in its existing spelling rather than tidied: renaming a
     # rendered field to match a newer module would change every generated reader for nothing.
     assert "trancatbalRecords.get(" in source
+
+
+# --- the job bean for a sequential step (ADR-0041) ------------------------------------------------
+
+
+def _sequential_job(design: UnifiedDesign) -> str:
+    step = _sequential_step().model_copy(update={"input_type": "PostingInput"})
+    full = design.model_copy(update={"composite_types": [POSTING_INPUT, POSTING_RESULT]})
+    job = BatchJobDesign(
+        job_name="postingJob",
+        program_name=PROGRAM,
+        domain_entities=[entity.name for entity in full.domain_entities],
+        steps=[step],
+    )
+    return render_job_configuration(
+        job,
+        full,
+        PROGRAM,
+        package="com.modernized.batch.job",
+        domain_package="com.modernized.domain",
+        processor_package="com.modernized.batch.processor",
+        reader_package="com.modernized.batch.reader",
+        working_set_package=WORKING_SET_PACKAGE,
+    )
+
+
+def test_a_sequential_step_is_chunked_at_one_because_that_is_correctness(design):
+    """Every other step chunks at `CHUNK_SIZE`, which its own comment calls a performance decision.
+
+    Here the writer puts into the working set and the reader takes its lookups from it, so any size
+    above 1 would let one chunk decide several items against the state as it stood before any of
+    them -- ADR-0039's failure, arriving through the transaction boundary. Rendered as a literal
+    beside a named constant deliberately: two different kinds of number should not look alike.
+    """
+    source = _sequential_job(design)
+    # `>chunk(1)`, not `.chunk(1)`: the call is preceded by the step's generic types.
+    assert ">chunk(1)" in source
+    assert "chunk(CHUNK_SIZE)" not in source
+
+
+def test_the_step_flushes_the_working_set_when_it_ends(design):
+    """Nothing reaches disk for those two files until this runs, so its absence loses the run."""
+    source = _sequential_job(design)
+    assert "state.flush();" in source
+    assert "public ExitStatus afterStep(StepExecution stepExecution)" in source
+    # Read out of spring-batch-core-6.0.4.jar rather than recalled -- PR #32's trap was a pre-6
+    # package that compiles in every example on the internet and not here.
+    assert "import org.springframework.batch.core.listener.StepExecutionListener;" in source
+    assert "import org.springframework.batch.core.step.StepExecution;" in source
+    assert "import org.springframework.batch.core.ExitStatus;" in source
+
+
+def test_the_working_set_is_referred_to_by_its_full_package(design):
+    """The store lives in its own package, and three rendered classes point at it from theirs."""
+    source = _sequential_job(design)
+    assert f"{WORKING_SET_PACKAGE}.PostTransactionWorkingSet state" in source
+
+
+def test_a_job_with_no_sequential_step_gains_none_of_this(design):
+    """`CBACT04C`'s configuration must be untouched -- no listener, no literal chunk, no imports."""
+    step = _step("postTransaction", "Tran").model_copy(update={"input_type": "PostingInput"})
+    full = design.model_copy(update={"composite_types": [POSTING_INPUT]})
+    job = BatchJobDesign(
+        job_name="postingJob",
+        program_name=PROGRAM,
+        domain_entities=[entity.name for entity in full.domain_entities],
+        steps=[step],
+    )
+    source = render_job_configuration(
+        job,
+        full,
+        PROGRAM,
+        package="com.modernized.batch.job",
+        domain_package="com.modernized.domain",
+        processor_package="com.modernized.batch.processor",
+        reader_package="com.modernized.batch.reader",
+    )
+    assert ">chunk(CHUNK_SIZE)" in source
+    assert "StepExecutionListener" not in source
+    assert "WorkingSet" not in source

@@ -238,6 +238,7 @@ def render_item_reader(
     *,
     package: str,
     domain_package: str,
+    working_set_package: str | None = None,
 ) -> str:
     """Render the `ItemReader` that feeds `step`, from the design's access paths and layouts.
 
@@ -293,10 +294,19 @@ def render_item_reader(
         if step.reads_own_writes
         else set()
     )
+    if shared and working_set_package is None:
+        raise UnrenderableReaderError(
+            f"step {step.step_name!r} reads state it writes, so its lookups come from a working "
+            "set -- and nothing said which package that class is in. A reader referring to it "
+            "unqualified would compile only by accident of packaging"
+        )
+    working_set = (
+        f"{working_set_package}.{working_set_class_name(step)}" if shared else ""
+    )
     held = [name for name in order if name not in shared]
 
     parameters = ", ".join(
-        ([f"{working_set_class_name(step)} state"] if shared else [])
+        ([f"{working_set} state"] if shared else [])
         + [f"Path {_camel(paths[name].assign_to)}" for name in [driving, *held]]
     )
     loads = [
@@ -370,7 +380,7 @@ def render_item_reader(
     )
 
     maps = "\n".join(
-        ([f"{_INDENT}private final {working_set_class_name(step)} state;"] if shared else [])
+        ([f"{_INDENT}private final {working_set} state;"] if shared else [])
         + [
             f"{_INDENT}private final Map<String, String> {_camel(name)}Records = new HashMap<>();"
             for name in held

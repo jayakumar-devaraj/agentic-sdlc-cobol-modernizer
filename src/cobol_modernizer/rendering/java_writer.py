@@ -103,6 +103,7 @@ def render_item_writer(
     *,
     package: str,
     domain_package: str,
+    working_set_package: str | None = None,
 ) -> str:
     """Render the `ItemWriter` for `step`'s output, from the file the program writes it to.
 
@@ -127,6 +128,11 @@ def render_item_writer(
         # (ADR-0041). `CBTRN02C` posts a transaction, a balance and an account from one daily
         # record, and splitting that across three steps would re-decide acceptance three times
         # against three different states.
+        if working_set_package is None:
+            raise UnrenderableWriterError(
+                f"step {step.step_name!r} reads state it writes, so its updates go to a working "
+                "set -- and nothing said which package that class is in"
+            )
         return _render_composite_writer(
             step,
             design,
@@ -134,6 +140,7 @@ def render_item_writer(
             composite,
             package=package,
             domain_package=domain_package,
+            working_set_package=working_set_package,
         )
     try:
         entity = _entity(design, step.output_type)
@@ -283,6 +290,7 @@ def _render_composite_writer(
     *,
     package: str,
     domain_package: str,
+    working_set_package: str,
 ) -> str:
     """One writer for a step that produces several records from one item (ADR-0041).
 
@@ -297,7 +305,7 @@ def _render_composite_writer(
     mechanism rather than by three separate tests that could disagree (ADR-0038).
     """
     class_name = writer_class_name(step)
-    working_set = working_set_class_name(step)
+    working_set = f"{working_set_package}.{working_set_class_name(step)}"
     qualified = f"{domain_package}.{composite.name}"
 
     shared = {

@@ -33,6 +33,7 @@ from cobol_modernizer.rendering.java_reader import (
     UnrenderableReaderError,
     _paths_for,
 )
+from cobol_modernizer.rendering.java_working_set import working_set_class_name
 
 _INDENT = " " * 4
 
@@ -97,11 +98,26 @@ def _has_file_source(step: BatchStepDesign, design: UnifiedDesign, program_name:
 
 
 def _has_file_sink(step: BatchStepDesign, design: UnifiedDesign, program_name: str) -> bool:
-    """Whether the step's output is an entity some declared file is written from."""
-    return any(
-        path.program_name == program_name and path.written_entity_name == step.output_type
+    """Whether the step's output is an entity some declared file is written from.
+
+    **A sequential step's output is a composite, and every one of its components is written** --
+    `CBTRN02C` produces a transaction, a balance and an account from one daily record, and
+    `java_writer` routes each by its own access path (ADR-0041). Without this the step would be
+    planned as if its output crossed a step boundary and staged in memory, which is where the
+    records would stay.
+    """
+    written = {
+        path.written_entity_name
         for path in design.file_access_paths
-    )
+        if path.program_name == program_name and path.written_entity_name
+    }
+    if step.output_type in written:
+        return True
+
+    composite = next((c for c in design.composite_types if c.name == step.output_type), None)
+    if composite is None or not step.reads_own_writes:
+        return False
+    return all(component.entity_name in written for component in composite.components)
 
 
 def aggregation_blockers(
@@ -303,6 +319,7 @@ def _step_bean(
     processor_package: str,
     reader_package: str,
     job: BatchJobDesign | None = None,
+    working_set_package: str | None = None,
 ) -> str:
     """One `@Bean Step`, wired to whichever reader and writer this step's data comes from and to.
 
@@ -345,19 +362,55 @@ def _step_bean(
         writer_parameter = f"{staging} {_bean_name(staging)}"
         writer_expression = _bean_name(staging)
 
+    # **A sequential step is chunked at 1, and that is correctness rather than tuning.** Every
+    # other step chunks at `CHUNK_SIZE`, which the constant's own comment calls a performance
+    # decision because it is one. Here each item's write has to be visible to the next item's read
+    # -- the writer puts into the working set and the reader takes its lookups from it -- so any
+    # size above 1 would let a chunk decide several items against the state as it stood before any
+    # of them (ADR-0041). Rendered as a literal beside a named constant on purpose: the two are
+    # different kinds of number and should not look alike.
+    chunk = "1" if step.reads_own_writes else "CHUNK_SIZE"
+    if step.reads_own_writes and working_set_package is None:
+        raise UnrenderableJobError(
+            f"step {step.step_name!r} reads state it writes, so its bean takes a working set -- "
+            "and nothing said which package that class is in"
+        )
+    state_parameter = (
+        f",\n{_INDENT * 3}{working_set_package}.{working_set_class_name(step)} state"
+        if step.reads_own_writes
+        else ""
+    )
+    flush = (
+        f"\n{_INDENT * 4}.listener(new StepExecutionListener() {{\n"
+        f"{_INDENT * 5}@Override\n"
+        f"{_INDENT * 5}public ExitStatus afterStep(StepExecution stepExecution) {{\n"
+        f"{_INDENT * 6}// The working set is the step's output for these files; nothing has been\n"
+        f"{_INDENT * 6}// written to disk until this runs.\n"
+        f"{_INDENT * 6}try {{\n"
+        f"{_INDENT * 7}state.flush();\n"
+        f"{_INDENT * 6}}} catch (java.io.IOException e) {{\n"
+        f"{_INDENT * 7}throw new java.io.UncheckedIOException(e);\n"
+        f"{_INDENT * 6}}}\n"
+        f"{_INDENT * 6}return stepExecution.getExitStatus();\n"
+        f"{_INDENT * 5}}}\n"
+        f"{_INDENT * 4}}})"
+        if step.reads_own_writes
+        else ""
+    )
+
     return f"""{_INDENT}/** Step "{step.step_name}": {step.description} */
 {_INDENT}@Bean
 {_INDENT}Step {step.step_name}Step(
 {_INDENT * 3}JobRepository jobRepository,
 {_INDENT * 3}PlatformTransactionManager transactionManager,
 {_INDENT * 3}{reader_parameter},
-{_INDENT * 3}{writer_parameter}) {{
+{_INDENT * 3}{writer_parameter}{state_parameter}) {{
 {_INDENT * 2}return new StepBuilder("{step.step_name}", jobRepository)
-{_INDENT * 4}.<{input_type}, {output_type}>chunk(CHUNK_SIZE)
+{_INDENT * 4}.<{input_type}, {output_type}>chunk({chunk})
 {_INDENT * 4}.reader({reader_expression})
 {_INDENT * 4}.processor(new {processor_package}.{processor_class_name(step)}())
 {_INDENT * 4}.writer({writer_expression})
-{_INDENT * 4}.transactionManager(transactionManager)
+{_INDENT * 4}.transactionManager(transactionManager){flush}
 {_INDENT * 4}.build();
 {_INDENT}}}"""
 
@@ -372,6 +425,7 @@ def render_job_configuration(
     processor_package: str,
     reader_package: str,
     profile: str | None = None,
+    working_set_package: str | None = None,
 ) -> str:
     """Render the job, its steps and its infrastructure beans.
 
@@ -397,6 +451,7 @@ def render_job_configuration(
             processor_package=processor_package,
             reader_package=reader_package,
             job=job,
+            working_set_package=working_set_package,
         )
         for step in renderable
     )
@@ -419,11 +474,22 @@ def render_job_configuration(
         or " *   <li>none</li>"
     )
 
+    # Only when a sequential step is present, and every package below was read out of
+    # spring-batch-core-6.0.4.jar rather than recalled: PR #32's trap was a pre-6 `ItemProcessor`
+    # package that compiled in every example on the internet and not here.
+    sequential_imports = (
+        "import org.springframework.batch.core.ExitStatus;\n"
+        "import org.springframework.batch.core.listener.StepExecutionListener;\n"
+        "import org.springframework.batch.core.step.StepExecution;\n"
+        if any(step.reads_own_writes for step in renderable)
+        else ""
+    )
+
     return f"""package {package};
 
 import java.util.List;
 import java.util.Map;
-import org.springframework.batch.core.configuration.JobRegistry;
+{sequential_imports}import org.springframework.batch.core.configuration.JobRegistry;
 import org.springframework.batch.core.configuration.support.MapJobRegistry;
 import org.springframework.batch.core.job.Job;
 import org.springframework.batch.core.job.builder.JobBuilder;
