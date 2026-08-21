@@ -7,11 +7,27 @@ Produced by tools/cobol-oracle/run-oracle.sh inside the pinned image (see Docker
 - indexed handler: indexed file handler : BDB
 - dialect: -std=ibm
 - PARM-DATE: 2026-08-12 (fixed; see RUNCB04.cbl)
-- generated: 2026-08-21T11:59:05Z
+- generated: 2026-08-21T20:11:43Z
 
 ## Pipeline
-1. CBTRN02C posts dailytran into tcatbal (the shipped tcatbal is the PRE-posting state).
-2. CBACT04C computes interest on the posted balances and writes transact.dat.
+1. SIGNCONV converts the corpus's IBM sign overpunches into what this runtime reads
+   as signed (ADR-0047). Without it every posted amount loses its last digit and
+   its sign -- see the Representation section below.
+2. CBTRN02C posts dailytran into tcatbal (the shipped tcatbal is the PRE-posting state).
+3. CBACT04C computes interest on the posted balances and writes transact.dat.
+4. SIGNBACK converts every output back, so this directory is in the CORPUS's
+   representation and nothing outside the container sees GnuCOBOL's own sign bytes.
+
+## Representation
+**The zoned-decimal sign representation is probed, not assumed** (ADR-0043, ADR-0047).
+This runtime does not recognise IBM trailing overpunches: it reads the byte as digit 0
+and drops the sign, so 0000005047G (504.77) becomes 504.70. It writes its own negatives
+as p-y in the final position. Both halves were asked of the compiler directly --
+OPTEST.cbl for what it reads, SIGNTEST.cbl for what it writes and reads back.
+
+So the conversion is bidirectional and this directory carries the corpus's bytes.
+Every signed field here was checked to decode: the sign fingerprint of the corpus is
+asserted before the run, and both counts of both conversions are asserted during it.
 
 **This directory is the run's oracle, not one program's.** It is named for
 CBACT04C because that is what it was built for; stage 1's own outputs are here
@@ -40,23 +56,27 @@ leaves this fixture stale with no signal, and a later mismatch reads as a Java d
 - CBTRN02C.cbl  708f3cadc555acab63f11e2f3238f5372ac7180e6b01197bf960d96bf0d2e83f
 - ORACHK: ORACHK: 009 row(s) checked, 000 mismatch(es)
 - CBTRN02C exit code: 0 (0 and 4 accepted; see run-oracle.sh)
-- CBTRN02C: TRANSACTIONS PROCESSED :000000300;TRANSACTIONS REJECTED :000000043
+- CBTRN02C: TRANSACTIONS PROCESSED :000000300;TRANSACTIONS REJECTED :000000038
 
 ## Output
-- transact.dat  17500 bytes  sha256 b4427c750af5c805d7fd2485c2ef2ada478a3d1d9f5060e6540e982d13ef969e
-- transact-stage1.dat  89950 bytes  sha256 0f02a5a935ac4b3d209ffb2db0bbae54a492fadbd4ced624ea7e98fd8fda6fb8
-- acctdata-stage1.dat  15000 bytes  sha256 5dfe79a147bc8c6b0a1e6e5c2b3a3df05367241da1c32622b8187eccba68195d
-- acctdata-posted.dat  15000 bytes  sha256 2156833ada1d4f9f2df8820794e7a1647a3fa95f7a4021d129cbde007d04fb25
-- tcatbal-posted.dat  4700 bytes  sha256 4b0a2389413ee5de0059bf0c40e1e52935e0aa265d7ac34ed7515d0e0aec1376
-- dalyrejs.txt  18490 bytes  sha256 86f3b3418f44226b0df45b68b164b9d81c7d1121a5c4d98b187245cc59080cc6
+- transact.dat  17500 bytes  sha256 86994f5f80b2b329ab20316914a61fd5dac8186c2e98336309789ffe3121bec9
+- transact-stage1.dat  91700 bytes  sha256 1b3016c78e7020d79dcc232c63c613d2a035f1dd4ba0b7b80f4cbd4f311b5f12
+- acctdata-stage1.dat  15000 bytes  sha256 54fd60aee8aafb17c654d5eb49f8db641613f576f97595addfcd81dab0c31a6b
+- acctdata-posted.dat  15000 bytes  sha256 080656286a16d037079a4d9fe8c750354125144a7ab768a63aa412bb8ffc348c
+- tcatbal-posted.dat  5000 bytes  sha256 588ad9be3b7396badb8c396b87d79e16232f9327bb1a83a7e83a3f36a9e73d88
+- dalyrejs.txt  16340 bytes  sha256 42c8df20262c281549ee1c461c2554ae0ddfc88e1736a5edc07ff7b22b449379
 
 ## Known-unverified against IBM Enterprise COBOL
 GnuCOBOL is not the tenant's compiler. These are NOT corroborated by ADR-0021's
 hand-derived values and must be read as findings rather than failures if they disagree:
 FUNCTION CURRENT-DATE formatting; STRING ... DELIMITED BY SIZE padding at the edges;
-the sign of zero; and the zoned-decimal sign representation on REWRITE -- the first run
-turned an input overpunch of 940{ into 9400, identical in value and different in bytes,
-which is why ADR-0029 compares fields rather than bytes.
+and the sign of zero.
+
+**The zoned-decimal sign representation is no longer on that list.** It was, for four
+revisions, and it came due as seven wrong decisions in CBTRN02C's round trip. It is now
+probed in both directions and converted in both directions (see Representation above).
+Its history and the reason it stayed unverified so long are in docs/qa/oracle-caveats.md,
+which every caveat named here is required to have a row in.
 
 The interest arithmetic IS independently corroborated: it must match ADR-0021's
 hand-computed table, which was derived from the COBOL by a human without running it.

@@ -15,10 +15,10 @@ and updates it when it does. `extract_write_bindings` finds both -- deliberately
 `build_file_access_paths` then kept `first_write` only, so `design.json` carried the `WRITE` and
 lost the `REWRITE`. The rendered writer appended.
 
-**What that cost, in the oracle's own numbers**: 50 balance rows are loaded, `CBTRN02C` creates 44
-more, and the file it leaves has 94 (`tools/cobol-oracle/run-oracle.sh` asserts exactly this). An
-appending writer over the same input leaves **144** -- the original 50, plus 94 written on top --
-and *every one of the 144 records is individually correct*. No field comparison sees it. Only the
+**What that cost, in the oracle's own numbers**: 50 balance rows are loaded, `CBTRN02C` creates 50
+more, and the file it leaves has 100 (`tools/cobol-oracle/run-oracle.sh` asserts exactly this). An
+appending writer over the same input leaves **150** -- the original 50, plus 100 written on top --
+and *every one of the 150 records is individually correct*. No field comparison sees it. Only the
 row count does, which is the failure mode `java_writer`'s own module docstring exists to prevent,
 arriving through the contract rather than through the renderer.
 
@@ -163,7 +163,7 @@ def test_the_balance_writer_creates_or_updates_because_the_program_does_both(des
 
     **This is the case that found the defect.** The design used to keep whichever binding appeared
     first, which said `append` -- and over the oracle's 50 loaded rows an appending writer leaves
-    144 where `CBTRN02C` leaves 94, every record individually correct and only the count wrong.
+    150 where `CBTRN02C` leaves 100, every record individually correct and only the count wrong.
     """
     path = _path(design, "TCATBAL-FILE")
     assert path.written_entity_name == "TranCatBal"
@@ -175,7 +175,7 @@ def test_the_balance_writer_creates_or_updates_because_the_program_does_both(des
     assert "records.put(key, record)" in source, "replaced when present, added when not"
     assert "REWRITE of a record that is not in " not in source, (
         "the absent-key guard belongs to `replace` alone -- rendered here it would abend on the "
-        "first of the 44 rows this program creates"
+        "first of the 50 rows this program creates"
     )
     assert "at lines 510 and 528" in source, (
         "provenance cites both statements; citing the create alone is what made a create-or-update "
@@ -187,7 +187,7 @@ def test_the_reject_writer_refuses_by_name_rather_than_inventing_a_type(design):
     """`DALYREJS` is written from `REJECT-RECORD`, which is `WORKING-STORAGE`, not a copybook.
 
     ADR-0010 promotes copybook-sourced fields only, so no `Reject` entity exists and none should be
-    invented here -- 43 of the corpus's 300 daily transactions are rejects, so this is a real output
+    invented here -- 38 of the corpus's 300 daily transactions are rejects, so this is a real output
     of the program and not an edge case. The refusal is the designed behaviour and it names the
     missing thing, which is what makes it actionable; it is the same boundary the master plan's open
     issue 11 records for `FD` layouts generally.
@@ -492,8 +492,8 @@ def _optional_reader(design: UnifiedDesign) -> str:
 def test_a_declared_optional_lookup_is_not_required(design):
     """`2700-UPDATE-TCATBAL` reads a balance row and, INVALID KEY, creates one.
 
-    It does that 44 times on this corpus -- which is exactly how the 50 balance rows the job starts
-    from become the 94 the oracle holds. A reader that refused the record would abend on the first
+    It does that 50 times on this corpus -- which is exactly how the 50 balance rows the job starts
+    from become the 100 the oracle holds. A reader that refused the record would abend on the first
     of them, so the miss is handed to the processor as the COBOL's own INVALID KEY branch.
     """
     source = _optional_reader(design)

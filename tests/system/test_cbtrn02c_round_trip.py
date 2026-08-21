@@ -14,7 +14,7 @@ than argued:
 | `write_mode` `upsert` | `TCATBAL` is `WRITE`n and `REWRITE`n; the design kept the first | ADR-0037 |
 | `reads_own_writes` | the acceptance decision reads account state the posting writes | ADR-0039/0040 |
 | a shared working set | so item *n* sees items *1..n-1* | ADR-0041 |
-| `optional_lookups` | the `TCATBAL` read creates a row on `INVALID KEY`, 44 times | ADR-0042 |
+| `optional_lookups` | the `TCATBAL` read creates a row on `INVALID KEY`, 50 times | ADR-0042 |
 
 **The bodies here are scripted, not model-authored**, the same line `test_hand_written_round_trip`
 draws for the same reason: what this module demonstrates is that the path works end to end and that
@@ -26,6 +26,7 @@ from __future__ import annotations
 
 import json
 import shutil
+from decimal import Decimal
 from pathlib import Path
 
 import pytest
@@ -60,6 +61,7 @@ from cobol_modernizer.rendering.java_working_set import (
     working_set_class_name,
 )
 from cobol_modernizer.rendering.java_writer import render_item_writer, writer_class_name
+from cobol_modernizer.tools.data_loader import decode_zoned_decimal
 from cobol_modernizer.tools.local_compiler import compile_project
 
 FIXTURE_ROOT = Path(__file__).resolve().parents[1] / "fixtures" / "tenant_repo_sample"
@@ -364,20 +366,23 @@ def test_the_rendered_sequential_job_builds_and_runs(built):
     assert output.stat().st_size % 350 == 0
 
 
-def test_the_create_path_runs_and_the_row_count_does_not_match_yet(built):
-    """50 rows in, **100 out where COBOL leaves 94** -- the create path runs, and six times too often.
+def test_the_create_path_runs_and_the_row_count_now_matches(built):
+    """50 rows in, **100 out, which is what COBOL leaves** -- the create path runs, and correctly.
 
-    The 44 rows `run-oracle.sh` asserts of the real program are what `optional_lookups` made
-    reachable at all, so this is not the create path failing. The six extra rows are the same six
-    transactions the next test characterises: accepted here and rejected by COBOL, each one posting
-    to an (account, type, category) combination that then gets a balance row it should not have.
+    This test used to be called `..._does_not_match_yet` and asserted 100 against an oracle holding
+    94, pinned at the number the run actually produced because a test asserting the right answer
+    while the pipeline produces a different one is a failing test with no diagnosis in it.
 
-    Pinned at the number this run actually produces rather than at 94, because a test asserting the
-    right answer while the pipeline produces a different one is a failing test with no diagnosis in
-    it -- and the diagnosis is the finding.
+    **The diagnosis turned out to be the oracle's.** Six of the transactions its run rejected were
+    rejected on amounts missing a digit (ADR-0043), and each of those posts to an (account, type,
+    category) combination with no balance row -- so suppressing the acceptance suppressed the row.
+    ADR-0047 converted the corpus inside the oracle pipeline and the oracle now leaves 100 too.
     """
     balances = built / CANDIDATE_BALANCES
     assert balances.stat().st_size // 50 == 100
+    assert _oracle("tcatbal-posted.dat").stat().st_size // 50 == 100, (
+        "the same number from the other side; if these ever diverge again, say which one moved"
+    )
 
 
 def test_the_accounts_are_all_there(built):
@@ -390,51 +395,74 @@ def test_the_accounts_are_all_there(built):
     assert (built / CANDIDATE_ACCOUNTS).stat().st_size // 300 == 50
 
 
-def test_the_transactions_differ_from_the_oracle_only_on_overpunched_amounts(built):
-    """**The finding.** 256 of the oracle's 257 records are produced; 7 decisions differ.
+def test_the_transactions_now_agree_with_the_oracle_on_every_record_and_every_amount(built):
+    """**262 of 262, and the amounts match by value** -- the disagreement is gone, from both sides.
 
-    Six transactions are accepted here and rejected by `CBTRN02C`, and one the reverse. Every one of
-    the six carries an amount whose last byte is a **negative zoned-decimal overpunch**
-    (`}JKLMNOPQR`) -- the corpus has 50 such records. This pipeline reads that byte as a negative
-    sign (audit G16, finding 2, and `decode_signed`'s own docstring), which makes the projected
-    balance *fall* and the credit-limit check pass. GnuCOBOL's run rejected them as `0102 OVERLIMIT`,
-    which is only possible if it added the amount rather than subtracting it.
+    What this module recorded before ADR-0047: 256 of the oracle's 257 records produced, six
+    transactions accepted here and rejected by `CBTRN02C`, one the reverse. Every one of the six
+    carried an amount whose last byte was a negative overpunch, this pipeline read that byte as a
+    sign, and GnuCOBOL's run did not -- so its credit-limit comparisons were made against amounts
+    missing a digit and a negative amount looked like a large positive one.
 
-    **The oracle's bytes cannot settle it**, and that is why this is recorded rather than fixed: the
-    fixture's own `PROVENANCE.md` lists *"the zoned-decimal sign representation on REWRITE"* as
-    known-unverified against IBM Enterprise COBOL, and the written records bear that out -- an input
-    `0000009190}` comes back as `00000091900`, the same magnitude with no overpunch at all. Whose
-    reading is right is a question about the tenant's compiler, not about this code.
+    **The pipeline's numbers did not change to make this pass.** 262 is the count this same test
+    asserted for `ours` while it was failing, and 100 is the balance-row count the test above
+    asserted for the same reason. The oracle moved to meet them, because the oracle was wrong.
 
-    The seventh divergence carries no overpunch and follows from the other six: once a transaction is
-    accepted that should not have been, the running balance every later decision reads is different.
+    **What this is not.** It compares record identity and `TRAN-AMT`, not every field at full
+    declared width the way `test_hand_written_round_trip` compares `CBACT04C`. `2 of 4` needs that
+    comparison, and two of `CBACT04C`'s three ADR-0026 exclusions do not transfer -- `CBTRN02C`
+    copies `TRAN-ID` and `TRAN-ORIG-TS` straight from its input, so inheriting them here would
+    excuse fields this program reproduces exactly. The metric stays `1 of 4` until that is built.
     """
     candidate = built / CANDIDATE_TRANSACTIONS
-    oracle = (
-        Path(__file__).resolve().parents[1]
-        / "fixtures"
-        / "golden"
-        / "CBACT04C"
-        / "oracle"
-        / "transact-stage1.dat"
-    )
-    ours = _ids(candidate.read_bytes().decode("latin-1"))
-    theirs = _ids(oracle.read_bytes().decode("latin-1"))
+    oracle = _oracle("transact-stage1.dat")
 
-    assert len(theirs) == 257
+    ours = _amounts(candidate.read_bytes().decode("latin-1"))
+    theirs = _amounts(oracle.read_bytes().decode("latin-1"))
+
+    assert len(theirs) == 262
     assert len(ours) == 262
-    assert len(ours & theirs) == 256
-    assert len(ours - theirs) == 6, "accepted here, rejected by CBTRN02C"
-    assert len(theirs - ours) == 1, "accepted by CBTRN02C, rejected here"
+    assert set(ours) == set(theirs), (
+        f"accepted here and not by COBOL: {sorted(set(ours) - set(theirs))[:5]}; "
+        f"the reverse: {sorted(set(theirs) - set(ours))[:5]}"
+    )
 
+    differing = {t: (ours[t], theirs[t]) for t in ours if ours[t] != theirs[t]}
+    assert not differing, f"{len(differing)} amounts differ, e.g. {list(differing.items())[:3]}"
+
+
+def test_the_amounts_are_the_corpus_amounts_and_not_merely_equal_to_each_other(built):
+    """Both sides agreeing proves nothing if both read the same field the same wrong way.
+
+    `CBTRN02C` copies `DALYTRAN-AMT` to `TRAN-AMT` unchanged, so every posted amount must equal the
+    corpus's own value as ADR-0043's hand-derived table reads it. Checked against the corpus rather
+    than against the oracle, which is the only version of this check that could have failed before.
+    """
     daily = {
         line[0:16]: line[132:143]
         for line in (CORPUS / "dailytran.txt").read_text(encoding="latin-1").splitlines()
         if line.strip()
     }
-    assert all(daily[tran_id][-1] in "}JKLMNOPQR" for tran_id in ours - theirs), (
-        "every extra record is one whose amount carries a negative overpunch"
+    ours = _amounts((built / CANDIDATE_TRANSACTIONS).read_bytes().decode("latin-1"))
+
+    assert len(ours) == 262
+    for tran_id, amount in ours.items():
+        assert amount == decode_zoned_decimal(daily[tran_id], scale=2, signed=True), (
+            f"{tran_id}: wrote {amount} for a corpus amount of {daily[tran_id]!r}"
+        )
+
+    carrying = [t for t in ours if daily[t][-1] not in "{}0123456789"]
+    assert len(carrying) > 200, (
+        "most of these amounts carry a digit in the overpunch, so the check has something to catch"
     )
+
+
+def _amounts(raw: str) -> dict[str, Decimal]:
+    """`TRAN-ID` -> `TRAN-AMT` for every 350-byte record. `CVTRA05Y`: amount at 133, eleven wide."""
+    return {
+        raw[i : i + 16]: decode_zoned_decimal(raw[i + 132 : i + 143], scale=2, signed=True)
+        for i in range(0, len(raw), 350)
+    }
 
 
 def _ids(raw: str) -> set[str]:
@@ -452,73 +480,42 @@ def _oracle(name: str) -> Path:
     return Path(__file__).resolve().parents[1] / "fixtures" / "golden" / "CBACT04C" / "oracle" / name
 
 
-def test_the_oracle_wrote_every_amount_with_its_overpunch_digit_replaced_by_zero():
-    """**The disagreement is data loss in the oracle, and this is the proof.**
+def test_cbact04c_was_never_affected_by_it_and_here_is_the_corrected_reason():
+    """The green round trip stayed green through ADR-0047, and this says why -- **corrected**.
 
-    A trailing zoned-decimal overpunch carries the final digit *and* the sign: `G` is `+7`, `P` is
-    `-7`, `{` is `+0`, `}` is `-0`. `dailytran.txt` amounts are overpunched in every posted record,
-    and GnuCOBOL wrote **all 257 of them back with the last byte replaced by `0`** -- so
-    `0000005047G`, which is `504.77`, came out as `00000050470`, which is `504.70`.
+    The claim has always been right and its stated reason was not. This test used to assert that
+    `tcatbal.txt`'s balances *"end in a plain 0 and are not overpunched at all"*, and it passed --
+    because it sliced `line[17:29]`, twelve bytes for an eleven-byte `PIC S9(09)V99` field. The byte
+    it checked was the FILLER after the field, not the sign. Every one of those balances ends in
+    `{`.
 
-    No reading of the standard produces that. It is what happens when a runtime does not recognise
-    the overpunch byte as a digit and coerces it to zero, and it is exactly the caveat the fixture's
-    own `PROVENANCE.md` records as *"the zoned-decimal sign representation"* being unverified
-    against IBM Enterprise COBOL.
+    That does not change the conclusion, and it is exactly the kind of near-miss ADR-0047 turns on:
+    `{` is **+0**, the one overpunch where the lossy reading and the correct one agree, so nothing
+    was lost either way. But a check that reads the wrong byte is not evidence for the thing it is
+    cited for, and this one was cited for `500 of 500`.
 
-    So the six transactions this pipeline accepts and `CBTRN02C` rejects are not this pipeline being
-    wrong about a sign: the oracle's own decisions were computed from amounts missing a digit.
-    """
-    daily = {
-        line[0:16]: line[132:143]
-        for line in (CORPUS / "dailytran.txt").read_text(encoding="latin-1").splitlines()
-        if line.strip()
-    }
-    raw = _oracle("transact-stage1.dat").read_bytes().decode("latin-1")
-    written = {raw[i : i + 16]: raw[i + 132 : i + 143] for i in range(0, len(raw), 350)}
-
-    overpunched = {
-        tran_id: source
-        for tran_id, source in daily.items()
-        if tran_id in written and source[-1] in _POSITIVE_OVERPUNCH + _NEGATIVE_OVERPUNCH
-    }
-    assert len(overpunched) == 257, "every posted amount in this corpus carries an overpunch"
-
-    zeroed = [t for t, source in overpunched.items() if written[t] == source[:-1] + "0"]
-    assert len(zeroed) == 257
-
-    # `{` and `}` carry the digit zero, so replacing them with `0` loses only the sign. Every other
-    # overpunch carries 1-9, and for those a digit is simply gone.
-    carrying_a_digit = [t for t, source in overpunched.items() if source[-1] not in "{}"]
-    assert len(carrying_a_digit) > 200, (
-        "most posted amounts end in an overpunch carrying 1-9, so the loss is the common case "
-        "rather than an edge of the corpus"
-    )
-
-
-def test_cbact04c_is_not_affected_by_it():
-    """The green round trip stays green, and this is why -- checked rather than assumed.
-
-    Zeroing the overpunch byte only loses something when that byte carries a **non-zero** digit.
-    `CBACT04C` reads `tcatbal.txt`, whose balances end in a plain `0` and are not overpunched at
-    all, and `acctdata.txt`, whose three signed fields all end in `{` -- positive zero, where the
-    lossy reading and the correct one agree exactly.
-
-    The only field in this corpus where the loss bites is `DALYTRAN-AMT`, which `CBACT04C` never
-    reads. So `500 of 500` and `598 of 600` are untouched by the finding above.
+    Also corrected: `CVACT01Y` has **five** signed fields, not the three this checked. All five are
+    `{`, measured across all 50 records.
     """
     corpus = CORPUS
     balances = [
-        line[17:29]
+        line[17:28]
         for line in (corpus / "tcatbal.txt").read_text(encoding="latin-1").splitlines()
         if line.strip()
     ]
-    assert all(value[-1] not in _POSITIVE_OVERPUNCH + _NEGATIVE_OVERPUNCH for value in balances)
+    assert len(balances) == 50
+    assert {value[-1] for value in balances} == {"{"}, (
+        "positive zero: the only overpunch whose digit is nothing to lose"
+    )
 
     accounts = [
         line for line in (corpus / "acctdata.txt").read_text(encoding="latin-1").splitlines()
         if line.strip()
     ]
-    for lo, hi in ((12, 24), (78, 90), (90, 102)):
-        assert all(line[lo:hi][-1] == "{" for line in accounts), (
-            "positive zero: the only overpunch whose digit is nothing to lose"
+    assert len(accounts) == 50
+    # ACCT-CURR-BAL, ACCT-CREDIT-LIMIT, ACCT-CASH-CREDIT-LIMIT, ACCT-CURR-CYC-CREDIT,
+    # ACCT-CURR-CYC-DEBIT -- every signed field CVACT01Y declares, each twelve wide.
+    for lo in (12, 24, 36, 78, 90):
+        assert {line[lo : lo + 12][-1] for line in accounts} == {"{"}, (
+            f"the signed field at offset {lo} is not uniformly positive zero"
         )

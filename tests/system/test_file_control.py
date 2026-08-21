@@ -388,10 +388,10 @@ def test_the_writes_are_found_and_attributed():
 
 
 def test_a_file_written_both_ways_keeps_both_bindings():
-    """`CBTRN02C` both creates and updates `TCATBAL` rows -- the 44 new rows the oracle found.
+    """`CBTRN02C` both creates and updates `TCATBAL` rows -- the 50 new rows the oracle found.
 
     Collapsing them would erase the fact that the program can *create* a balance row, which is the
-    difference between 50 rows and 94.
+    difference between 50 rows and 100.
     """
     tcatbal = [
         b for b in extract_write_bindings(source("CBTRN02C")) if b.file_name == "TCATBAL-FILE"

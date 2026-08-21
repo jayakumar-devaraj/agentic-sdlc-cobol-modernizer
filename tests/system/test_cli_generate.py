@@ -388,8 +388,8 @@ def test_a_step_that_reads_its_own_writes_is_rendered_like_any_other(tmp_path, e
     """It used to be refused here, and the refusal came off when a build proved it could run.
 
     **Why it was refused (ADR-0039/0040).** `CBTRN02C`'s acceptance test compares a credit limit
-    against cycle fields its own posting rewrites, so judged per item, 30 of its 43 rejections
-    disappear and it writes 287 records where COBOL writes 257 -- each individually correct, so a
+    against cycle fields its own posting rewrites, so judged per item, 25 of its 38 rejections
+    disappear and it writes 287 records where COBOL writes 262 -- each individually correct, so a
     field-level differential passes and only the count disagrees. Reporting it `not_generated` was
     the honest answer while nothing could run it correctly.
 

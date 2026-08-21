@@ -7,6 +7,13 @@ business logic (**G17**) — through the renderers built for `CBACT04C`
 ([ADR-0032](0032-a-declared-chain-with-no-store-renders-as-in-memory-staging.md) and the reader and
 writer work before it). Schema **3.7.0**.
 
+**Counts superseded in part by [ADR-0047](0047-the-corpus-sign-representation-is-converted-inside-the-oracle-pipeline.md)** (2026-08-21). The decision below — that a file
+written both ways renders as an `upsert` — is unchanged and was never in question. Its *numbers*
+were measured against an oracle whose runtime could not read the corpus's sign overpunches: read
+**100 rows out, 50 created, and 150 for an appending writer** wherever this record says 94, 44 and
+144. The argument is unaffected; only the corpus arithmetic behind it moved, and it moved in the
+direction that makes the append defect larger rather than smaller.
+
 ## Context
 
 `CBTRN02C` writes `TCATBAL-FILE` two ways in one program. It moves the three key components, reads

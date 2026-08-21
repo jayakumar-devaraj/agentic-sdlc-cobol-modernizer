@@ -15,16 +15,24 @@ transactions *1..n-1* wrote. `2700-UPDATE-TCATBAL` is the same shape against a d
 **The proof is from committed artifacts, not from a replay.** `transact-stage1.dat` holds exactly
 the transactions the program accepted, each carrying its `DALYTRAN-ID`, so the rejected set is known
 exactly rather than modelled. Each rejected transaction is then judged the way a *stateless*
-processor would have to judge it -- against the account's initial state, on its own. **30 of the 43
-pass that check.** A per-item implementation writes 287 records where `CBTRN02C` writes 257, and
+processor would have to judge it -- against the account's initial state, on its own. **25 of the 38
+pass that check.** A per-item implementation writes 287 records where `CBTRN02C` writes 262, and
 every one of the 287 is individually correct.
+
+**287 did not move when ADR-0047 fixed the oracle, and that is a check rather than a coincidence.**
+Before the fix the same arithmetic read 30 of 43 and 257 + 30. The split moved by five because
+`accepted_ids` comes from the oracle, whose run had been deciding on amounts missing a digit; the
+total did not move because the standalone check has always been computed from the *corpus* through
+`decode_zoned_decimal`, which was right all along. A change in the total would have meant this
+module's own inputs had shifted.
 
 **What that rules out.** Not a particular decomposition -- *every* order-independent one. Grouping
 by account, by balance key, or by anything else computes sums over a transaction set that is itself
 wrong, because membership of that set is what the ordering decides.
 
 ADR-0039 records the decision this measurement produced: the posting path is declared and refused by
-name rather than generated, and the round-trip metric stays at `1 of 4` with a stated cause.
+name rather than generated. The finding is unaffected by ADR-0047 -- order dependence is a property
+of the program, not of how its amounts were read.
 """
 
 from __future__ import annotations
@@ -128,26 +136,29 @@ def _passes_on_its_own(transaction, accounts, account_of) -> bool:
 
 
 def test_the_corpus_and_the_oracle_agree_on_how_many_were_accepted(daily, accepted_ids):
-    """300 in, 257 written, 43 rejected -- the premise everything below rests on."""
+    """300 in, 262 written, 38 rejected -- the premise everything below rests on."""
     assert len(daily) == 300
-    assert len(accepted_ids) == 257
-    assert len({t["id"] for t in daily} - accepted_ids) == 43
+    assert len(accepted_ids) == 262
+    assert len({t["id"] for t in daily} - accepted_ids) == 38
 
 
 def test_most_rejected_transactions_would_pass_if_judged_on_their_own(
     daily, accepted_ids, accounts, account_of
 ):
-    """**The finding.** 30 of the 43 rejections are caused by ordering, not by the transaction.
+    """**The finding.** 25 of the 38 rejections are caused by ordering, not by the transaction.
 
     Each of these passes the credit-limit check against the account as the job *found* it, and was
     rejected only because earlier transactions in the same run had already consumed the limit. A
-    stateless implementation therefore writes **287** records -- 257 plus these 30 -- and every one
+    stateless implementation therefore writes **287** records -- 262 plus these 25 -- and every one
     of them is individually correct, which is what makes this invisible to a field comparison.
+
+    The 287 is asserted separately from the 25 on purpose: it survived ADR-0047 unchanged while the
+    25 moved from 30, so the two assertions fail for different reasons and say different things.
     """
     rejected = [t for t in daily if t["id"] not in accepted_ids]
     order_only = [t for t in rejected if _passes_on_its_own(t, accounts, account_of)]
 
-    assert len(order_only) == 30
+    assert len(order_only) == 25
     assert len(accepted_ids) + len(order_only) == 287
 
 

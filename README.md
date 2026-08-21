@@ -71,7 +71,7 @@ width (`docs/adr/0029`):
 | | matched | excluded |
 |---|---|---|
 | interest transactions (50 records) | **500 of 500** | 3 fields, `docs/adr/0026` |
-| rewritten account file (50 records) | **598 of 600** | none |
+| rewritten account file (50 records) | **597 of 600** | none |
 
 The method bodies were written by a real `claude-opus-5` run; all three compiled on the first
 attempt, and the self-healing loop never ran.
@@ -88,27 +88,48 @@ hand-written is **the file paths**, and they are arguably not design at all: the
 generated a working program*. A test fails if this file states the count without the qualifier in
 the same paragraph.
 
-**The two account fields that differ are COBOL's own defect**, pinned rather than smoothed over: its
-account-break post sits in an unreachable `ELSE`, so the last account is never credited, and the
-divergence is exactly the fields `1050-UPDATE-ACCOUNT` writes. Skipping that account in the wiring
-would have made the comparison green by encoding a bug, and is refused on the record.
+**The three account fields that differ are COBOL's own defect**, pinned rather than smoothed over:
+its account-break post sits in an unreachable `ELSE`, so the last account is never credited, and the
+divergence is exactly the three fields `1050-UPDATE-ACCOUNT` writes. Skipping that account in the
+wiring would have made the comparison green by encoding a bug, and is refused on the record. It was
+**598 of 600** until `docs/adr/0047`: with the corpus's real amounts the last account now carries a
+non-zero total in *both* cycle fields, where one of them used to be zero on both sides and matched
+by coincidence. Same single cause, now showing in every field it can reach.
 
 **Still true.** Nothing has been written to the real `card-service` repository; the reachable
 maximum is `2 of 4` (G17, `docs/adr/0035`), since `CBCUS01C` and `CBACT01C` contribute a read and a
-print; and generating a stateful control-break writer is out of scope. **`CBTRN02C` now builds and runs, and `2 of 4` is still
-not reachable** — for a reason that moved. Its acceptance decision reads account state the job
-itself writes, so a stateless implementation writes **287** records where the program writes 257,
-each individually correct (`docs/adr/0039`). Rendering it needed four facts `CBACT04C` never did: an
-`upsert` write mode (`docs/adr/0037`), a declared `reads_own_writes` step (`docs/adr/0040`), a
-working set its reader and writer share at chunk 1 (`docs/adr/0041`), and a declared optional lookup
-for the read that *creates* a balance row (`docs/adr/0042`). With those, the rendered job completes
-under real Maven and produces **256 of its oracle's 257 transactions and the account file exactly**.
-The seven differing decisions are **the oracle's**: the runtime that produced it reads this corpus's
-IBM sign overpunches as digit `0`, so its own credit-limit comparisons ran on amounts missing a
-digit (`docs/adr/0043`, four independent lines of evidence). `CBACT04C` is unaffected — checked, not
-assumed: its signed inputs end in `{` or carry no overpunch, exactly where the two readings agree. The round trip found a real
-defect on its first pass — `TRAN-SOURCE` is `PIC X(10)` and the body wrote a bare `"System"`,
-disagreeing with COBOL on fifty records while every amount matched.
+print; and generating a stateful control-break writer is out of scope. **`CBTRN02C` builds, runs and
+now agrees with its oracle exactly — and the count is still `1 of 4`, wiring hand-written.**
+Rendering it needed four
+facts `CBACT04C` never did: an `upsert` write mode (`docs/adr/0037`), a declared `reads_own_writes`
+step (`docs/adr/0040`), a working set its reader and writer share at chunk 1 (`docs/adr/0041`), and
+a declared optional lookup for the read that *creates* a balance row (`docs/adr/0042`). With those,
+the rendered job completes under real Maven and produces **262 of its oracle's 262 transactions,
+every amount equal by value, and the account file exactly**.
+
+`reads_own_writes` is the one those numbers turn on, and it was measured before it was built: the
+program decides what to accept from cycle fields its own posting rewrites, so judged per item, 25 of
+its 38 rejections disappear and a stateless implementation writes **287** records where the program
+writes 262 — each individually correct, which is what makes the error invisible to a field
+comparison (`docs/adr/0039`).
+
+**It produced those same numbers while the comparison was failing**, which is the part worth
+stating. The run wrote 262 records and 100 balance rows against an oracle holding 257 and 94, and
+seven decisions differed. Every one of them traced to an amount whose last byte is an IBM sign
+overpunch, which the oracle's runtime read as digit `0` — dropping a digit and the sign, so a
+negative amount looked like a large positive one and failed a credit-limit check
+(`docs/adr/0043`, four independent lines of evidence). `docs/adr/0047` converts the representation
+inside the oracle pipeline, in both directions, and the oracle moved to 262 and 100. **The pipeline
+did not move.**
+
+**Why `2 of 4` still is not claimed.** `CBTRN02C`'s transactions are compared on record identity and
+`TRAN-AMT`, not field-for-field at full declared width the way `CBACT04C`'s are — and two of
+`CBACT04C`'s three `docs/adr/0026` exclusions do not transfer, since `CBTRN02C` copies `TRAN-ID` and
+`TRAN-ORIG-TS` straight from its input. Inheriting them would excuse fields this program reproduces
+exactly. The count moves when that comparison exists, not before.
+
+The round trip found a real defect on its first pass — `TRAN-SOURCE` is `PIC X(10)` and the body
+wrote a bare `"System"`, disagreeing with COBOL on fifty records while every amount matched.
 
 Step 40a's loader
 (`tools/data_loader.py`) reads CardDemo's fixed-width files into PostgreSQL with
@@ -317,7 +338,7 @@ Milestone C4.
 ./.venv/Scripts/python -m pytest --cov=cobol_modernizer --cov-report=term-missing --cov-fail-under=90
 ```
 
-1070 tests passing (13 skipped — the opt-in live-CLI tests), 98.80% coverage — CI's own numbers from
+1080 tests passing (13 skipped — the opt-in live-CLI tests), 98.80% coverage — CI's own numbers from
 the run on this change, not a local approximation of them. The Postgres-backed
 `tools/knowledge_store.py` suite is included and skips nothing there, because CI provides a real
 service container. The target template's own 36 Java tests are not in that

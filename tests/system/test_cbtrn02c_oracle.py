@@ -14,7 +14,7 @@ captured nor compared.)
 
 **The count is checked against the run's own report rather than against a number typed here.** The
 program prints how many transactions it processed and how many it rejected; the difference is how
-many it wrote. Asserting `257` directly would be asserting a number produced by running the code --
+many it wrote. Asserting `262` directly would be asserting a number produced by running the code --
 the shape that let `test_spec_extractor.py` encode a defect as its expectation (`len(mappings) ==
 75`), and the shape `run-oracle.sh`'s own count assertions exist to avoid. Here the fixture and the
 provenance are two artifacts of one run, and each is evidence about the other.
@@ -60,7 +60,7 @@ def test_the_master_holds_every_transaction_the_program_says_it_accepted():
     records -- and all of them break this equality.
     """
     processed, rejected = _reported_counts()
-    assert (processed, rejected) == (300, 43), "the corpus this oracle was produced from"
+    assert (processed, rejected) == (300, 38), "the corpus this oracle was produced from"
     assert len(_records()) == processed - rejected
 
 
