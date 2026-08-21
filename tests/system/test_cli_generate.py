@@ -384,18 +384,19 @@ def test_a_non_processor_step_is_reported_rather_than_silently_dropped(tmp_path,
 # --- ADR-0039/0040: a processor whose decision reads its own writes -------------------------------
 
 
-def test_a_step_that_reads_its_own_writes_is_reported_rather_than_rendered(tmp_path, entry):
-    """`reads_own_writes` is refused for the opposite reason to the role check above.
+def test_a_step_that_reads_its_own_writes_is_rendered_like_any_other(tmp_path, entry):
+    """It used to be refused here, and the refusal came off when a build proved it could run.
 
-    That one is refused because this pipeline renders `ItemProcessor`s and the step is not one.
-    This one *is* a processor by role, and rendering it would **succeed** -- producing a class that
-    compiles, runs, and emits individually-correct records in the wrong set.
+    **Why it was refused (ADR-0039/0040).** `CBTRN02C`'s acceptance test compares a credit limit
+    against cycle fields its own posting rewrites, so judged per item, 30 of its 43 rejections
+    disappear and it writes 287 records where COBOL writes 257 -- each individually correct, so a
+    field-level differential passes and only the count disagrees. Reporting it `not_generated` was
+    the honest answer while nothing could run it correctly.
 
-    Measured on `CBTRN02C` (ADR-0039): its acceptance test compares a credit limit against cycle
-    fields its own posting rewrites, so judged per item, 30 of its 43 rejections disappear and it
-    writes 287 records where COBOL writes 257. A field-level differential passes on every one of
-    them; only the count disagrees. That is why silence here is worse than a refusal, and why the
-    refusal has to be mechanical rather than a note in an ADR.
+    **Why it is rendered now (ADR-0041).** What makes such a step sequential is its *wiring* -- a
+    working set the reader and writer share, at chunk 1 -- and `test_cbtrn02c_round_trip` builds and
+    runs one under real Maven. The processor itself is rendered exactly as any other, which is the
+    point: a body stays a pure function of the item and the state as the step currently has it.
     """
     sequential = PROCESSOR.model_copy(
         update={
@@ -404,35 +405,22 @@ def test_a_step_that_reads_its_own_writes_is_reported_rather_than_rendered(tmp_p
             "reads_own_writes": True,
         }
     )
-    # Declared beside an ordinary step, the way a real job would be: a run with nothing generable
-    # in it is not a success by design, and asserting the refusal on its own would conflate
-    # "this step was refused" with "the run produced nothing".
-    design_path = _design_json(tmp_path, entry, PROCESSOR, sequential)
+    design_path = _design_json(tmp_path, entry, sequential)
     outcome = run_generate(
         design_path, FIXTURE_ROOT, tmp_path / "proj", author=_author(), advise=_advise()
     )
 
-    not_generated = [o for o in outcome.outcomes if o.status == "not_generated"]
-    assert [o.step_name for o in not_generated] == ["postTransaction"]
-    reason = not_generated[0].reason
-    # The reason has to say what is wrong, not merely that something is: a reviewer who reads
-    # "not generated" and nothing else cannot tell this from the role case above.
-    assert "reads state it writes" in reason
-    assert "1500-B-LOOKUP-ACCT" in reason
-    assert "ADR-0039" in reason
-
-    # Reported, not failed: the other step compiled, and the refusal is surfaced beside it rather
-    # than turning an honest run into an error.
+    assert not [o for o in outcome.outcomes if o.status == "not_generated"]
+    assert [o.step_name for o in outcome.compiled] == ["postTransaction"]
     assert outcome.succeeded
-    assert [o.step_name for o in outcome.compiled] == [PROCESSOR.step_name]
-    assert not [o for o in outcome.outcomes if o.step_name == "postTransaction" and o.class_name]
 
 
 def test_the_same_step_without_the_flag_is_rendered(tmp_path, entry):
-    """The discrimination case: `reads_own_writes` is what refuses it, not its name or paragraphs.
+    """The control: the flag changes the step's *wiring*, never whether a processor is produced.
 
-    Without this, the assertion above would pass for a pipeline that had stopped rendering
-    processors altogether.
+    Both this and the test above render, and that is the assertion -- `reads_own_writes` is
+    consumed by `java_reader`, `java_writer` and `java_job`, not by this pipeline, so a design that
+    sets it and one that does not must reach the same processor here.
     """
     ordinary = PROCESSOR.model_copy(
         update={
