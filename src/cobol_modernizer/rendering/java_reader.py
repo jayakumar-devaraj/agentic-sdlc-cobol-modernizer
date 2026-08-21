@@ -369,15 +369,34 @@ def render_item_reader(
                 f"{_INDENT * 3}{variable} = {_lookup(name, retry, shared)};",
                 f"{_INDENT * 2}}}",
             ]
-        body.append(
-            f'{_INDENT * 2}require({variable}, "{path.select_name} has no record for the key '
-            f'built from {", ".join(p.source_field or repr(p.literal) for p in primary)}");'
-        )
+        if name in step.optional_lookups:
+            # **A miss this program handles, so the reader hands it over rather than refusing.**
+            # `CBTRN02C` creates a TCATBAL row when its read finds none -- 44 of the 94 rows the
+            # oracle holds -- and a refusal here would abend on the first of them (ADR-0042).
+            # The processor sees `null` and the COBOL's own INVALID KEY branch is its to translate.
+            body.append(
+                f"{_INDENT * 2}// {path.select_name} may have no record for this key, and"
+                f" {step.step_name} says so:"
+            )
+            body.append(f"{_INDENT * 2}// null here is the INVALID KEY branch, not a failure.")
+        else:
+            body.append(
+                f'{_INDENT * 2}require({variable}, "{path.select_name} has no record for the key '
+                f'built from {", ".join(p.source_field or repr(p.literal) for p in primary)}");'
+            )
 
-    constructor_arguments = ", ".join(
-        f"to{entity}({variables[entity]})" if entity != driving else f"to{entity}(record)"
-        for _field, entity in components
-    )
+    def _argument(entity: str) -> str:
+        if entity == driving:
+            return f"to{entity}(record)"
+        variable = variables[entity]
+        if entity in step.optional_lookups:
+            # The record parser slices fixed offsets and would throw on the null this lookup is
+            # allowed to produce. The component carries the miss instead, which is what lets a
+            # body translate the COBOL's own INVALID KEY branch (ADR-0042).
+            return f"{variable} == null ? null : to{entity}({variable})"
+        return f"to{entity}({variable})"
+
+    constructor_arguments = ", ".join(_argument(entity) for _field, entity in components)
 
     maps = "\n".join(
         ([f"{_INDENT}private final {working_set} state;"] if shared else [])

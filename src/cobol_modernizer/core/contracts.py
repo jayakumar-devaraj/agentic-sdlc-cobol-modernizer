@@ -165,6 +165,22 @@ class BatchStepDesign(BaseModel):
     #: direction: a step that does not say this renders exactly as it did before the field
     #: existed.
     reads_own_writes: bool = False
+    #: Entity names whose keyed lookup this step tolerates finding nothing (ADR-0042). The rendered
+    #: reader hands the processor `null` for these instead of refusing the record.
+    #:
+    #: **A miss is not always an error, and `CBTRN02C` is where that stops being theoretical.** Its
+    #: `2700-UPDATE-TCATBAL` reads a balance row and, `INVALID KEY`, *creates* one -- 44 times on
+    #: this corpus, which is exactly how 50 balance rows become the 94 the oracle asserts. A reader
+    #: that refused the record would abend on the first transaction posting to a category the
+    #: account has no balance for.
+    #:
+    #: **Declared rather than derived, and the derivation was tried first.** Both Track C programs
+    #: write `INVALID KEY` clauses that only `DISPLAY` and continue, so the clause does not separate
+    #: "handled" from "unhandled" -- `CBACT04C`'s reader refuses a miss and is right only because
+    #: none happens on its corpus. Deriving optionality from the clause would change a reader
+    #: measured green at 500 of 500 whose bodies do not null-check, so the fact is stated per step
+    #: instead. Empty by default, which keeps every existing step refusing exactly as it does now.
+    optional_lookups: list[str] = []
 
 
 class ControlBreakDesign(BaseModel):
@@ -438,7 +454,8 @@ class UnifiedDesign(BaseModel):
 
 #: design.json's own envelope version -- bump this on any breaking change to DesignDocument's
 #: shape, e.g. once solution_architect gives `unified_design` a real type.
-SCHEMA_VERSION = "3.8.0"  # 3.8.0: BatchStepDesign.reads_own_writes (ADR-0040)
+SCHEMA_VERSION = "3.9.0"  # 3.9.0: BatchStepDesign.optional_lookups (ADR-0042)
+#: 3.8.0 added BatchStepDesign.reads_own_writes (ADR-0040).
 #: 3.7.0 added FileAccessPath.write_mode/write_lines -- the upsert mode (ADR-0037).
 #: 3.6.0 added BatchStepDesign.control_break (G31, ADR-0032).
 #: 3.5.0 added the FileAccessPath write side -- WRITE ... FROM (G31).

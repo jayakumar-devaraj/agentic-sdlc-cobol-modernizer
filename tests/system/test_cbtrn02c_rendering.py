@@ -470,3 +470,60 @@ def test_a_job_with_no_sequential_step_gains_none_of_this(design):
     assert ">chunk(CHUNK_SIZE)" in source
     assert "StepExecutionListener" not in source
     assert "WorkingSet" not in source
+
+
+# --- a lookup the program tolerates missing (ADR-0042) --------------------------------------------
+
+
+def _optional_reader(design: UnifiedDesign) -> str:
+    step = _sequential_step().model_copy(
+        update={"input_type": "PostingInput", "optional_lookups": ["TranCatBal"]}
+    )
+    return render_item_reader(
+        step,
+        design.model_copy(update={"composite_types": [POSTING_INPUT, POSTING_RESULT]}),
+        PROGRAM,
+        package="com.modernized.batch.reader",
+        domain_package="com.modernized.domain",
+        working_set_package=WORKING_SET_PACKAGE,
+    )
+
+
+def test_a_declared_optional_lookup_is_not_required(design):
+    """`2700-UPDATE-TCATBAL` reads a balance row and, INVALID KEY, creates one.
+
+    It does that 44 times on this corpus -- which is exactly how the 50 balance rows the job starts
+    from become the 94 the oracle holds. A reader that refused the record would abend on the first
+    of them, so the miss is handed to the processor as the COBOL's own INVALID KEY branch.
+    """
+    source = _optional_reader(design)
+    assert "TCATBAL-FILE has no record for the key" not in source
+    assert "null here is the INVALID KEY branch, not a failure." in source
+
+
+def test_the_lookups_that_were_not_declared_optional_are_still_required(design):
+    """The discrimination case: one entity was named, and only that one changed.
+
+    Without this the assertion above would pass for a reader that had stopped requiring anything,
+    which is the change that turns a wrong join into plausible rows instead of a loud failure.
+    """
+    source = _optional_reader(design)
+    assert 'require(cardxrefRecord, "XREF-FILE has no record for the key' in source
+    assert 'require(accountRecord, "ACCOUNT-FILE has no record for the key' in source
+
+
+def test_an_optional_component_is_not_parsed_when_it_is_absent(design):
+    """The record parser slices fixed offsets and would throw on the null it is now allowed to get.
+
+    So the component carries the miss instead. Asserted because the refusal and the parse are two
+    separate places, and removing only the first produces a reader that fails one line later with a
+    message about offsets rather than about a missing record.
+    """
+    source = _optional_reader(design)
+    assert "trancatbalRecord == null ? null : toTranCatBal(trancatbalRecord)" in source
+
+
+def test_a_step_declaring_no_optional_lookups_requires_all_of_them(design):
+    """`CBACT04C`'s posture, unchanged: a keyed read that finds nothing refuses the record."""
+    source = _sequential_reader(design)
+    assert 'require(trancatbalRecord, "TCATBAL-FILE has no record for the key' in source
