@@ -130,15 +130,15 @@ class CobolRecordTest {
     /**
      * The twenty overpunch characters, against values derived by hand from the standard.
      *
-     * <p>ADR-0043. Every one of these is a real {@code DALYTRAN-AMT} from the CardDemo corpus, and
-     * the expected values are written out rather than computed -- deriving them with this decoder
-     * and then asserting this decoder would compare two renderings of one interpretation.
+     * <p>Every one of these is a real signed amount taken from a tenant's own data, and the
+     * expected values are written out rather than computed -- deriving them with this decoder and
+     * then asserting this decoder would compare two renderings of one interpretation.
      *
-     * <p>It matters here rather than only in the Python suite because this class ships inside every
-     * generated project: it is what a migrated program reads its own input with. GnuCOBOL, given
-     * the same bytes, returns 504.70 for the first of these -- the digit the overpunch carries is
-     * dropped -- which is why the oracle and a generated run disagree about which transactions
-     * clear a credit limit.
+     * <p>It matters here rather than only in the generator's own suite because this class ships
+     * inside every generated project: it is what a migrated program reads its own input with. At
+     * least one COBOL runtime, given the same bytes, returns 504.70 for the first of these -- the
+     * digit the overpunch carries is dropped -- so a decoder that agreed with it would compute a
+     * different answer from the one the field actually holds.
      */
     @Test
     void readsEveryTrailingSignOverpunchTheStandardDefines() {
