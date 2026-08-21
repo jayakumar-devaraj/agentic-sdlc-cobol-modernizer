@@ -384,7 +384,7 @@ def test_the_fixture_carries_its_provenance():
 
 TCATBAL_POSTED = ORACLE_DIR / "tcatbal-posted.dat"
 TCATBAL_RECORD_LEN = 50
-TCATBAL_POSTED_RECORDS = 94
+TCATBAL_POSTED_RECORDS = 100
 
 
 def test_the_posted_input_fixture_exists_and_is_whole():
@@ -401,11 +401,15 @@ def test_the_posted_input_fixture_exists_and_is_whole():
 
 
 def test_the_posted_input_is_not_the_shipped_pre_posting_state():
-    """94 records, not the 50 that were loaded -- and the difference is real program behaviour.
+    """100 records, not the 50 that were loaded -- and the difference is real program behaviour.
 
     CBTRN02C creates a balance row whenever a daily transaction posts to an (account, type, category)
-    combination that has none: exactly 44 of them, so 50 + 44 = 94. Asserting the 50 I assumed failed
-    immediately; asserting nothing would have shipped a fixture missing 44 of its 94 rows.
+    combination that has none: exactly 50 of them, so 50 + 50 = 100. Asserting the 50 I assumed
+    failed immediately; asserting nothing would have shipped a fixture missing half its rows.
+
+    It was 94, from 44 creates, until ADR-0047 gave the oracle the corpus's real amounts. Six of the
+    transactions its run used to reject on a lost digit each post to a combination with no balance
+    row, so rejecting them suppressed the row as well as the posting.
     """
     raw = TCATBAL_POSTED.read_bytes().decode("latin-1")
     balances = {
@@ -420,9 +424,9 @@ def test_the_posted_input_is_not_the_shipped_pre_posting_state():
 
 
 def test_the_guard_is_exercised_by_this_data():
-    """94 balance rows produce 50 transactions, so `IF DIS-INT-RATE NOT = 0` really fires.
+    """100 balance rows produce 50 transactions, so `IF DIS-INT-RATE NOT = 0` really fires.
 
-    Worth pinning: a candidate ignoring the guard would emit 94 records and fail the record-count
+    Worth pinning: a candidate ignoring the guard would emit 100 records and fail the record-count
     check, which means this fixture tests ADR-0022's guard against real data rather than against the
     single hand-written row the oracle table carries.
     """

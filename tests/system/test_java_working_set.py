@@ -2,7 +2,7 @@
 
 `CBTRN02C` is the program that needs it: its acceptance decision compares a credit limit against
 cycle fields its own posting rewrites, so a step processing item *n* must see what items *1..n-1*
-wrote (ADR-0039, measured -- 30 of its 43 rejections are ordering, not the transaction).
+wrote (ADR-0039, measured -- 25 of its 38 rejections are ordering, not the transaction).
 
 **What is asserted here is that it invents nothing.** Every offset, width, record length and write
 mode below is read out of the design, which read it out of the COBOL. The renderer is given no way

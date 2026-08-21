@@ -496,7 +496,7 @@ def candidate_accounts(candidate):
 
 
 def test_the_wiring_produces_one_record_per_non_zero_rate(candidate_records):
-    """94 balance rows in, 50 records out -- the guard, running in generated Java.
+    """100 balance rows in, 50 records out -- the guard, running in generated Java.
 
     Checked before the field comparison so that a candidate of the wrong size reports as what it is
     rather than as fifty mismatched fields.

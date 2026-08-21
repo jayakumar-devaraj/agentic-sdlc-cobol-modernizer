@@ -787,3 +787,149 @@ representation quirks are already normalised. **The round-trip metric stays `1 o
 number is right and the oracle is wrong" is the claim that needs the strongest evidence, not the
 loudest assertion, and even four lines of it do not license moving a number that means *measured
 against COBOL*.
+### The overpunch converted, and both programs re-measured against a faithful oracle
+
+**The decision, not the change.** ADR-0043 located this fix and deliberately did not make it: the
+oracle's runtime cannot read the corpus's IBM sign overpunches, and correcting that would re-measure
+`CBACT04C`'s green `500 of 500` against a regenerated fixture. The trade was a known-green
+measurement for a faithful instrument, and it was taken because ADR-0028's whole case for trusting
+this oracle is that it is COBOL's own output — which, for these fields, it was not.
+
+**Reconnaissance first, per ADR-0044.** Every signed field in every corpus file was scanned before
+anything was written, rather than the one field the defect surfaced in:
+
+```
+=== acctdata.txt  15050 bytes  50 records  all 300
+  ACCT-CURR-BAL            plain-digit=0    overpunched=50   chars=[{]
+  ACCT-CREDIT-LIMIT        plain-digit=0    overpunched=50   chars=[{]
+  ACCT-CASH-CREDIT-LIMIT   plain-digit=0    overpunched=50   chars=[{]
+  ACCT-CURR-CYC-CREDIT     plain-digit=0    overpunched=50   chars=[{]
+  ACCT-CURR-CYC-DEBIT      plain-digit=0    overpunched=50   chars=[{]
+=== tcatbal.txt   2599 bytes  50 records  all 50
+  TRAN-CAT-BAL             plain-digit=0    overpunched=50   chars=[{]
+=== discgrp.txt   2601 bytes  51 records  all 50
+  DIS-INT-RATE             plain-digit=0    overpunched=51   chars=[{]
+=== dailytran.txt 105300 bytes 300 records all 350
+  DALYTRAN-AMT             plain-digit=0    overpunched=300  chars=[ABCDEFGHIJKLMNOPQR{}]
+```
+
+`{` is `+0`, the one overpunch where the lossy reading and the correct one agree. **Three of the four
+files needed nothing, and that is measured rather than assumed** — the previous claim that
+`CBACT04C` was unaffected was true, but the test asserting it read the wrong byte (below).
+
+**The target table, asked of the compiler** (`tools/cobol-oracle/SIGNTEST.cbl`, same image and
+dialect). Both halves, because they are not symmetric:
+
+```
+(a) what this runtime WRITES -- negative
+    01 raw=[0000000000q] last=[q] ord=113 val=        -0.01
+    ...
+    09 raw=[0000000000y] last=[y] ord=121 val=        -0.09
+    00 raw=[00000000000] last=[0] ord=048 val=         0.00     <- never writes a negative zero
+(b) what this runtime READS, on 0000009190 + byte
+    last=[p] ->       -919.00
+    last=[0] ->        919.00
+```
+
+It writes plain digits for positives and `q`–`y` for −1..−9, and never emits `p` because `COMPUTE`
+collapses −0 to +0 before the store. It **reads** `p` as −0 regardless. That asymmetry decided one
+mapping: the corpus's `}` is −0, and half (a) alone would have argued for mapping it to `0`, which
+reads back as **+919.00** where the corpus means −919.00.
+
+**The conversion is bidirectional.** `SIGNCONV` converts `DALYTRAN-AMT` on the way in, after
+`DALYCONV` frames the records; `SIGNBACK` converts every output back, so the oracle directory is in
+the corpus's representation and GnuCOBOL's own sign bytes never leave the container. The reason for
+the second half is that `tcatbal-posted.dat` and `acctdata-stage1.dat` are **inputs to the generated
+Java** — leaving them in the runtime's encoding would have taught `CobolRecord.number` a test
+harness's representation, inside every migrated program this platform ships.
+
+**Command**:
+
+```
+docker run --rm -v <repo>/tests/fixtures/tenant_repo_sample/app:/src:ro \
+                -v <repo>/tools/cobol-oracle:/co:ro -v <out>:/out \
+                cobol-oracle:gnucobol3 sh /co/run-oracle.sh
+```
+
+**Real output**, every count asserted by the script rather than displayed:
+
+```
+--- sign-position fingerprint of the corpus ---
+sign fingerprint OK
+DALYTRAN signs converted:    300
+DALYTRAN signs negative:      50
+TRANSACTIONS PROCESSED :000000300
+TRANSACTIONS REJECTED  :000000038
+SIGNBACK TRN records:    262   negatives:  50
+SIGNBACK TCB records:    100   negatives:  50
+SIGNBACK ACC records:     50   negatives:  53   (stage 1)
+SIGNBACK ACC records:     50   negatives:   4   (stage 2)
+TCATBALF unloaded:       100
+```
+
+**What moved, and every one of them moved toward what the generated pipeline already produced:**
+
+| | before | after |
+|---|---|---|
+| daily transactions rejected | 43 | **38** |
+| transaction master records | 257 | **262** |
+| `TCATBAL` rows after posting | 94 | **100** |
+| rows `CBTRN02C` creates | 44 | **50** |
+| `CBTRN02C` exit code | 4 | **0** |
+
+The exit code is worth its own line: `run-oracle.sh` allowed 4 explicitly because the program
+returned it while completing normally and the meaning was not established. With faithful amounts it
+returns 0. **The warning code was itself a symptom.**
+
+**The three refusals were shown to fire, on deliberately damaged input** — a corpus with `Z` in one
+sign position:
+
+```
+ABORT: /src/data/ASCII/dailytran.txt byte 143 holds [ABCDEFGHIJKLMNOPQRZ{}],
+       expected [ABCDEFGHIJKLMNOPQR{}]                      <- guard, before anything is produced
+ABORT: SIGNCONV record 000001 carries [Z] in the sign position, which is not an IBM overpunch
+signconv exit=16, output file 0 bytes                       <- reached by bypassing the guard
+ABORT: SB_SHAPE is [XXX], expected ACC, TCB or TRN
+```
+
+**`CBACT04C` was re-verified first**, which was the condition on taking this at all:
+
+```
+$ pytest tests/system/test_hand_written_round_trip.py -q -s
+round trip: 500 of 500 fields matched; 3 excluded by decision
+account half: 597 of 600 fields matched; 0 excluded by decision
+8 passed, 1 skipped in 57.42s
+```
+
+**`500 of 500` stands. The account half moved 598 → 597, and the cause is the same single one.**
+`1050-UPDATE-ACCOUNT` writes three fields and its account-break post sits in an unreachable `ELSE`,
+so the last account keeps them all. Two of the three used to differ; the third matched because the
+oracle's cycle total for that account happened to be zero. With the corpus's real amounts it is not,
+so the divergence now shows in every field it can reach. The guard that pins this is unchanged and
+still passes: every mismatch on that one record, every field in that paragraph's write set, and the
+balance differing by exactly the uncredited interest.
+
+**`CBTRN02C` now agrees exactly:**
+
+```
+$ pytest tests/system/test_cbtrn02c_round_trip.py -q
+6 passed in 41.09s
+```
+
+262 of the oracle's 262 transactions, **every amount equal by value**, 100 balance rows against the
+oracle's 100, and the account file exactly. Before this change the same run produced 262 and 100
+against an oracle holding 257 and 94, with seven decisions differing. **The pipeline did not move.**
+
+**A near-miss found while re-checking the claim.** `test_cbact04c_is_not_affected_by_it` asserted
+that `tcatbal.txt`'s balances *"end in a plain 0 and are not overpunched at all"* — and passed,
+because it sliced `line[17:29]`: twelve bytes for an eleven-byte `PIC S9(09)V99`. It was reading the
+`FILLER` after the field. Every one of those balances ends in `{`. The conclusion was right and the
+evidence for it was not, which matters because that check was cited for `500 of 500`. Corrected, and
+widened from three signed account fields to the five `CVACT01Y` actually declares.
+
+**Why the metric stays `1 of 4`.** `CBTRN02C`'s transactions are compared on record identity and
+`TRAN-AMT`, not field-for-field at full declared width the way `CBACT04C`'s are. Two of
+`CBACT04C`'s three ADR-0026 exclusions do not transfer — `CBTRN02C` copies `TRAN-ID` and
+`TRAN-ORIG-TS` straight from its input, so inheriting them would excuse fields this program
+reproduces exactly. The count moves when that comparison exists, and not for a number that looks
+good without it.

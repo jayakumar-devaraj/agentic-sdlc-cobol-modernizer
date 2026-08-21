@@ -6,6 +6,11 @@
 [ADR-0037](0037-a-file-written-both-ways-renders-as-an-upsert.md), by rendering `CBTRN02C`'s five
 write targets. Four render; this is the fifth.
 
+**Counts superseded in part by [ADR-0047](0047-the-corpus-sign-representation-is-converted-inside-the-oracle-pipeline.md)** (2026-08-21). The corpus produces **38**
+rejects, not the 43 this record cites: five of those rejections were decided on amounts missing a
+digit. The scoping decision is unchanged — a real output of the program is still a real output at
+38 — and nothing else here depends on the number.
+
 ## Context
 
 `CBTRN02C` writes rejected daily transactions to `DALYREJS-FILE`:

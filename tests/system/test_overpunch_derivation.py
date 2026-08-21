@@ -1,10 +1,14 @@
 """What a trailing sign overpunch is worth, derived by hand and then checked against the runtime.
 
-**Why this exists.** `CBTRN02C`'s round trip disagrees with its oracle on seven decisions, and every
-one of them traces to a `DALYTRAN-AMT` whose final byte is an overpunch. Deciding which side is
-right is a question about a *number*, so it gets ADR-0021's treatment: derive the answer from the
+**Why this exists.** `CBTRN02C`'s round trip once disagreed with its oracle on seven decisions, and
+every one of them traced to a `DALYTRAN-AMT` whose final byte is an overpunch. Deciding which side
+was right is a question about a *number*, so it got ADR-0021's treatment: derive the answer from the
 source and the standard by hand, write the literals down, and make the runtime match them -- never
-the reverse.
+the reverse. The derivation won, and ADR-0047 converted the corpus inside the oracle pipeline so the
+fixture carries the amounts the corpus actually holds.
+
+**The literals below did not change when that happened**, and that is the point of keeping them:
+they were written before the fix and they are what the fix was measured against.
 
 **The literals below are hand-written, not computed.** That is the whole point. Deriving them with
 the same decoder the test then exercises would compare two renderings of one interpretation -- the
@@ -104,15 +108,18 @@ def test_the_corpus_corroborates_the_table_from_its_own_construction():
         assert raw[-2] == carried, f"{raw} breaks the repeated-digit pattern"
 
 
-def test_the_oracle_disagrees_with_the_derivation_and_the_disagreement_is_the_lost_digit():
-    """`transact-stage1.dat` holds the same amounts with the overpunch byte replaced by `0`.
+def test_the_oracle_now_reproduces_every_posted_amount_exactly():
+    """**This test replaced its own opposite**, and the pair is the record worth keeping.
 
-    Not a formatting difference on the way out: ADR-0043's compiler probe shows the same value
-    arriving *into* GnuCOBOL's arithmetic, and an account whose single posted transaction was
-    `0000000294D` ends the run with a cycle-credit total of 29.40 rather than 29.44.
+    Until ADR-0047 this module asserted that `transact-stage1.dat` held every posted amount with the
+    overpunch byte replaced by `0` -- that `0000005047G`, which is 504.77, came back as 504.70. That
+    assertion passed, because it was true: the oracle's runtime could not read the corpus's signs.
+    Converting them in the oracle pipeline is what makes the opposite true, and the old assertion
+    fails against the fixture this one passes against.
 
-    Asserted here so the oracle's own limits are a checked fact rather than a note: whatever else
-    changes, this file is not evidence about `TRAN-AMT`.
+    **Compared by value, not by bytes** (ADR-0029). The corpus writes a positive amount with a
+    `{`-`I` overpunch and the oracle writes plain digits; both mean the same number, and requiring
+    the bytes to match would be asserting a representation neither program promises.
     """
     daily = {
         line[0:16]: line[132:143]
@@ -122,18 +129,32 @@ def test_the_oracle_disagrees_with_the_derivation_and_the_disagreement_is_the_lo
     raw = (ORACLE / "transact-stage1.dat").read_bytes().decode("latin-1")
     written = {raw[i : i + 16]: raw[i + 132 : i + 143] for i in range(0, len(raw), 350)}
 
-    carrying_a_digit = [
-        tran_id
-        for tran_id, source in daily.items()
-        if tran_id in written and source[-1] not in "{}0123456789"
-    ]
-    assert len(carrying_a_digit) > 200
+    posted = {t: source for t, source in daily.items() if t in written}
+    assert len(posted) == 262, "every record in the master traces to a daily transaction"
 
-    for tran_id in carrying_a_digit:
-        source = daily[tran_id]
-        assert written[tran_id] == source[:-1] + "0", (
-            "the oracle kept the leading digits and zeroed the one the overpunch carried"
-        )
-        assert decode_zoned_decimal(written[tran_id], scale=2, signed=True) != decode_zoned_decimal(
+    carrying_a_digit = [t for t, source in posted.items() if source[-1] not in "{}"]
+    assert len(carrying_a_digit) > 200, (
+        "most posted amounts end in an overpunch carrying 1-9, so this is the common case rather "
+        "than an edge of the corpus"
+    )
+
+    for tran_id, source in posted.items():
+        assert decode_zoned_decimal(written[tran_id], scale=2, signed=True) == decode_zoned_decimal(
             source, scale=2, signed=True
-        ), "so the value it recorded is not the value the corpus holds"
+        ), f"{tran_id}: oracle holds {written[tran_id]!r} for a corpus amount of {source!r}"
+
+
+def test_that_check_still_fails_against_the_loss_it_was_written_for():
+    """Shown to fail before it is believed, on the exact damage the old fixture carried.
+
+    Without this, the test above would pass just as happily against a comparison that could not tell
+    504.77 from 504.70 -- and that is the one distinction it exists to make.
+    """
+    negatives = [raw for raw, _ in DERIVED if raw[-1] in "}JKLMNOPQR"]
+    assert negatives, "the corpus's negative half is what the loss destroyed most completely"
+
+    for raw in negatives:
+        damaged = raw[:-1] + "0"
+        assert decode_zoned_decimal(damaged, scale=2, signed=True) != decode_zoned_decimal(
+            raw, scale=2, signed=True
+        ), f"{raw} and its overpunch-zeroed form must not compare equal"
