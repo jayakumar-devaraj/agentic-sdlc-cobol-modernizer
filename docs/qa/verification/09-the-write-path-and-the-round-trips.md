@@ -637,3 +637,52 @@ that can leave it rewritten.
 SEQUENTIAL`, so the oracle is in **key order**. A rendered writer that appends records as it
 produces them emits the same records in a different order. That is ADR-0037's stated open question,
 and this makes the premise it rests on a checked fact rather than an assumption.
+
+### `CBTRN02C` decides what to accept from state it is writing, and the corpus says by how much
+
+**Why this was measured before anything was generated.** With the write modes fixed (ADR-0037) and
+the transaction master captured, the next step would have been to declare this program's steps and
+render them. This measurement is what says whether such a job could reproduce the program — taken
+first, because the answer changes what is worth building.
+
+**The mechanism, read off the source.** `1500-B-LOOKUP-ACCT` computes
+`ACCT-CURR-CYC-CREDIT - ACCT-CURR-CYC-DEBIT + DALYTRAN-AMT` against `ACCT-CREDIT-LIMIT`, and those
+cycle fields are what `2800-UPDATE-ACCOUNT-REC` `ADD`s to and `REWRITE`s for every accepted
+transaction. The decision for transaction *n* reads what *1..n-1* wrote. `2700-UPDATE-TCATBAL` is
+the same shape against `TCATBAL`, which is also where ADR-0037's `upsert` came from.
+
+**The proof uses committed artifacts, not a replay of the program.** `transact-stage1.dat` holds
+exactly the transactions `CBTRN02C` wrote, each carrying its `DALYTRAN-ID`, so the rejected set is
+*known* rather than modelled. Each rejected transaction was then judged the way a stateless
+processor would have to judge it — on its own, against the account state the job started from:
+
+```
+daily transactions in the corpus                                  300
+written by CBTRN02C (transact-stage1.dat)                         257
+rejected                                                           43   all reason 0102 OVERLIMIT
+rejected, yet passing the limit check against the INITIAL state    30
+accepted, yet failing that check                                    0
+```
+
+**A stateless implementation therefore writes 287 records where the program writes 257** — and every
+one of the 287 is individually correct. A field-level differential sees nothing; only the count
+does, which is ADR-0037's blindness one level up.
+
+The error runs one way only, and that is asserted rather than assumed: every accumulation here moves
+the projected balance toward the limit, so ordering can turn an acceptance into a rejection and
+never the reverse. A stateless run is a strict superset. If that assertion ever fails, the corpus has
+gained a case where the two disagree in both directions and this entry understates the problem.
+
+**What it rules out** is not a particular decomposition but every order-independent one: aggregation
+computes sums over a transaction set whose *membership* is what the ordering decides.
+
+**Verification**: `pytest tests/system/test_cbtrn02c_order_dependence.py -q` → **4 passed**,
+including a discrimination case — an acceptance check that accepted everything would satisfy the two
+central assertions without meaning anything, so the standalone check is shown to reject an
+impossible amount and accept an impossibly negative one.
+
+**Decision**: ADR-0039. The posting path is declared and refused by name via ADR-0023's
+`not_generated` reporting; the round trip stays `1 of 4` with a specific cause rather than a vague
+one. A mechanical check is deliberately not built — "reads a file it writes back" is true of
+`CBACT04C`'s account writer too, which is correct and shipped, and the distinguishing fact (can two
+input items reach the same written key) is not established by any parse here.

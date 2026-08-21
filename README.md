@@ -95,7 +95,11 @@ would have made the comparison green by encoding a bug, and is refused on the re
 
 **Still true.** Nothing has been written to the real `card-service` repository; the reachable
 maximum is `2 of 4` (G17, `docs/adr/0035`), since `CBCUS01C` and `CBACT01C` contribute a read and a
-print; and generating a stateful control-break writer is out of scope. The round trip found a real
+print; and generating a stateful control-break writer is out of scope. **And `2 of 4` is not
+reachable by generating more of `CBTRN02C`** (`docs/adr/0039`): its acceptance decision reads
+account state the job itself writes, so 30 of its 43 rejections are caused by ordering rather than
+by the transaction. A stateless implementation writes **287** records where the program writes 257,
+each of them individually correct — measured against the program's own output, not argued. The round trip found a real
 defect on its first pass — `TRAN-SOURCE` is `PIC X(10)` and the body wrote a bare `"System"`,
 disagreeing with COBOL on fifty records while every amount matched.
 
