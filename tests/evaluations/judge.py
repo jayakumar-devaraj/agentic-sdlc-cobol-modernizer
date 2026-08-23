@@ -22,6 +22,8 @@ a test.
 from __future__ import annotations
 
 import json
+import math
+import statistics
 from collections.abc import Callable
 from dataclasses import dataclass
 
@@ -441,3 +443,147 @@ class BenchmarkSummary:
                     f"{result.rationales.get(key, '(no rationale)')}"
                 )
         return "\n".join(blocks) if blocks else "(no disagreements)"
+#: How many times a benchmark is run before its numbers are believed. See `SampledBenchmark`.
+#:
+#: Three rather than one because one is what produced the defect this exists to fix, and three is the
+#: smallest *n* for which "every run cleared the bar" is a different statement from "the run cleared
+#: the bar". Higher is better evidence and costs linearly -- each sample is one judge call per case,
+#: per candidate model.
+DEFAULT_SAMPLES = 3
+
+
+@dataclass(frozen=True)
+class Spread:
+    """One metric observed across *n* runs, reported as a distribution rather than a number.
+
+    **This type exists because a single float was the defect.** Pillar 22 crossed to ✅ at audit
+    R2.23 on a run scoring 6 of 6 at a 0.00 false-positive rate, and was withdrawn at R2.27 when the
+    same judge, same corpus, same prompt scored 4 of 6 at 0.50. Neither run was wrong; the *summary*
+    was, because it had no way to say how much of what it reported was the instrument moving.
+    """
+
+    values: tuple[float, ...]
+
+    @property
+    def mean(self) -> float:
+        return float("nan") if not self.values else statistics.fmean(self.values)
+
+    @property
+    def lowest(self) -> float:
+        return float("nan") if not self.values else min(self.values)
+
+    @property
+    def highest(self) -> float:
+        return float("nan") if not self.values else max(self.values)
+
+    @property
+    def stdev(self) -> float:
+        """Sample standard deviation. `0.0` for a single run -- **not** `nan`.
+
+        A lone run really does have no observed spread, and reporting `nan` there would make an
+        un-sampled benchmark indistinguishable from one whose metric could not be computed. What
+        stops a single run being read as *reproducible* is `is_constant` requiring more than one
+        sample, not an arithmetic quirk.
+        """
+        if len(self.values) < 2:
+            return 0.0
+        if any(math.isnan(value) for value in self.values):
+            return float("nan")
+        return statistics.stdev(self.values)
+
+    @property
+    def is_constant(self) -> bool:
+        """Every run agreed, **and there was more than one run.**
+
+        The second clause is the whole point: `n=1` can never be evidence of reproducibility, and a
+        property that returned `True` for it would let the original defect back in through the door
+        this type was added to close.
+        """
+        return len(self.values) > 1 and len(set(self.values)) == 1
+
+    def render(self) -> str:
+        if not self.values:
+            return "(no runs)"
+        spread = "" if self.is_constant else f"  (min {self.lowest:.2f}, max {self.highest:.2f})"
+        return f"{self.mean:.2f} ± {self.stdev:.2f}{spread}"
+
+
+@dataclass(frozen=True)
+class SampledBenchmark:
+    """*n* runs of the same benchmark over the same corpus, reported as a distribution.
+
+    **What ADR-0045 decided and this implements.** The harness was never wrong about any single run;
+    it reported one sample of a non-deterministic instrument as though it were a measurement. This
+    turns a judge run into *n* runs and reports the spread, so "the judge detects defects" becomes a
+    claim with an error bar on it.
+
+    **`unstable_cases` is the part worth reading.** A rate that moves tells you the instrument is
+    noisy; it does not tell you *where*. R2.27's 6-of-6-then-4-of-6 could have been two different
+    cases flipping, or one case flipping twice, and nothing recorded which -- so the finding could
+    not be acted on, only noted. Per-case stability is what makes the next such run diagnosable.
+    """
+
+    samples: tuple[BenchmarkSummary, ...]
+    model: str = ""
+
+    def detection(self, *, ground: Ground | None = None) -> Spread:
+        return Spread(tuple(s.detection_rate(ground=ground) for s in self.samples))
+
+    def false_positives(self, *, ground: Ground | None = None) -> Spread:
+        return Spread(tuple(s.false_positive_rate(ground=ground) for s in self.samples))
+
+    def unstable_cases(self) -> dict[str, tuple[int, int]]:
+        """Cases the judge did not score the same way every time: name -> (correct runs, total).
+
+        Only genuinely unstable cases appear. A case wrong in every run is *consistent* and belongs
+        in `render_disagreements` -- it is a finding about the judge or the corpus, not about
+        reproducibility, and mixing the two would hide a steady defect inside a noise report.
+        """
+        if not self.samples:
+            return {}
+        unstable: dict[str, tuple[int, int]] = {}
+        for name in (result.case.name for result in self.samples[0].results):
+            outcomes = [
+                result.correct
+                for sample in self.samples
+                for result in sample.results
+                if result.case.name == name
+            ]
+            correct = sum(1 for outcome in outcomes if outcome)
+            if 0 < correct < len(outcomes):
+                unstable[name] = (correct, len(outcomes))
+        return unstable
+
+    @property
+    def is_reproducible(self) -> bool:
+        """Every run agreed on every case. **Stability, not eligibility** -- they are not the same.
+
+        A judge that passes everything is perfectly reproducible and completely useless; its
+        detection rate is what disqualifies it, on every one of those identical runs. Folding the
+        two together would give a metric that cannot tell a noisy judge from a bad one, and that
+        pair is exactly what R2.27 could not separate.
+
+        So this answers *"can the numbers be trusted?"* and the bars answer *"are they good enough?"*
+        -- and the bars are applied per run rather than to the mean, because a judge that catches
+        every defect two runs in three has a mean of 0.67 and an eligibility of none. The run that
+        matters is the one nobody is watching.
+        """
+        return len(self.samples) > 1 and not self.unstable_cases()
+
+    def render(self) -> str:
+        """The distribution table a verification entry quotes, with the per-case detail under it."""
+        lines = [
+            f"| metric | across {len(self.samples)} run(s) |",
+            "|---|---|",
+            f"| oracle-grounded detection | {self.detection(ground=Ground.ORACLE).render()} |",
+            f"| source-grounded detection | {self.detection(ground=Ground.SOURCE).render()} |",
+            f"| false-positive rate | {self.false_positives().render()} |",
+            f"| reproducible | {'yes' if self.is_reproducible else 'NO'} |",
+        ]
+        unstable = self.unstable_cases()
+        if unstable:
+            lines.append("")
+            lines.append("**Unstable across runs** — the same input scored differently:")
+            for name, (correct, total) in sorted(unstable.items()):
+                lines.append(f"- `{name}`: correct in {correct} of {total} runs")
+        return "\n".join(lines)
