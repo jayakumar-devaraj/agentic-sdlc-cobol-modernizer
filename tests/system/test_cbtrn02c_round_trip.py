@@ -31,6 +31,7 @@ from pathlib import Path
 
 import pytest
 
+from cobol_modernizer.core.model_client import RunBudget, collect_usage
 from cobol_modernizer.core.contracts import (
     BatchJobDesign,
     BatchStepDesign,
@@ -329,25 +330,22 @@ def _render_wiring_into(project: Path, design: UnifiedDesign) -> None:
     )
 
 
-@pytest.fixture(scope="module")
-def built(tmp_path_factory, design, entry):
-    """Generate, wire, stage the corpus, and build -- once, because Maven is the cost."""
-    project = tmp_path_factory.mktemp("cbtrn02c") / "target-project"
+def generate_wire_build_and_run(project: Path, design, entry, **generate_kwargs):
+    """Generate the processor, add the wiring, stage the corpus, build and run.
+
+    Shared by the scripted path and the live one so that **the only difference between them is who
+    wrote the method body**. If the wiring, the staging or the build differed too, a disagreement
+    between the two runs would not be attributable to the body -- which is the one thing the live
+    run exists to measure. Same shape as `test_hand_written_round_trip.wire_build_and_run`, and for
+    the same reason.
+    """
     project.parent.mkdir(parents=True, exist_ok=True)
 
     document = build_design_document([entry], unified_design=design)
     design_path = project.parent / "design.json"
     design_path.write_text(document.model_dump_json(indent=2), encoding="utf-8")
 
-    outcome = run_generate(
-        design_path,
-        FIXTURE_ROOT,
-        project,
-        author=_scripted_author,
-        advise=lambda routing, s, u: json.dumps(
-            {"repairable": False, "reason": "scripted", "instruction": ""}
-        ),
-    )
+    outcome = run_generate(design_path, FIXTURE_ROOT, project, **generate_kwargs)
     assert outcome.succeeded, f"generation failed: {[o.reason for o in outcome.blocked]}"
 
     _render_wiring_into(project, design)
@@ -360,6 +358,21 @@ def built(tmp_path_factory, design, entry):
 
     result = compile_project(project, goal="verify")
     assert result.succeeded, "\n".join(d.message for d in result.diagnostics[:10])
+    return project, outcome
+
+
+@pytest.fixture(scope="module")
+def built(tmp_path_factory, design, entry):
+    """Generate, wire, stage the corpus, and build -- once, because Maven is the cost."""
+    project, _ = generate_wire_build_and_run(
+        tmp_path_factory.mktemp("cbtrn02c") / "target-project",
+        design,
+        entry,
+        author=_scripted_author,
+        advise=lambda routing, s, u: json.dumps(
+            {"repairable": False, "reason": "scripted", "instruction": ""}
+        ),
+    )
     return project
 
 
@@ -749,3 +762,68 @@ def test_every_in_scope_file_this_program_writes_is_compared(built):
         "ADR-0038 scopes the reject file out of generation; if it starts being written it needs a "
         "comparison of its own before the round-trip count can include this program"
     )
+# --- the same round trip, with a model writing the body -------------------------------------------
+
+
+@pytest.mark.live_claude_cli
+def test_a_model_authored_run_is_compared_against_the_same_oracle(tmp_path, design, entry):
+    """**What `2 of 4` rests on**: the body a real model wrote, against COBOL's own output.
+
+    Every comparison above runs on a *scripted* body -- `_BODY`, transcribed from
+    `1500-B-LOOKUP-ACCT` and `2000-POST-TRANSACTION` statement for statement. That measures the
+    rendered wiring and the contract facts behind it, which is what it was written to measure. It
+    does not measure whether this pipeline's model writes a body that reproduces COBOL, and the
+    round-trip count is a claim about *generated logic*.
+
+    `CBACT04C` has carried both halves since ADR-0030. This is the second, for the second program,
+    and it exists because counting `CBTRN02C` without it would have made the two halves of `2 of 4`
+    mean different things -- the shape of claim `CLAUDE.md`'s "closes against a named instance" rule
+    exists to catch.
+
+    **Costs real money**, so it is skipped unless `COBOL_MODERNIZER_RUN_LIVE_CLI_TESTS=1`. The
+    budget is a ceiling rather than a hope: one processor step and its heal attempts, and
+    `RunBudgetExceededError` stops the run rather than letting a repair loop spend without bound.
+
+    A failure here is a **finding, not a broken test.** If a model-authored body disagrees with
+    COBOL, the mismatch list names the field and both values.
+    """
+    project = tmp_path / "live" / "target-project"
+    with collect_usage(RunBudget(max_model_calls=8)) as usage:
+        built, outcome = generate_wire_build_and_run(project, design, entry)
+
+    transactions = compare(
+        _in_key_order(parse_fixed_records(built / CANDIDATE_TRANSACTIONS, TRAN_LAYOUT, 350)),
+        _in_key_order(parse_fixed_records(_oracle("transact-stage1.dat"), TRAN_LAYOUT, 350)),
+        TRAN_LAYOUT,
+        CBTRN02C_EXCLUSIONS,
+    )
+    by_acct = lambda records: sorted(records, key=lambda record: record["ACCT-ID"].raw)
+    accounts = compare(
+        by_acct(parse_fixed_records(built / CANDIDATE_ACCOUNTS, ACCOUNT_LAYOUT, 300)),
+        by_acct(parse_fixed_records(_oracle("acctdata-stage1.dat"), ACCOUNT_LAYOUT, 300)),
+        ACCOUNT_LAYOUT,
+        {},
+    )
+    balances = compare(
+        sorted(parse_fixed_records(built / CANDIDATE_BALANCES, TCATBAL_LAYOUT, 50), key=_tcatbal_key),
+        sorted(parse_fixed_records(_oracle("tcatbal-posted.dat"), TCATBAL_LAYOUT, 50), key=_tcatbal_key),
+        TCATBAL_LAYOUT,
+        {},
+    )
+
+    authored = {step.step_name: step.attempts for step in outcome.compiled}
+    notes = [note for step in outcome.compiled for note in step.notes if note.strip()]
+    print(
+        f"\nlive CBTRN02C round trip, bodies model-authored, wiring hand-written:"
+        f"\n  transactions: {transactions.render()}"
+        f"\n  accounts:     {accounts.render()}"
+        f"\n  balances:     {balances.render()}"
+        f"\n  steps and attempts: {authored}"
+        f"\n  {usage.model_calls} model call(s), {usage.input_tokens} in / {usage.total_tokens} "
+        f"tokens, notional cost {usage.notional_cost_usd}"
+    )
+    for note in notes:
+        print(f"  model note: {note}")
+
+    for result in (transactions, accounts, balances):
+        assert result.passed, "\n".join(result.mismatches[:10])
