@@ -668,3 +668,66 @@ def test_rates_over_a_partial_answer_set_are_flagged_in_the_report():
     assert "Malformed responses" in rendered
     assert "not a measurement of this candidate" in rendered
     assert "hardest_case" in rendered
+# --- Verdict churn: measured from the first real sampled run --------------------------------------
+
+
+def test_a_stable_score_can_hide_an_unstable_judge():
+    """**The finding the first billed sampled run produced, pinned as a test.**
+
+    Opus 5 returned `1.00 / 0.67 / 0.00` on all three runs with no unstable case -- and its raw
+    verdicts moved anyway. It flagged `fixed_width_text` on `interest_rounds` in run 1, not in
+    run 2, and on `interest_faithful` in run 3. Every one of those runs scored identically, because a
+    case is `correct` as long as its defect was caught and a criterion the case genuinely violates
+    is excluded from its false positives.
+
+    So *"the numbers repeat"* and *"the judge says the same thing"* are different claims. The first
+    is what pillar 22's criterion needs and what this harness bars on. The second is the leading
+    indicator: churn is what crosses a threshold later and moves a rate, which is the most likely
+    mechanism behind R2.23's 6-of-6 becoming R2.27's 4-of-6.
+    """
+    case = CASES[1]
+    extra = next(c.id for c in CRITERIA if c.id != case.failing_criterion)
+
+    def _run(with_extra: bool) -> BenchmarkSummary:
+        flags = {case.failing_criterion: "fail"}
+        if with_extra:
+            flags[extra] = "fail"
+        return BenchmarkSummary(
+            results=(
+                score_case(case, parse_judge_response(_response(**flags))),
+            ),
+            model="stub",
+        )
+
+    sampled = SampledBenchmark(samples=(_run(True), _run(False)), model="stub")
+
+    churn = sampled.unstable_verdicts()
+    assert case.name in churn, "the judge answered differently and the harness has to notice"
+    assert len(set(churn[case.name])) == 2
+
+    rendered = sampled.render()
+    assert "Verdict churn" in rendered
+    assert "recorded rather than barred" in rendered.lower()
+
+
+def test_verdict_churn_is_reported_but_does_not_fail_reproducibility():
+    """Barring on churn would fail a judge whose reported numbers are perfectly stable.
+
+    That is the wrong trade: the rates are what get quoted, and a harness that refused a judge for
+    varying on a criterion its scoring already accounts for would be unusable. The churn is recorded
+    so the *next* surprise is diagnosable, not so this one is punished.
+    """
+    case = CASES[1]
+    extra = next(c.id for c in CRITERIA if c.id != case.failing_criterion)
+
+    def _run(with_extra: bool) -> BenchmarkSummary:
+        flags = {case.failing_criterion: "fail"}
+        if with_extra:
+            flags[extra] = "fail"
+        return BenchmarkSummary(
+            results=(score_case(case, parse_judge_response(_response(**flags))),), model="stub"
+        )
+
+    sampled = SampledBenchmark(samples=(_run(True), _run(True)), model="stub")
+    assert sampled.unstable_verdicts() == {}, "identical verdicts are not churn"
+    assert sampled.is_reproducible

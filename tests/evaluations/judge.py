@@ -598,6 +598,42 @@ class SampledBenchmark:
     def answered_everything(self) -> bool:
         return all(sample.answered_everything for sample in self.samples)
 
+    def unstable_verdicts(self) -> dict[str, tuple[frozenset[str], ...]]:
+        """Cases whose **raw verdicts** moved between runs, even where the score did not.
+
+        **Reported, never barred, and the distinction is the point.** `unstable_cases` asks whether
+        the harness's *numbers* repeat, which is what pillar 22's criterion is about and what gets
+        quoted. This asks the finer question underneath: did the judge actually say the same thing?
+
+        The first real sampled run showed they are not the same question. Opus 5 returned
+        `1.00 / 0.67 / 0.00` on all three runs with no unstable case — and flagged `fixed_width_text`
+        on `interest_rounds` in run 1, not in run 2, and on `interest_faithful` in run 3. The scored
+        outcome absorbed all of it, because a criterion a case genuinely violates is excluded from
+        its false positives and a case is `correct` as long as the defect was caught.
+
+        So this is a **leading indicator**: churn here is what eventually crosses a threshold and
+        moves a rate, which is the most likely mechanism behind R2.23's 6-of-6 becoming R2.27's
+        4-of-6. Barring on it would be wrong — it would fail a judge whose reported numbers are
+        perfectly stable — but leaving it unmeasured is how the last surprise stayed a surprise.
+        """
+        if not self.samples:
+            return {}
+        churn: dict[str, tuple[frozenset[str], ...]] = {}
+        for name in (result.case.name for result in self.samples[0].results):
+            observed = [
+                frozenset(
+                    criterion
+                    for criterion, verdict in result.verdicts.items()
+                    if verdict is Verdict.FAIL
+                )
+                for sample in self.samples
+                for result in sample.results
+                if result.case.name == name
+            ]
+            if len(set(observed)) > 1:
+                churn[name] = tuple(observed)
+        return churn
+
     def unstable_cases(self) -> dict[str, tuple[int, int]]:
         """Cases the judge did not score the same way every time: name -> (correct runs, total).
 
@@ -662,4 +698,16 @@ class SampledBenchmark:
             lines.append("**Unstable across runs** — the same input scored differently:")
             for name, (correct, total) in sorted(unstable.items()):
                 lines.append(f"- `{name}`: correct in {correct} of {total} runs")
+        churn = self.unstable_verdicts()
+        if churn:
+            lines.append("")
+            lines.append(
+                "**Verdict churn** — the score was stable, the judge's answer was not. Recorded "
+                "rather than barred: this is what crosses a threshold later and moves a rate."
+            )
+            for name, observed in sorted(churn.items()):
+                seen = " | ".join(
+                    ", ".join(sorted(verdicts)) or "(none)" for verdicts in observed
+                )
+                lines.append(f"- `{name}`: {seen}")
         return "\n".join(lines)
