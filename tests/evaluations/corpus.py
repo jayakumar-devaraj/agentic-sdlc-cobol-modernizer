@@ -19,6 +19,14 @@ from enum import Enum
 
 from cobol_modernizer.core.contracts import BatchStepDesign
 
+# `CBTRN02C`'s bodies and its step, imported for the same reason: `_POSTING_BODY` is the exact string
+# `test_cbtrn02c_round_trip` builds and runs under real Maven, and `_POSTING_UNGUARDED` is that body
+# minus one `if`. Re-typing either here would let the corpus drift from the run that grounds it.
+from tests.system.test_cbtrn02c_round_trip import _BODY as _POSTING_BODY
+from tests.system.test_cbtrn02c_round_trip import _IMPORTS as _POSTING_IMPORTS
+from tests.system.test_cbtrn02c_round_trip import _UNGUARDED_BODY as _POSTING_UNGUARDED
+from tests.system.test_cbtrn02c_round_trip import STEP as POSTING_STEP
+
 # The real bodies, and the real steps they implement. See the module docstring on why these are
 # imported rather than restated.
 from tests.system.test_interest_equivalence import (
@@ -31,7 +39,17 @@ from tests.system.test_interest_equivalence import (
     STEP,
 )
 
+#: The program the original seven cases were built from, and the default for an `EvalCase`.
+#:
+#: **It is a default rather than the only value because a corpus of one program is not a corpus.**
+#: ADR-0044's rule is that a capability closes against a *second instance*, and until ADR-0049 every
+#: case here derived from `CBACT04C` -- so the harness measured a judge on one program's idioms and
+#: reported it as a property of the judge.
 PROGRAM = "CBACT04C"
+
+#: The second program, added by ADR-0050. Its cases exercise idioms `CBACT04C` has none of: a guard
+#: that decides whether a record exists at all, a field no input supplies, and per-item state.
+POSTING_PROGRAM = "CBTRN02C"
 
 
 class Verdict(str, Enum):
@@ -236,6 +254,12 @@ DOWNSTREAM_BY_STEP: dict[str, str] = {
         "This step is terminal: the `Tran` it returns is the transaction record written to the "
         "output file as-is. No later step repopulates any of its fields."
     ),
+    "postTransaction": (
+        "This step is terminal and its output is routed by component: the `PostingResult` it returns "
+        "carries three records, and each is written to a different file as-is -- the transaction to "
+        "the master, the account back to the account file, the balance to TCATBAL. No later step "
+        "repopulates any field of any of them, and returning null writes none of the three."
+    ),
 }
 
 
@@ -267,6 +291,10 @@ class EvalCase:
     #: The specific evidence for `failing_criterion`, citable by a reviewer. For `ORACLE` cases this
     #: names the rows a real Maven run fails.
     evidence: str
+    #: Which tenant program this body translates. The judge is shown *that* program's COBOL, so a
+    #: case carrying the wrong one would be graded against source it has nothing to do with -- and
+    #: would look like a judge error rather than a corpus error.
+    program: str = PROGRAM
 
 
 CASES: tuple[EvalCase, ...] = (
@@ -384,6 +412,57 @@ CASES: tuple[EvalCase, ...] = (
             "TRAN-ID is `STRING PARM-DATE, WS-TRANID-SUFFIX` -- a job parameter and a per-run "
             "counter, neither reachable from a stateless processor (audit G26)"
         ),
+    ),
+    # --- the second instance (ADR-0050) ------------------------------------------------------------
+    #
+    # **Why a second program at all.** Everything above is `CBACT04C`, so the harness measured a
+    # judge against one program's idioms and reported it as a property of the judge. ADR-0044's rule
+    # is that a capability closes against a second instance, and ADR-0049 named this as what pillar
+    # 22 was left waiting on.
+    #
+    # **`CBTRN02C` is a different shape, not more of the same.** Its guard decides whether a record
+    # exists at all rather than what a field contains; its `TRAN-PROC-TS` is a field *no input
+    # supplies*, which the model authoring it identified unprompted; and it reads state its own
+    # writes produce. A judge that scores well on interest arithmetic has said nothing about any of
+    # that.
+    EvalCase(
+        name="posting_faithful",
+        step=POSTING_STEP,
+        body=_POSTING_BODY,
+        imports=tuple(_POSTING_IMPORTS),
+        failing_criterion=None,
+        # No impurity to declare. Unlike the interest bodies, this one builds no intermediate carrier
+        # with placeholder fields -- every field it sets is copied from an input at full width, which
+        # is exactly why the differential compares `TRAN-ID` and `TRAN-ORIG-TS` here (ADR-0048).
+        impure_criteria=(),
+        ground=Ground.ORACLE,
+        evidence=(
+            "the strongest faithful case in this corpus: under real Maven it matches CBTRN02C's own "
+            "output on **4,144 fields** -- 3144 of 3144 transaction fields, 600 of 600 account, 400 "
+            "of 400 balance, one exclusion (ADR-0048), by "
+            "test_the_transactions_match_the_oracle_field_for_field and its two siblings. Measured "
+            "identically with a model writing the body, by "
+            "test_a_model_authored_run_is_compared_against_the_same_oracle"
+        ),
+        program=POSTING_PROGRAM,
+    ),
+    EvalCase(
+        name="posting_unguarded",
+        step=POSTING_STEP,
+        body=_POSTING_UNGUARDED,
+        imports=tuple(_POSTING_IMPORTS),
+        failing_criterion="guard_applied",
+        impure_criteria=(),
+        ground=Ground.ORACLE,
+        evidence=(
+            "the faithful body minus `1500-B-LOOKUP-ACCT`'s credit-limit check, and nothing else. "
+            "Run under real Maven it writes **300 records against the oracle's 262** -- with no "
+            "credit-limit guard every daily transaction posts, because the expiry guard rejects "
+            "none on this corpus. Caught twice: the hand-written wiring's own run assertion fails "
+            "the build before the differential is even consulted "
+            "(test_the_oracle_catches_the_dropped_guard)"
+        ),
+        program=POSTING_PROGRAM,
     ),
 )
 

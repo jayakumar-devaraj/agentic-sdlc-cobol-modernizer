@@ -93,7 +93,14 @@ def sampled(request) -> SampledBenchmark:
     both Sonnets were for `spec_critic`.
     """
     model = request.param
-    source = resolve_program(FIXTURE_ROOT, "CBACT04C").source_text
+    # **Per case, not once.** The corpus spans two programs since ADR-0050, and a case graded against
+    # the wrong program's COBOL would read as a judge error when it is a harness error. Resolved once
+    # per program and reused, because the source is ~25k tokens and the prompt puts it behind the
+    # cache prefix.
+    sources = {
+        program: resolve_program(FIXTURE_ROOT, program).source_text
+        for program in sorted({case.program for case in CASES})
+    }
     adjudicate = adjudicator_for(model)
     # `collect_usage` so the instrument reports what it cost to run. An evaluation harness whose own
     # price is unknown is awkward in a repo whose § 4b argument is about cost per unit of review --
@@ -104,7 +111,9 @@ def sampled(request) -> SampledBenchmark:
             # `attempt_case` rather than `judge_case`: a candidate that cannot hold the response
             # contract is the most decisive thing this comparison can find, and aborting on it would
             # turn that finding into a stack trace and discard the calls already paid for.
-            outcomes = [attempt_case(case, source, adjudicate=adjudicate) for case in CASES]
+            outcomes = [
+                attempt_case(case, sources[case.program], adjudicate=adjudicate) for case in CASES
+            ]
             samples.append(
                 BenchmarkSummary(
                     results=tuple(o for o in outcomes if isinstance(o, CaseResult)),
