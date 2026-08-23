@@ -64,6 +64,14 @@ from cobol_modernizer.rendering.java_writer import render_item_writer, writer_cl
 from cobol_modernizer.tools.data_loader import decode_zoned_decimal
 from cobol_modernizer.tools.local_compiler import compile_project
 
+from tests.system.test_cobol_oracle_comparison import (
+    ACCOUNT_LAYOUT,
+    TRAN_LAYOUT,
+    FieldValue,
+    compare,
+    parse_fixed_records,
+)
+
 FIXTURE_ROOT = Path(__file__).resolve().parents[1] / "fixtures" / "tenant_repo_sample"
 HANDWRITTEN = Path(__file__).resolve().parents[1] / "fixtures" / "handwritten" / "CBTRN02C"
 CORPUS = FIXTURE_ROOT / "app" / "data" / "ASCII"
@@ -408,11 +416,10 @@ def test_the_transactions_now_agree_with_the_oracle_on_every_record_and_every_am
     asserted for `ours` while it was failing, and 100 is the balance-row count the test above
     asserted for the same reason. The oracle moved to meet them, because the oracle was wrong.
 
-    **What this is not.** It compares record identity and `TRAN-AMT`, not every field at full
-    declared width the way `test_hand_written_round_trip` compares `CBACT04C`. `2 of 4` needs that
-    comparison, and two of `CBACT04C`'s three ADR-0026 exclusions do not transfer -- `CBTRN02C`
-    copies `TRAN-ID` and `TRAN-ORIG-TS` straight from its input, so inheriting them here would
-    excuse fields this program reproduces exactly. The metric stays `1 of 4` until that is built.
+    **What this is.** Record identity and `TRAN-AMT` only. The full field-for-field comparison is
+    below (`test_the_transactions_match_the_oracle_field_for_field`) and subsumes the amounts; this
+    one is kept because it fails with a *diagnosis* -- which records are extra and which are missing
+    -- where a field comparison on mismatched sets reports only a count.
     """
     candidate = built / CANDIDATE_TRANSACTIONS
     oracle = _oracle("transact-stage1.dat")
@@ -519,3 +526,141 @@ def test_cbact04c_was_never_affected_by_it_and_here_is_the_corrected_reason():
         assert {line[lo : lo + 12][-1] for line in accounts} == {"{"}, (
             f"the signed field at offset {lo} is not uniformly positive zero"
         )
+# --- ADR-0029's differential, applied to this program ---------------------------------------------
+
+#: **One exclusion, not the three `CBACT04C` carries** -- and the difference is the whole point of
+#: pricing exclusions per program rather than inheriting them.
+#:
+#: `2000-POST-TRANSACTION` populates the transaction record with thirteen `MOVE`s from the daily
+#: transaction it is posting. Two of the fields `CBACT04C` cannot produce are, here, **straight
+#: copies of the input**:
+#:
+#:     MOVE DALYTRAN-ID      TO TRAN-ID          (CBTRN02C.cbl:425)
+#:     MOVE DALYTRAN-ORIG-TS TO TRAN-ORIG-TS     (CBTRN02C.cbl:436)
+#:
+#: `CBACT04C` excludes `TRAN-ID` because it `STRING`s one from a per-run counter and excludes
+#: `TRAN-ORIG-TS` because it reads the clock. Neither is true of this program, so inheriting those
+#: exclusions would excuse two fields it reproduces exactly -- which is the precise shape of
+#: exclusion creep ADR-0029 names as the way a differential goes toothless.
+#:
+#: `TRAN-PROC-TS` is the one that does transfer, and it transfers for the *original* reason rather
+#: than by precedent: `PERFORM Z-GET-DB2-FORMAT-TIMESTAMP` runs inside the per-transaction paragraph
+#: and that paragraph does `MOVE FUNCTION CURRENT-DATE TO COBOL-TS` (CBTRN02C.cbl:438, 693). COBOL
+#: reads the clock once per record; a batch processor is handed one instant per run.
+CBTRN02C_EXCLUSIONS: dict[str, str] = {
+    "TRAN-PROC-TS": (
+        "ADR-0026: 2000-POST-TRANSACTION performs Z-GET-DB2-FORMAT-TIMESTAMP per transaction and "
+        "that paragraph reads FUNCTION CURRENT-DATE (CBTRN02C.cbl:438, 693), where the generated "
+        "processor is handed one instant per run. The same divergence ADR-0026 accepted for "
+        "CBACT04C, established here from this program's own source rather than inherited."
+    ),
+}
+
+
+def _in_key_order(records: list[dict[str, FieldValue]]) -> list[dict[str, FieldValue]]:
+    """Sorted by `TRAN-ID`, because record *ordering* is framing and framing is out of scope.
+
+    The oracle is an indexed file unloaded in key order; the candidate is a sequential write in
+    arrival order. On this corpus the two coincide -- `dailytran.txt` is already `TRAN-ID`-sorted --
+    but relying on that would turn a future unsorted corpus into 3,144 mismatches that say nothing
+    about the logic.
+    """
+    return sorted(records, key=lambda record: record["TRAN-ID"].raw)
+
+
+def test_the_exclusion_is_earned_from_this_programs_source_not_inherited(built):
+    """The check that stops `CBACT04C`'s exclusions being copied across because they were there.
+
+    Asserts the *shape* of the list, not just its contents: exactly one field is excluded, it is
+    the timestamp COBOL reads per record, and the two fields this program copies straight from its
+    input are **not** in it. A future edit that widens this list fails here first.
+    """
+    assert set(CBTRN02C_EXCLUSIONS) == {"TRAN-PROC-TS"}
+    assert "TRAN-ID" not in CBTRN02C_EXCLUSIONS, "CBTRN02C.cbl:425 copies it from DALYTRAN-ID"
+    assert "TRAN-ORIG-TS" not in CBTRN02C_EXCLUSIONS, "CBTRN02C.cbl:436 copies it from the input"
+
+    source = (FIXTURE_ROOT / "app" / "cbl" / "CBTRN02C.cbl").read_text(encoding="latin-1")
+    assert "MOVE  DALYTRAN-ID            TO    TRAN-ID" in source
+    assert "MOVE  DALYTRAN-ORIG-TS       TO    TRAN-ORIG-TS" in source
+    assert "MOVE FUNCTION CURRENT-DATE TO COBOL-TS" in source, (
+        "the one exclusion rests on this line; if it goes, the exclusion goes with it"
+    )
+
+    reason = CBTRN02C_EXCLUSIONS["TRAN-PROC-TS"]
+    assert "ADR-" in reason, "an exclusion without a decision behind it is exclusion creep"
+
+
+def test_the_transactions_match_the_oracle_field_for_field(built):
+    """**The measurement `2 of 4` needs**: every field of every record, at full declared width.
+
+    Twelve of thirteen fields across 262 records. `TRAN-ID` and `TRAN-ORIG-TS` are compared here and
+    excluded for `CBACT04C`, so this is a *stricter* comparison than the one the round-trip count is
+    currently reported against, not a weaker one wearing the same name.
+    """
+    candidate = parse_fixed_records(built / CANDIDATE_TRANSACTIONS, TRAN_LAYOUT, 350)
+    oracle = parse_fixed_records(_oracle("transact-stage1.dat"), TRAN_LAYOUT, 350)
+
+    result = compare(
+        _in_key_order(candidate),
+        _in_key_order(oracle),
+        TRAN_LAYOUT,
+        CBTRN02C_EXCLUSIONS,
+    )
+    assert result.passed, "\n".join(result.mismatches[:10])
+    assert result.compared == 262 * (len(TRAN_LAYOUT) - len(CBTRN02C_EXCLUSIONS))
+    print(f"\nCBTRN02C transactions: {result.render()}")
+
+
+def test_the_transaction_comparison_would_catch_a_wrong_field(built):
+    """Shown to fail against the real candidate, not against a copy of the oracle.
+
+    Two mutations, because the two halves of `FieldValue.value` are different code paths: a numeric
+    field decoded through the overpunch table, and an alphanumeric compared at full declared width.
+    The second is the one that catches a body writing a bare "System" into a `PIC X(10)`.
+    """
+    candidate = _in_key_order(parse_fixed_records(built / CANDIDATE_TRANSACTIONS, TRAN_LAYOUT, 350))
+    oracle = _in_key_order(parse_fixed_records(_oracle("transact-stage1.dat"), TRAN_LAYOUT, 350))
+
+    numeric = [dict(record) for record in candidate]
+    numeric[7]["TRAN-AMT"] = FieldValue("TRAN-AMT", "0000000000A", 2)
+    assert not compare(numeric, oracle, TRAN_LAYOUT, CBTRN02C_EXCLUSIONS).passed
+
+    text = [dict(record) for record in candidate]
+    padded = text[11]["TRAN-SOURCE"].raw
+    text[11]["TRAN-SOURCE"] = FieldValue("TRAN-SOURCE", "System" + " " * (len(padded) - 6), None)
+    result = compare(text, oracle, TRAN_LAYOUT, CBTRN02C_EXCLUSIONS)
+    assert not result.passed, "a short value padded to width must not compare equal to the real one"
+
+
+def test_the_account_file_matches_field_for_field_with_nothing_excluded(built):
+    """The other half of what this program writes, and the stricter half: **no exclusions at all.**
+
+    `2800-UPDATE-ACCOUNT-REC` adds the amount to `ACCT-CURR-BAL`, adds it to one of the two cycle
+    totals by sign, and `REWRITE`s the whole record -- so all twelve fields are producible and none
+    has a decision making it unreachable. The round trip has reported "the account file exactly"
+    on a record count; this is that claim measured.
+    """
+    candidate = parse_fixed_records(built / CANDIDATE_ACCOUNTS, ACCOUNT_LAYOUT, 300)
+    oracle = parse_fixed_records(_oracle("acctdata-stage1.dat"), ACCOUNT_LAYOUT, 300)
+
+    by_id = lambda records: sorted(records, key=lambda record: record["ACCT-ID"].raw)
+    result = compare(by_id(candidate), by_id(oracle), ACCOUNT_LAYOUT, {})
+    assert result.passed, "\n".join(result.mismatches[:10])
+    assert result.compared == 50 * len(ACCOUNT_LAYOUT)
+    print(f"\nCBTRN02C accounts: {result.render()}")
+
+
+def test_the_account_comparison_would_catch_a_wrong_balance(built):
+    """One cent on one account, against the real candidate."""
+    candidate = sorted(
+        parse_fixed_records(built / CANDIDATE_ACCOUNTS, ACCOUNT_LAYOUT, 300),
+        key=lambda record: record["ACCT-ID"].raw,
+    )
+    oracle = sorted(
+        parse_fixed_records(_oracle("acctdata-stage1.dat"), ACCOUNT_LAYOUT, 300),
+        key=lambda record: record["ACCT-ID"].raw,
+    )
+    mutated = [dict(record) for record in candidate]
+    mutated[3]["ACCT-CURR-BAL"] = FieldValue("ACCT-CURR-BAL", "00000000001{", 2)
+    result = compare(mutated, oracle, ACCOUNT_LAYOUT, {})
+    assert any("record 3 ACCT-CURR-BAL" in mismatch for mismatch in result.mismatches)
