@@ -169,7 +169,7 @@ def build_judge_prompt(case: EvalCase, cobol_source: str, *, program: str = "CBA
     """Stable content first, the varying part last -- exactly as in `build_engineer_prompt`.
 
     **The ordering was wrong on the first pass and it is worth recording why.** The step facts sat
-    ahead of the COBOL, which put a ~25k-token source file -- identical for all six cases -- behind a
+    ahead of the COBOL, which put a ~25k-token source file -- identical for every case -- behind a
     block that changes with the step. That is G13's shape and ADR-0017's correction, reintroduced in
     a new module: the shared span stops being a *prefix* and a cache cannot see it. Rubric and source
     now lead, so every case of one program shares everything up to a few hundred characters of step
@@ -325,9 +325,30 @@ def score_case(case: EvalCase, answer: JudgeAnswer) -> CaseResult:
 #: **`spec_critic`'s precedent is the whole reason this list exists.** ADR-0004 assigned it a cheaper
 #: tier and flagged the choice to revisit empirically; the revisit ran the same corrupted narration
 #: past both models and found Haiku matched Opus's detection at 2.3x lower cost, which is what turned
-#: an assumption into a pin. ADR-0024 says outright that this judge's Opus pin is scaffolding until
-#: the same measurement exists here.
-CANDIDATE_JUDGES = ("claude-opus-5", "claude-haiku-4-5-20251001")
+#: an assumption into a pin. ADR-0024 said outright that this judge's Opus pin was scaffolding until
+#: the same measurement existed here.
+#:
+#: **That measurement now exists, and it came out the other way** (ADR-0049, 2026-08-23). Sampled
+#: three runs each over this corpus, `claude-haiku-4-5-20251001` was ineligible on three independent
+#: grounds and was struck from this list:
+#:
+#: 1. **5 of 21 calls did not hold the response contract** -- prose preambles ahead of the JSON,
+#:    where the prompt says *"Respond with a JSON array and nothing else."* Its rates are therefore
+#:    computed over the subset it answered.
+#: 2. **Not reproducible.** `completion_short_source` scored correct in 1 of 3 runs and
+#:    `completion_invented_tran_id` in 1 of 2 -- the exact defect ADR-0045's sampling was built to
+#:    surface, found on the first sampled run.
+#: 3. **False-positive rate 0.33 ± 0.29 (max 0.50)**, against Opus's 0.00 ± 0.00. It failed criteria
+#:    on `completion_faithful`, a body with no defect. § 4b puts human review three to four orders of
+#:    magnitude above inference cost, so that is the expensive direction to be wrong in.
+#:
+#: **And it was not cheaper.** 259,591 output tokens against Opus's 15,981 for the same work --
+#: $1.93 against $2.18. The cost case that justified Haiku for `spec_critic` simply is not present
+#: here, which is why the two decisions differ rather than one of them being inconsistent.
+#:
+#: Struck rather than reported, following exactly the precedent the paragraph above cites: both
+#: Sonnets were removed from `spec_extractor` the same way, with the evidence written down.
+CANDIDATE_JUDGES = ("claude-opus-5",)
 
 
 def adjudicator_for(model: str) -> AdjudicateFn:

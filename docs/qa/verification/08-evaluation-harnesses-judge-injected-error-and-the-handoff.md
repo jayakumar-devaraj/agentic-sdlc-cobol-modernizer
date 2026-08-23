@@ -259,3 +259,87 @@ back from the store before anyone resumes**, which is what an approval interface
 that invokes this CLI, and the spike deliberately adds none: it introduces no node, no gate type and
 no state field, so that whatever Phase 2.1 needs is now a measured requirement instead of a guess.
 G7 moves to partial, not closed.
+\n
+
+### The judge sampled across runs, and a candidate struck on the evidence
+
+**The defect this closes.** Pillar 22 crossed to ✅ at audit R2.23 on a run scoring 6 of 6 at a 0.00
+false-positive rate, and was withdrawn at R2.27 when the same judge, over the same corpus, with the
+same prompt, scored 4 of 6 at 0.50. Neither run was wrong; the *summary* was, because it reported one
+sample of a non-deterministic instrument as a measurement. ADR-0045 decided the fix and ADR-0049
+records what running it found.
+
+**Command** (opt-in, real money — three runs per candidate, six cases each):
+
+```
+$ COBOL_MODERNIZER_RUN_LIVE_CLI_TESTS=1 pytest tests/evaluations/test_judge_benchmark.py -q -s
+```
+
+**`claude-opus-5` — real output:**
+
+```
+===== claude-opus-5, 3 runs =====
+21 calls  in=42  out=15981  cache_read=394942  notional=$2.1785
+| metric                    | across 3 run(s) |
+| oracle-grounded detection | 1.00 ± 0.00     |
+| source-grounded detection | 0.67 ± 0.00     |
+| false-positive rate       | 0.00 ± 0.00     |
+| reproducible              | yes             |
+```
+
+**`claude-haiku-4-5-20251001` — real output:**
+
+```
+===== claude-haiku-4-5-20251001, 3 runs =====
+21 calls  in=210  out=259591  cache_read=311237  notional=$1.9269
+| metric                    | across 3 run(s)            |
+| oracle-grounded detection | 1.00 ± 0.00                |
+| source-grounded detection | 1.00 ± 0.00                |
+| false-positive rate       | 0.33 ± 0.29  (min 0.00, max 0.50) |
+| reproducible              | NO                         |
+
+**Malformed responses — 5 of 21 calls did not hold the response contract.**
+- completion_faithful: "Looking at the COBOL paragraph `1300-B-WRITE-TX` and the generated Java..."
+- completion_empty_string: "Looking at this Java implementation against the COBOL paragraph..."
+- interest_unguarded: "Looking at the Java method against COBOL paragraph 1300-COMPUTE-INTEREST..."
+- completion_invented_tran_id: "Looking at the generated Java code against the COBOL paragraph..."
+- interest_unguarded: "Looking at this Java method body against the COBOL paragraph..."
+
+- completion_invented_tran_id: correct in 1 of 2 runs
+- completion_short_source: correct in 1 of 3 runs
+```
+
+**Haiku is struck from `CANDIDATE_JUDGES` on three independent grounds** — 5 of 21 responses broke
+the contract (*"Respond with a JSON array and nothing else"*), two cases scored differently between
+runs, and it failed criteria on `completion_faithful`, a body with no defect, at a false-positive
+rate of 0.33 ± 0.29. § 4b puts human review three to four orders of magnitude above inference cost,
+so that is the expensive direction to be wrong in.
+
+**And it was not cheaper**: 259,591 output tokens against Opus's 15,981 for the same work, $1.93
+against $2.18. The cost case that justified Haiku for `spec_critic` — matched detection at 2.3× lower
+cost — is not present here, which is why the two decisions differ rather than one being inconsistent.
+
+**The harness change the first run forced.** Haiku broke the contract on its *first* call, the
+exception aborted the module-scoped fixture, and seventeen already-paid-for calls were discarded
+along with the finding. `attempt_case` now records a malformed response as data; `judge_case` still
+raises, and a test pins that it does. Malformed responses are barred before any rate is read, because
+every rate is computed over the cases the judge answered — a candidate that fails its hardest cases
+and answers the rest correctly would otherwise report a *better* detection rate than one that
+answered them all and got a single verdict wrong.
+
+**Verdict churn, found by reading the run rather than its summary.** Opus returned identical rates on
+all three runs *and* moved its raw verdicts: `fixed_width_text` flagged on `interest_rounds` in run 1,
+not in run 2, and on `interest_faithful` in run 3. The scoring absorbed it — a case is correct as long
+as its defect was caught, and a criterion a case genuinely violates is excluded from its false
+positives. Recorded and deliberately not barred: churn is what crosses a threshold later and moves a
+rate, and it is the most plausible mechanism behind R2.23 becoming R2.27.
+
+**Scope, stated exactly.** What is established is *the pinned judge scores this corpus identically
+across three runs* — not that pillar 22 closes. ADR-0044 requires a second instance and every case in
+this corpus derives from `CBACT04C`. A `CBTRN02C`-grounded corpus is what the pillar now waits on,
+and ADR-0048 makes that tractable.
+
+**Cost, recorded rather than absorbed**: estimated ~$3, actual **~$4.15**, the overrun entirely
+Haiku's verbosity. An evaluation harness whose own price is mis-estimated by 38% is a small irony in
+a repo whose § 4b argument is about cost per unit of review, and the number is written down so the
+next estimate starts from a measurement.

@@ -132,7 +132,7 @@ def test_the_prompt_states_the_guard_when_the_step_has_one(cobol_source):
 def test_the_large_shared_span_really_is_a_prefix(cobol_source):
     """G13/ADR-0017's shape, which this module reintroduced once before this test existed.
 
-    The COBOL source is ~25k tokens and identical for all six cases; the step facts are a few hundred
+    The COBOL source is ~25k tokens and identical for every case; the step facts are a few hundred
     characters and vary. Ordered the other way round, the big shared span sits behind a variable
     block and no cache can see it. Asserted by position rather than by measuring a cache, because the
     ordering is the thing under this module's control.
@@ -285,7 +285,7 @@ def test_a_perfect_judge_scores_full_detection_and_no_false_positives():
 def test_a_judge_that_passes_everything_detects_nothing():
     """The harness's own `divideRounded`: proof the detection number can reach zero.
 
-    A judge that says "looks fine" to all six cases is the exact failure an LLM-as-judge harness
+    A judge that says "looks fine" to every case is the exact failure an LLM-as-judge harness
     tends towards, and it must score 0.0 rather than 4-out-of-6-for-agreeing-with-the-faithful-ones.
     """
     summary = _summary(lambda _name: _all_pass())
@@ -562,7 +562,7 @@ def test_the_billed_fixtures_assembly_works_before_anything_is_billed():
 
     `test_judge_benchmark`'s fixture is the one piece of this package that cannot be run without
     spending, and everything it does apart from calling a model is ordinary code: loop `SAMPLES`
-    times, score six cases per run, wrap them in `BenchmarkSummary`, wrap those in
+    times, score every case per run, wrap them in `BenchmarkSummary`, wrap those in
     `SampledBenchmark`, render. A mistake anywhere in that chain would surface only after the money
     was gone -- which is how the first two billed runs of this benchmark were discovered to have
     recorded no usage and kept no rationales.

@@ -16,7 +16,8 @@ the run that matters is the one nobody is watching. `SampledBenchmark.unstable_c
 case moved, which is what R2.27 had no way to record and therefore could not act on.
 
 **Cost scales linearly with `n`.** Each sample is one judge call per case per candidate model --
-six calls, twice, per sample. Override with `COBOL_MODERNIZER_JUDGE_SAMPLES`.
+one call per case per candidate, per sample -- seven cases, so 21 calls at the default n=3.
+Override with `COBOL_MODERNIZER_JUDGE_SAMPLES`.
 
 **The thresholds below are derived, not picked**, and only one of them is a real bar:
 
@@ -78,9 +79,10 @@ pytestmark = pytest.mark.live_claude_cli
 
 @pytest.fixture(scope="module", params=CANDIDATE_JUDGES, ids=lambda m: m.split("-")[1])
 def sampled(request) -> SampledBenchmark:
-    """`SAMPLES` runs of six judge calls, per candidate model.
+    """`SAMPLES` runs of one judge call per case, per candidate model.
 
-    Module-scoped so a whole benchmark costs `6 * SAMPLES` calls rather than that per assertion.
+    Module-scoped so a whole benchmark costs `len(CASES) * SAMPLES` calls rather than that per
+    assertion.
     That is not only about money: a per-test call would let two assertions disagree because they
     scored different responses, and a flaky benchmark is one nobody trusts enough to act on.
 
