@@ -63,18 +63,38 @@ path, and one calculation is checked against its COBOL: `CBACT04C`'s interest `C
 equivalence test **10 of 10** against expected values derived by hand from the source (ADR-0021),
 rendered into the generated project and run by real Maven.
 
-**One program round-trips** — and the qualifier travels with the number: **`1 of 4`, wiring
-hand-written.** Both files `CBACT04C` writes are compared against what the **unmodified** program
+**Two programs round-trip** — and the qualifier travels with the number: **`2 of 4`, wiring
+hand-written.** Every file each program writes is compared against what the **unmodified** program
 wrote under GnuCOBOL (`tools/cobol-oracle/`, `docs/adr/0028`), field-for-field at full declared
 width (`docs/adr/0029`):
+
+`CBACT04C` — the interest calculator:
 
 | | matched | excluded |
 |---|---|---|
 | interest transactions (50 records) | **500 of 500** | 3 fields, `docs/adr/0026` |
 | rewritten account file (50 records) | **597 of 600** | none |
 
-The method bodies were written by a real `claude-opus-5` run; all three compiled on the first
-attempt, and the self-healing loop never ran.
+`CBTRN02C` — transaction posting, and the **stricter** of the two (`docs/adr/0048`):
+
+| | matched | excluded |
+|---|---|---|
+| transaction master (262 records) | **3144 of 3144** | 1 field, `docs/adr/0026` |
+| rewritten account file (50 records) | **600 of 600** | none |
+| transaction category balances (100 records) | **400 of 400** | none |
+
+**Its exclusions are earned, not inherited.** `CBACT04C` cannot produce `TRAN-ID` or `TRAN-ORIG-TS`;
+`CBTRN02C` copies both straight from its input (`CBTRN02C.cbl:425`, `:436`), so both are compared
+here. Only `TRAN-PROC-TS` transfers, and for the original reason — that program reads
+`FUNCTION CURRENT-DATE` once per transaction (`:438`, `:693`). Inheriting the other two would have
+excused fields it reproduces exactly.
+
+**Both programs are measured twice: with scripted bodies and with a real `claude-opus-5` run
+writing them**, and the numbers above hold for both. `CBACT04C`'s three bodies compiled on the first
+attempt and the self-healing loop never ran; `CBTRN02C`'s took one model call, first attempt, no
+heal. The live runs cost real money and are skipped unless
+`COBOL_MODERNIZER_RUN_LIVE_CLI_TESTS=1`, so CI proves the scripted half continuously and the
+model-authored half is reproducible on demand.
 
 **What the qualifier means, and it is not decoration.** The reader, both writers, the
 control-break aggregation, the staging, all three steps and the job are **rendered** from
@@ -96,11 +116,12 @@ wiring would have made the comparison green by encoding a bug, and is refused on
 non-zero total in *both* cycle fields, where one of them used to be zero on both sides and matched
 by coincidence. Same single cause, now showing in every field it can reach.
 
-**Still true.** Nothing has been written to the real `card-service` repository; the reachable
-maximum is `2 of 4` (G17, `docs/adr/0035`), since `CBCUS01C` and `CBACT01C` contribute a read and a
-print; and generating a stateful control-break writer is out of scope. **`CBTRN02C` builds, runs and
-now agrees with its oracle exactly — and the count is still `1 of 4`, wiring hand-written.**
-Rendering it needed four
+**Still true.** Nothing has been written to the real `card-service` repository, and generating a
+stateful control-break writer is out of scope. **`2 of 4`, wiring hand-written, is the reachable
+maximum** (G17, `docs/adr/0035`): `CBCUS01C` and `CBACT01C` contribute a sequential read and a
+print, so the remaining two cannot round-trip in this sense at all. What is open now is whether step
+52's *"full recorded Track C dry run, all four programs"* is reachable as worded — not this number.
+Rendering `CBTRN02C` needed four
 facts `CBACT04C` never did: an `upsert` write mode (`docs/adr/0037`), a declared `reads_own_writes`
 step (`docs/adr/0040`), a working set its reader and writer share at chunk 1 (`docs/adr/0041`), and
 a declared optional lookup for the read that *creates* a balance row (`docs/adr/0042`). With those,
@@ -122,11 +143,13 @@ negative amount looked like a large positive one and failed a credit-limit check
 inside the oracle pipeline, in both directions, and the oracle moved to 262 and 100. **The pipeline
 did not move.**
 
-**Why `2 of 4` still is not claimed.** `CBTRN02C`'s transactions are compared on record identity and
-`TRAN-AMT`, not field-for-field at full declared width the way `CBACT04C`'s are — and two of
-`CBACT04C`'s three `docs/adr/0026` exclusions do not transfer, since `CBTRN02C` copies `TRAN-ID` and
-`TRAN-ORIG-TS` straight from its input. Inheriting them would excuse fields this program reproduces
-exactly. The count moves when that comparison exists, not before.
+**What it took to count it** (`docs/adr/0048`). Agreement on record identity and one field is not
+the measurement the number names, so three things had to be true first: every field compared at full
+declared width with exclusions established from *this* program's source, **every** file it writes
+compared rather than the convenient two, and a real model — not a scripted transcription — writing
+the body. `CBTRN02C` writes three files in scope where `CBACT04C` writes two; `DALYREJS` is the
+fourth and is refused by name in the job (`docs/adr/0038`), which is a decision rather than an
+omission.
 
 The round trip found a real defect on its first pass — `TRAN-SOURCE` is `PIC X(10)` and the body
 wrote a bare `"System"`, disagreeing with COBOL on fifty records while every amount matched.
