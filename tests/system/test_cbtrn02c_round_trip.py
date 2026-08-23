@@ -40,6 +40,7 @@ from cobol_modernizer.core.contracts import (
     UnifiedDesign,
     build_design_document,
 )
+from cobol_modernizer.core.model_client import RunBudget, collect_usage
 from cobol_modernizer.graph.generate_pipeline import (
     DEFAULT_DOMAIN_PACKAGE,
     DEFAULT_PACKAGE,
@@ -63,6 +64,13 @@ from cobol_modernizer.rendering.java_working_set import (
 from cobol_modernizer.rendering.java_writer import render_item_writer, writer_class_name
 from cobol_modernizer.tools.data_loader import decode_zoned_decimal
 from cobol_modernizer.tools.local_compiler import compile_project
+from tests.system.test_cobol_oracle_comparison import (
+    ACCOUNT_LAYOUT,
+    TRAN_LAYOUT,
+    FieldValue,
+    compare,
+    parse_fixed_records,
+)
 
 FIXTURE_ROOT = Path(__file__).resolve().parents[1] / "fixtures" / "tenant_repo_sample"
 HANDWRITTEN = Path(__file__).resolve().parents[1] / "fixtures" / "handwritten" / "CBTRN02C"
@@ -321,25 +329,22 @@ def _render_wiring_into(project: Path, design: UnifiedDesign) -> None:
     )
 
 
-@pytest.fixture(scope="module")
-def built(tmp_path_factory, design, entry):
-    """Generate, wire, stage the corpus, and build -- once, because Maven is the cost."""
-    project = tmp_path_factory.mktemp("cbtrn02c") / "target-project"
+def generate_wire_build_and_run(project: Path, design, entry, **generate_kwargs):
+    """Generate the processor, add the wiring, stage the corpus, build and run.
+
+    Shared by the scripted path and the live one so that **the only difference between them is who
+    wrote the method body**. If the wiring, the staging or the build differed too, a disagreement
+    between the two runs would not be attributable to the body -- which is the one thing the live
+    run exists to measure. Same shape as `test_hand_written_round_trip.wire_build_and_run`, and for
+    the same reason.
+    """
     project.parent.mkdir(parents=True, exist_ok=True)
 
     document = build_design_document([entry], unified_design=design)
     design_path = project.parent / "design.json"
     design_path.write_text(document.model_dump_json(indent=2), encoding="utf-8")
 
-    outcome = run_generate(
-        design_path,
-        FIXTURE_ROOT,
-        project,
-        author=_scripted_author,
-        advise=lambda routing, s, u: json.dumps(
-            {"repairable": False, "reason": "scripted", "instruction": ""}
-        ),
-    )
+    outcome = run_generate(design_path, FIXTURE_ROOT, project, **generate_kwargs)
     assert outcome.succeeded, f"generation failed: {[o.reason for o in outcome.blocked]}"
 
     _render_wiring_into(project, design)
@@ -352,6 +357,21 @@ def built(tmp_path_factory, design, entry):
 
     result = compile_project(project, goal="verify")
     assert result.succeeded, "\n".join(d.message for d in result.diagnostics[:10])
+    return project, outcome
+
+
+@pytest.fixture(scope="module")
+def built(tmp_path_factory, design, entry):
+    """Generate, wire, stage the corpus, and build -- once, because Maven is the cost."""
+    project, _ = generate_wire_build_and_run(
+        tmp_path_factory.mktemp("cbtrn02c") / "target-project",
+        design,
+        entry,
+        author=_scripted_author,
+        advise=lambda routing, s, u: json.dumps(
+            {"repairable": False, "reason": "scripted", "instruction": ""}
+        ),
+    )
     return project
 
 
@@ -408,11 +428,10 @@ def test_the_transactions_now_agree_with_the_oracle_on_every_record_and_every_am
     asserted for `ours` while it was failing, and 100 is the balance-row count the test above
     asserted for the same reason. The oracle moved to meet them, because the oracle was wrong.
 
-    **What this is not.** It compares record identity and `TRAN-AMT`, not every field at full
-    declared width the way `test_hand_written_round_trip` compares `CBACT04C`. `2 of 4` needs that
-    comparison, and two of `CBACT04C`'s three ADR-0026 exclusions do not transfer -- `CBTRN02C`
-    copies `TRAN-ID` and `TRAN-ORIG-TS` straight from its input, so inheriting them here would
-    excuse fields this program reproduces exactly. The metric stays `1 of 4` until that is built.
+    **What this is.** Record identity and `TRAN-AMT` only. The full field-for-field comparison is
+    below (`test_the_transactions_match_the_oracle_field_for_field`) and subsumes the amounts; this
+    one is kept because it fails with a *diagnosis* -- which records are extra and which are missing
+    -- where a field comparison on mismatched sets reports only a count.
     """
     candidate = built / CANDIDATE_TRANSACTIONS
     oracle = _oracle("transact-stage1.dat")
@@ -519,3 +538,291 @@ def test_cbact04c_was_never_affected_by_it_and_here_is_the_corrected_reason():
         assert {line[lo : lo + 12][-1] for line in accounts} == {"{"}, (
             f"the signed field at offset {lo} is not uniformly positive zero"
         )
+# --- ADR-0029's differential, applied to this program ---------------------------------------------
+
+#: **One exclusion, not the three `CBACT04C` carries** -- and the difference is the whole point of
+#: pricing exclusions per program rather than inheriting them.
+#:
+#: `2000-POST-TRANSACTION` populates the transaction record with thirteen `MOVE`s from the daily
+#: transaction it is posting. Two of the fields `CBACT04C` cannot produce are, here, **straight
+#: copies of the input**:
+#:
+#:     MOVE DALYTRAN-ID      TO TRAN-ID          (CBTRN02C.cbl:425)
+#:     MOVE DALYTRAN-ORIG-TS TO TRAN-ORIG-TS     (CBTRN02C.cbl:436)
+#:
+#: `CBACT04C` excludes `TRAN-ID` because it `STRING`s one from a per-run counter and excludes
+#: `TRAN-ORIG-TS` because it reads the clock. Neither is true of this program, so inheriting those
+#: exclusions would excuse two fields it reproduces exactly -- which is the precise shape of
+#: exclusion creep ADR-0029 names as the way a differential goes toothless.
+#:
+#: `TRAN-PROC-TS` is the one that does transfer, and it transfers for the *original* reason rather
+#: than by precedent: `PERFORM Z-GET-DB2-FORMAT-TIMESTAMP` runs inside the per-transaction paragraph
+#: and that paragraph does `MOVE FUNCTION CURRENT-DATE TO COBOL-TS` (CBTRN02C.cbl:438, 693). COBOL
+#: reads the clock once per record; a batch processor is handed one instant per run.
+CBTRN02C_EXCLUSIONS: dict[str, str] = {
+    "TRAN-PROC-TS": (
+        "ADR-0026: 2000-POST-TRANSACTION performs Z-GET-DB2-FORMAT-TIMESTAMP per transaction and "
+        "that paragraph reads FUNCTION CURRENT-DATE (CBTRN02C.cbl:438, 693), where the generated "
+        "processor is handed one instant per run. The same divergence ADR-0026 accepted for "
+        "CBACT04C, established here from this program's own source rather than inherited."
+    ),
+}
+
+
+def _in_key_order(records: list[dict[str, FieldValue]]) -> list[dict[str, FieldValue]]:
+    """Sorted by `TRAN-ID`, because record *ordering* is framing and framing is out of scope.
+
+    The oracle is an indexed file unloaded in key order; the candidate is a sequential write in
+    arrival order. On this corpus the two coincide -- `dailytran.txt` is already `TRAN-ID`-sorted --
+    but relying on that would turn a future unsorted corpus into 3,144 mismatches that say nothing
+    about the logic.
+    """
+    return sorted(records, key=lambda record: record["TRAN-ID"].raw)
+
+
+def test_the_exclusion_is_earned_from_this_programs_source_not_inherited(built):
+    """The check that stops `CBACT04C`'s exclusions being copied across because they were there.
+
+    Asserts the *shape* of the list, not just its contents: exactly one field is excluded, it is
+    the timestamp COBOL reads per record, and the two fields this program copies straight from its
+    input are **not** in it. A future edit that widens this list fails here first.
+    """
+    assert set(CBTRN02C_EXCLUSIONS) == {"TRAN-PROC-TS"}
+    assert "TRAN-ID" not in CBTRN02C_EXCLUSIONS, "CBTRN02C.cbl:425 copies it from DALYTRAN-ID"
+    assert "TRAN-ORIG-TS" not in CBTRN02C_EXCLUSIONS, "CBTRN02C.cbl:436 copies it from the input"
+
+    source = (FIXTURE_ROOT / "app" / "cbl" / "CBTRN02C.cbl").read_text(encoding="latin-1")
+    assert "MOVE  DALYTRAN-ID            TO    TRAN-ID" in source
+    assert "MOVE  DALYTRAN-ORIG-TS       TO    TRAN-ORIG-TS" in source
+    assert "MOVE FUNCTION CURRENT-DATE TO COBOL-TS" in source, (
+        "the one exclusion rests on this line; if it goes, the exclusion goes with it"
+    )
+
+    reason = CBTRN02C_EXCLUSIONS["TRAN-PROC-TS"]
+    assert "ADR-" in reason, "an exclusion without a decision behind it is exclusion creep"
+
+
+def test_the_transactions_match_the_oracle_field_for_field(built):
+    """**The measurement `2 of 4` needs**: every field of every record, at full declared width.
+
+    Twelve of thirteen fields across 262 records. `TRAN-ID` and `TRAN-ORIG-TS` are compared here and
+    excluded for `CBACT04C`, so this is a *stricter* comparison than the one the round-trip count is
+    currently reported against, not a weaker one wearing the same name.
+    """
+    candidate = parse_fixed_records(built / CANDIDATE_TRANSACTIONS, TRAN_LAYOUT, 350)
+    oracle = parse_fixed_records(_oracle("transact-stage1.dat"), TRAN_LAYOUT, 350)
+
+    result = compare(
+        _in_key_order(candidate),
+        _in_key_order(oracle),
+        TRAN_LAYOUT,
+        CBTRN02C_EXCLUSIONS,
+    )
+    assert result.passed, "\n".join(result.mismatches[:10])
+    assert result.compared == 262 * (len(TRAN_LAYOUT) - len(CBTRN02C_EXCLUSIONS))
+    print(f"\nCBTRN02C transactions: {result.render()}")
+
+
+def test_the_transaction_comparison_would_catch_a_wrong_field(built):
+    """Shown to fail against the real candidate, not against a copy of the oracle.
+
+    Two mutations, because the two halves of `FieldValue.value` are different code paths: a numeric
+    field decoded through the overpunch table, and an alphanumeric compared at full declared width.
+    The second is the one that catches a body writing a bare "System" into a `PIC X(10)`.
+    """
+    candidate = _in_key_order(parse_fixed_records(built / CANDIDATE_TRANSACTIONS, TRAN_LAYOUT, 350))
+    oracle = _in_key_order(parse_fixed_records(_oracle("transact-stage1.dat"), TRAN_LAYOUT, 350))
+
+    numeric = [dict(record) for record in candidate]
+    numeric[7]["TRAN-AMT"] = FieldValue("TRAN-AMT", "0000000000A", 2)
+    assert not compare(numeric, oracle, TRAN_LAYOUT, CBTRN02C_EXCLUSIONS).passed
+
+    text = [dict(record) for record in candidate]
+    padded = text[11]["TRAN-SOURCE"].raw
+    text[11]["TRAN-SOURCE"] = FieldValue("TRAN-SOURCE", "System" + " " * (len(padded) - 6), None)
+    result = compare(text, oracle, TRAN_LAYOUT, CBTRN02C_EXCLUSIONS)
+    assert not result.passed, "a short value padded to width must not compare equal to the real one"
+
+
+def test_the_account_file_matches_field_for_field_with_nothing_excluded(built):
+    """The other half of what this program writes, and the stricter half: **no exclusions at all.**
+
+    `2800-UPDATE-ACCOUNT-REC` adds the amount to `ACCT-CURR-BAL`, adds it to one of the two cycle
+    totals by sign, and `REWRITE`s the whole record -- so all twelve fields are producible and none
+    has a decision making it unreachable. The round trip has reported "the account file exactly"
+    on a record count; this is that claim measured.
+    """
+    candidate = parse_fixed_records(built / CANDIDATE_ACCOUNTS, ACCOUNT_LAYOUT, 300)
+    oracle = parse_fixed_records(_oracle("acctdata-stage1.dat"), ACCOUNT_LAYOUT, 300)
+
+    by_id = lambda records: sorted(records, key=lambda record: record["ACCT-ID"].raw)
+    result = compare(by_id(candidate), by_id(oracle), ACCOUNT_LAYOUT, {})
+    assert result.passed, "\n".join(result.mismatches[:10])
+    assert result.compared == 50 * len(ACCOUNT_LAYOUT)
+    print(f"\nCBTRN02C accounts: {result.render()}")
+
+
+def test_the_account_comparison_would_catch_a_wrong_balance(built):
+    """One cent on one account, against the real candidate."""
+    candidate = sorted(
+        parse_fixed_records(built / CANDIDATE_ACCOUNTS, ACCOUNT_LAYOUT, 300),
+        key=lambda record: record["ACCT-ID"].raw,
+    )
+    oracle = sorted(
+        parse_fixed_records(_oracle("acctdata-stage1.dat"), ACCOUNT_LAYOUT, 300),
+        key=lambda record: record["ACCT-ID"].raw,
+    )
+    mutated = [dict(record) for record in candidate]
+    mutated[3]["ACCT-CURR-BAL"] = FieldValue("ACCT-CURR-BAL", "00000000001{", 2)
+    result = compare(mutated, oracle, ACCOUNT_LAYOUT, {})
+    assert any("record 3 ACCT-CURR-BAL" in mismatch for mismatch in result.mismatches)
+#: `CVTRA01Y`'s TRAN-CAT-BAL-RECORD, 50 bytes -- the **third** file this program writes.
+#:
+#: Written out here rather than in `test_cobol_oracle_comparison` because `CBACT04C` only ever reads
+#: this record; `CBTRN02C` is the program that produces it, and the comparison's view of a layout
+#: belongs with the comparison that uses it.
+#:
+#: The trailing `FILLER PIC X(22)` is omitted, the same way `ACCOUNT_LAYOUT` omits its `X(178)`:
+#: ADR-0029 compares field contents and leaves record framing out of scope.
+TCATBAL_LAYOUT: tuple[tuple[str, int, int, int | None], ...] = (
+    ("TRANCAT-ACCT-ID", 0, 11, 0),
+    ("TRANCAT-TYPE-CD", 11, 2, None),
+    ("TRANCAT-CD", 13, 4, 0),
+    ("TRAN-CAT-BAL", 17, 11, 2),
+)
+
+
+def _tcatbal_key(record: dict[str, FieldValue]) -> str:
+    """The composite `TRAN-CAT-KEY`, which is what the indexed file is ordered by."""
+    return (
+        record["TRANCAT-ACCT-ID"].raw + record["TRANCAT-TYPE-CD"].raw + record["TRANCAT-CD"].raw
+    )
+
+
+def test_the_balance_file_matches_field_for_field_with_nothing_excluded(built):
+    """**The third file, and the one that completes the claim.**
+
+    `CBACT04C` writes two files and both are compared, which is what `1 of 4` has always meant.
+    `CBTRN02C` writes three in scope -- the transaction master, the account file, and this -- so
+    comparing two of them would have been a weaker measurement wearing the same name. `DALYREJS` is
+    the fourth and is scoped out of generation by ADR-0038, not by convenience.
+
+    **Nothing is excluded.** `2700-UPDATE-TCATBAL` moves all three key parts from the transaction
+    and the cross-reference, then accumulates the amount into the balance -- four fields, all
+    producible. It is also the half that exercises `upsert` (ADR-0037) and `optional_lookups`
+    (ADR-0042) against real data: 50 rows are read and 50 more are created.
+    """
+    candidate = parse_fixed_records(built / CANDIDATE_BALANCES, TCATBAL_LAYOUT, 50)
+    oracle = parse_fixed_records(_oracle("tcatbal-posted.dat"), TCATBAL_LAYOUT, 50)
+
+    result = compare(
+        sorted(candidate, key=_tcatbal_key), sorted(oracle, key=_tcatbal_key), TCATBAL_LAYOUT, {}
+    )
+    assert result.passed, "\n".join(result.mismatches[:10])
+    assert result.compared == 100 * len(TCATBAL_LAYOUT)
+    print(f"\nCBTRN02C balances: {result.render()}")
+
+
+def test_the_balance_comparison_would_catch_a_wrong_total(built):
+    """Shown to fail on the real candidate, and on the field the `upsert` accumulates into."""
+    candidate = sorted(
+        parse_fixed_records(built / CANDIDATE_BALANCES, TCATBAL_LAYOUT, 50), key=_tcatbal_key
+    )
+    oracle = sorted(
+        parse_fixed_records(_oracle("tcatbal-posted.dat"), TCATBAL_LAYOUT, 50), key=_tcatbal_key
+    )
+    mutated = [dict(record) for record in candidate]
+    mutated[5]["TRAN-CAT-BAL"] = FieldValue("TRAN-CAT-BAL", "0000000000A", 2)
+    result = compare(mutated, oracle, TCATBAL_LAYOUT, {})
+    assert any("record 5 TRAN-CAT-BAL" in mismatch for mismatch in result.mismatches)
+
+
+def test_every_in_scope_file_this_program_writes_is_compared(built):
+    """The check that stops the claim quietly narrowing to whichever files were easy.
+
+    `CBTRN02C` writes four files. Three are compared field-for-field above; the fourth, `DALYREJS`,
+    is refused by name in the job (ADR-0038) -- a decision rather than an omission, and the job
+    would name it if it were generated.
+
+    Asserted as an **exact** set rather than a subset: a fourth output appearing in the job's output
+    directory should fail here, because the round-trip claim is about everything the program writes.
+    """
+    output_dir = built / "roundtrip" / "output"
+    assert {path.name for path in output_dir.iterdir()} == {CANDIDATE_TRANSACTIONS.name}, (
+        "an output this comparison does not cover would make the round-trip claim narrower than "
+        "it reads"
+    )
+
+    # The other two are rewritten in place, which is what `replace` and `upsert` mean here.
+    for relative in (CANDIDATE_ACCOUNTS, CANDIDATE_BALANCES):
+        assert (built / relative).is_file(), f"{relative} was never produced"
+
+    assert not list((built / "roundtrip").glob("**/dalyrejs*")), (
+        "ADR-0038 scopes the reject file out of generation; if it starts being written it needs a "
+        "comparison of its own before the round-trip count can include this program"
+    )
+# --- the same round trip, with a model writing the body -------------------------------------------
+
+
+@pytest.mark.live_claude_cli
+def test_a_model_authored_run_is_compared_against_the_same_oracle(tmp_path, design, entry):
+    """**What `2 of 4` rests on**: the body a real model wrote, against COBOL's own output.
+
+    Every comparison above runs on a *scripted* body -- `_BODY`, transcribed from
+    `1500-B-LOOKUP-ACCT` and `2000-POST-TRANSACTION` statement for statement. That measures the
+    rendered wiring and the contract facts behind it, which is what it was written to measure. It
+    does not measure whether this pipeline's model writes a body that reproduces COBOL, and the
+    round-trip count is a claim about *generated logic*.
+
+    `CBACT04C` has carried both halves since ADR-0030. This is the second, for the second program,
+    and it exists because counting `CBTRN02C` without it would have made the two halves of `2 of 4`
+    mean different things -- the shape of claim `CLAUDE.md`'s "closes against a named instance" rule
+    exists to catch.
+
+    **Costs real money**, so it is skipped unless `COBOL_MODERNIZER_RUN_LIVE_CLI_TESTS=1`. The
+    budget is a ceiling rather than a hope: one processor step and its heal attempts, and
+    `RunBudgetExceededError` stops the run rather than letting a repair loop spend without bound.
+
+    A failure here is a **finding, not a broken test.** If a model-authored body disagrees with
+    COBOL, the mismatch list names the field and both values.
+    """
+    project = tmp_path / "live" / "target-project"
+    with collect_usage(RunBudget(max_model_calls=8)) as usage:
+        built, outcome = generate_wire_build_and_run(project, design, entry)
+
+    transactions = compare(
+        _in_key_order(parse_fixed_records(built / CANDIDATE_TRANSACTIONS, TRAN_LAYOUT, 350)),
+        _in_key_order(parse_fixed_records(_oracle("transact-stage1.dat"), TRAN_LAYOUT, 350)),
+        TRAN_LAYOUT,
+        CBTRN02C_EXCLUSIONS,
+    )
+    by_acct = lambda records: sorted(records, key=lambda record: record["ACCT-ID"].raw)
+    accounts = compare(
+        by_acct(parse_fixed_records(built / CANDIDATE_ACCOUNTS, ACCOUNT_LAYOUT, 300)),
+        by_acct(parse_fixed_records(_oracle("acctdata-stage1.dat"), ACCOUNT_LAYOUT, 300)),
+        ACCOUNT_LAYOUT,
+        {},
+    )
+    balances = compare(
+        sorted(parse_fixed_records(built / CANDIDATE_BALANCES, TCATBAL_LAYOUT, 50), key=_tcatbal_key),
+        sorted(parse_fixed_records(_oracle("tcatbal-posted.dat"), TCATBAL_LAYOUT, 50), key=_tcatbal_key),
+        TCATBAL_LAYOUT,
+        {},
+    )
+
+    authored = {step.step_name: step.attempts for step in outcome.compiled}
+    notes = [note for step in outcome.compiled for note in step.notes if note.strip()]
+    print(
+        f"\nlive CBTRN02C round trip, bodies model-authored, wiring hand-written:"
+        f"\n  transactions: {transactions.render()}"
+        f"\n  accounts:     {accounts.render()}"
+        f"\n  balances:     {balances.render()}"
+        f"\n  steps and attempts: {authored}"
+        f"\n  {usage.model_calls} model call(s), {usage.input_tokens} in / {usage.total_tokens} "
+        f"tokens, notional cost {usage.notional_cost_usd}"
+    )
+    for note in notes:
+        print(f"  model note: {note}")
+
+    for result in (transactions, accounts, balances):
+        assert result.passed, "\n".join(result.mismatches[:10])

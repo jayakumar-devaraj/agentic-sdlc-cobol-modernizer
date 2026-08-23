@@ -933,3 +933,68 @@ widened from three signed account fields to the five `CVACT01Y` actually declare
 `TRAN-ORIG-TS` straight from its input, so inheriting them would excuse fields this program
 reproduces exactly. The count moves when that comparison exists, and not for a number that looks
 good without it.
+### `CBTRN02C` compared field-for-field, and the count moved to `2 of 4`
+
+**The entry above ends "the metric stays `1 of 4`" and this is what changed that.** ADR-0047 made the
+oracle faithful; this measures against it at the standard the number actually names.
+
+**Three things had to be true**, and each was a place the claim could have narrowed silently.
+
+**1. The exclusions are this program's.** `CBACT04C` excludes three fields (ADR-0026). Read against
+`CBTRN02C`'s own source, two do not transfer:
+
+```
+CBTRN02C.cbl:425   MOVE  DALYTRAN-ID            TO    TRAN-ID
+CBTRN02C.cbl:436   MOVE  DALYTRAN-ORIG-TS       TO    TRAN-ORIG-TS
+CBTRN02C.cbl:438   PERFORM Z-GET-DB2-FORMAT-TIMESTAMP
+CBTRN02C.cbl:693       MOVE FUNCTION CURRENT-DATE TO COBOL-TS
+```
+
+Two straight copies from the input, and one genuine per-record clock read. **One exclusion, not
+three** — a stricter comparison than the one the count was previously reported against.
+
+**2. Every file it writes is compared.** `CBACT04C` writes two and both are compared; `CBTRN02C`
+writes three in scope. `DALYREJS` is the fourth and is refused by name in the job (ADR-0038).
+
+**3. A model wrote the body.** Every other comparison in that module runs on a scripted
+transcription, which measures the wiring rather than the generated logic the count is about.
+
+**Command and real output** (scripted bodies, the half CI runs):
+
+```
+$ pytest tests/system/test_cbtrn02c_round_trip.py -q -s
+CBTRN02C transactions: 3144 of 3144 fields matched; 1 excluded by decision
+CBTRN02C accounts:     600 of 600 fields matched; 0 excluded by decision
+CBTRN02C balances:     400 of 400 fields matched; 0 excluded by decision
+14 passed in 30.64s
+```
+
+**And with a real model writing the body** (`COBOL_MODERNIZER_RUN_LIVE_CLI_TESTS=1`, real money):
+
+```
+live CBTRN02C round trip, bodies model-authored, wiring hand-written:
+  transactions: 3144 of 3144 fields matched; 1 excluded by decision
+  accounts:     600 of 600 fields matched; 0 excluded by decision
+  balances:     400 of 400 fields matched; 0 excluded by decision
+  steps and attempts: {'postTransaction': 1}
+  1 model call(s), 2 in / 7498 tokens, notional cost 0.35475999999999996
+1 passed in 135.33s
+```
+
+**4,144 fields, one exclusion, identical under both authors.** One model call, first attempt, no
+heal.
+
+**The model's notes are worth reading as evidence.** Unprompted, it derived the `TRAN-PROC-TS`
+exclusion from the same two source lines above — *"a clock read is not reproducible across a restart
+that reprocesses a chunk"* — and separately identified that rejected transactions vanish because
+`DALYREJS` has no owning step, which is ADR-0038's scoping restated from the source by something
+that had not read the ADR.
+
+**What moved and what did not.** The count is now **`2 of 4`, wiring hand-written**, and the
+qualifier is still enforced against `README.md` in the same paragraph. `2 of 4` is the ceiling G17
+names, so the open Track C question is now step 52's wording — *"full recorded Track C dry run, all
+four programs"* — and not this number. Nothing has been written to `card-service`.
+
+**A guard caught a stale claim while this landed**: the previous entry's *"Why the metric stays
+`1 of 4`"* paragraph was still in `README.md` and had become false. The README guard failed on it,
+which is the check working rather than an inconvenience.

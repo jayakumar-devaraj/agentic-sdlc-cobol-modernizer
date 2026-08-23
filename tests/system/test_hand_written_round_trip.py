@@ -662,9 +662,15 @@ README = Path(__file__).resolve().parents[2] / "README.md"
 #: rewording the paragraph does not fail this, but dropping the fact does.
 QUALIFIER = "hand-written"
 
+#: The count itself. A constant because it has moved once (ADR-0048, `1 of 4` -> `2 of 4`)
+#: and the guard has to move with it -- a guard still watching a number the README no longer
+#: states passes while enforcing nothing, which is the failure mode this module exists to
+#: avoid. `test_the_readme_guard_fails_on_a_bare_claim` is what proves it can still fail.
+COUNT = "2 of 4"
+
 
 def test_the_readme_never_states_the_round_trip_count_without_its_qualifier():
-    """`1 of 4` means *generated logic inside hand-written wiring*, and a bare number does not say so.
+    """`2 of 4` means *generated logic inside hand-written wiring*, and a bare number does not say so.
 
     ADR-0030 accepted the stopgap on the condition that every result reports it, and the risk it
     named is that the stopgap becomes permanent -- which begins with the qualifier quietly falling
@@ -675,7 +681,7 @@ def test_the_readme_never_states_the_round_trip_count_without_its_qualifier():
     claim is not a qualifier.
     """
     paragraphs = README.read_text(encoding="utf-8").split("\n\n")
-    claims = [paragraph for paragraph in paragraphs if "1 of 4" in paragraph]
+    claims = [paragraph for paragraph in paragraphs if COUNT in paragraph]
     assert claims, "the README no longer states the round-trip count at all"
     for claim in claims:
         assert QUALIFIER in claim, (
@@ -689,5 +695,15 @@ def test_the_readme_guard_fails_on_a_bare_claim():
     Checked against a string rather than by editing README.md, because a test that mutates the file
     it guards can leave the repository changed when it fails -- and once did, in this session.
     """
-    bare = ["the count is 1 of 4 and nothing else is said about it"]
-    assert not [claim for claim in bare if QUALIFIER in claim]
+    paragraphs = [
+        f"the count is {COUNT} and nothing else is said about it",
+        "some paragraph that mentions hand-written wiring but states no count",
+    ]
+    # The real guard, run against these instead of against README.md: find the paragraphs stating
+    # the count, then require the qualifier in each. Written as the same two steps rather than a
+    # restatement, because a differential that drifts from the check it stands in for proves nothing.
+    claims = [paragraph for paragraph in paragraphs if COUNT in paragraph]
+    assert len(claims) == 1, "exactly one of these states the count"
+    assert not all(QUALIFIER in claim for claim in claims), (
+        "a paragraph stating the count with no qualifier must not pass the guard"
+    )
