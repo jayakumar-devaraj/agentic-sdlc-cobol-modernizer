@@ -29,6 +29,10 @@ from tests.evaluations.judge import (
     SYSTEM_PROMPT,
     BenchmarkSummary,
     JudgeResponseParseError,
+    MalformedResponse,
+    SampledBenchmark,
+    Spread,
+    attempt_case,
     build_judge_prompt,
     judge_case,
     parse_judge_response,
@@ -128,7 +132,7 @@ def test_the_prompt_states_the_guard_when_the_step_has_one(cobol_source):
 def test_the_large_shared_span_really_is_a_prefix(cobol_source):
     """G13/ADR-0017's shape, which this module reintroduced once before this test existed.
 
-    The COBOL source is ~25k tokens and identical for all six cases; the step facts are a few hundred
+    The COBOL source is ~25k tokens and identical for every case; the step facts are a few hundred
     characters and vary. Ordered the other way round, the big shared span sits behind a variable
     block and no cache can see it. Asserted by position rather than by measuring a cache, because the
     ordering is the thing under this module's control.
@@ -281,7 +285,7 @@ def test_a_perfect_judge_scores_full_detection_and_no_false_positives():
 def test_a_judge_that_passes_everything_detects_nothing():
     """The harness's own `divideRounded`: proof the detection number can reach zero.
 
-    A judge that says "looks fine" to all six cases is the exact failure an LLM-as-judge harness
+    A judge that says "looks fine" to every case is the exact failure an LLM-as-judge harness
     tends towards, and it must score 0.0 rather than 4-out-of-6-for-agreeing-with-the-faithful-ones.
     """
     summary = _summary(lambda _name: _all_pass())
@@ -446,3 +450,284 @@ def test_judge_case_uses_the_injected_adjudicator(cobol_source):
     result = judge_case(CASES_BY_NAME["interest_rounds"], cobol_source, adjudicate=adjudicate)
     assert result.caught is True
     assert seen and "## Rubric" in seen[0]
+# --- Sampling: the fix ADR-0045 decided, and the defect it exists to prevent ----------------------
+#
+# **The defect in one line.** Pillar 22 crossed to green at audit R2.23 on a run scoring 6 of 6 at a
+# 0.00 false-positive rate, and was withdrawn at R2.27 when the same judge, same corpus, same prompt
+# scored 4 of 6 at 0.50. Nothing in the harness could say which of those two runs to believe, because
+# it reported one sample of a non-deterministic instrument as a measurement.
+#
+# Everything below is exercised with **synthetic verdicts** and costs nothing. What a real run adds
+# is real judge variance; what these establish is that the harness would *report* it.
+
+
+def _sampled(*responders) -> SampledBenchmark:
+    """A sampled benchmark from one responder per run, so instability is scripted rather than hoped."""
+    return SampledBenchmark(
+        samples=tuple(_summary(responder) for responder in responders), model="test-model"
+    )
+
+
+def test_a_spread_over_identical_runs_reports_no_variance():
+    spread = Spread((1.0, 1.0, 1.0))
+    assert (spread.mean, spread.stdev, spread.lowest, spread.highest) == (1.0, 0.0, 1.0, 1.0)
+    assert spread.is_constant
+
+
+def test_a_spread_reports_the_variance_that_hid_the_defect():
+    """The actual R2.27 numbers: detection 1.00 then 0.67, and the summary must not average them away."""
+    spread = Spread((1.0, 0.67))
+    assert not spread.is_constant
+    assert spread.lowest == 0.67 and spread.highest == 1.0
+    assert spread.stdev > 0
+    assert "min 0.67" in spread.render(), "the run that failed has to survive into the report"
+
+
+def test_a_single_run_is_never_reported_as_constant():
+    """**The guard on the original defect.** One run cannot be evidence of reproducibility.
+
+    Its `stdev` is `0.0` because a lone run genuinely has no observed spread, and reporting `nan`
+    would make an un-sampled benchmark look like a broken one. `is_constant` is what refuses, and it
+    refuses on the count rather than on the arithmetic.
+    """
+    spread = Spread((1.0,))
+    assert spread.stdev == 0.0
+    assert not spread.is_constant, "n=1 is the defect, not a passing case"
+
+
+def test_a_stable_judge_is_reported_reproducible():
+    sampled = _sampled(_perfect, _perfect, _perfect)
+    assert sampled.detection().is_constant
+    assert sampled.false_positives().is_constant
+    assert sampled.unstable_cases() == {}
+    assert sampled.is_reproducible
+
+
+def test_one_flipped_case_makes_the_whole_run_not_reproducible():
+    """**The check that would have caught R2.27 the first time.**
+
+    Two runs perfect, one where the judge passes everything -- so detection collapses on that run
+    only. A harness reporting the mean would call this 0.67 and leave a reader to guess whether that
+    is a weak judge or an unstable one.
+    """
+    sampled = _sampled(_perfect, _perfect, lambda _name: _all_pass())
+    assert not sampled.is_reproducible
+    assert not sampled.detection().is_constant
+    assert sampled.detection().lowest == 0.0
+    assert sampled.detection().highest == 1.0
+
+    unstable = sampled.unstable_cases()
+    assert unstable, "the flip has to be attributable to cases, not just to a moving rate"
+    for correct, total in unstable.values():
+        assert total == 3 and 0 < correct < 3
+
+
+def test_a_consistently_wrong_judge_is_reproducible_and_still_not_eligible():
+    """**Reproducible and eligible are different questions, and this pins the difference.**
+
+    A judge that passes everything gets the same answer every run, so the instrument is stable --
+    `is_reproducible` is `True` and saying otherwise would make the word mean "good". What
+    disqualifies it is the detection rate, which is `0.0` on every one of those stable runs.
+
+    The distinction matters because the bars are applied *per run* by the benchmark: stability says
+    the number can be trusted, and the number says whether the judge can be. Folding them together
+    would produce a metric that cannot tell a noisy judge from a bad one -- which is the pair R2.27
+    could not separate.
+    """
+    sampled = _sampled(*(lambda _name: _all_pass() for _ in range(3)))
+    assert sampled.unstable_cases() == {}, "consistent is not unstable, even when consistently wrong"
+    assert sampled.detection().is_constant
+    assert sampled.is_reproducible, "stable is stable; eligibility is the detection rate's job"
+    assert sampled.detection().mean == 0.0, "and this is what makes it ineligible"
+
+
+def test_the_unstable_cases_are_named_in_the_rendered_report():
+    """A report that says *"not reproducible"* and not *which* case moved cannot be acted on.
+
+    That is precisely what R2.27 had: two numbers, four revisions apart, and no way to tell whether
+    one case flipped twice or two cases flipped once.
+    """
+    rendered = _sampled(_perfect, _perfect, lambda _name: _all_pass()).render()
+    assert "reproducible | NO" in rendered
+    assert "Unstable across runs" in rendered
+    assert any(case.name in rendered for case in CASES)
+
+
+def test_the_report_says_reproducible_only_when_it_is():
+    rendered = _sampled(_perfect, _perfect, _perfect).render()
+    assert "reproducible | yes" in rendered
+    assert "Unstable across runs" not in rendered
+def test_the_billed_fixtures_assembly_works_before_anything_is_billed():
+    """**The plumbing of the billed benchmark, exercised for free.**
+
+    `test_judge_benchmark`'s fixture is the one piece of this package that cannot be run without
+    spending, and everything it does apart from calling a model is ordinary code: loop `SAMPLES`
+    times, score every case per run, wrap them in `BenchmarkSummary`, wrap those in
+    `SampledBenchmark`, render. A mistake anywhere in that chain would surface only after the money
+    was gone -- which is how the first two billed runs of this benchmark were discovered to have
+    recorded no usage and kept no rationales.
+
+    So the same construction runs here against the stub seam every other test uses. What a real run
+    adds is real judge variance; what this establishes is that the harness assembles and reports.
+    """
+    source = "       IDENTIFICATION DIVISION.\n"
+    samples = tuple(
+        BenchmarkSummary(
+            results=tuple(
+                judge_case(case, source, adjudicate=lambda _s, _u, name=case.name: _perfect(name))
+                for case in CASES
+            ),
+            model="stub-model",
+        )
+        for _ in range(3)
+    )
+    sampled = SampledBenchmark(samples=samples, model="stub-model")
+
+    assert len(sampled.samples) == 3
+    assert all(len(sample.results) == len(CASES) for sample in sampled.samples)
+    assert sampled.detection(ground=Ground.ORACLE).values == (1.0, 1.0, 1.0)
+    assert sampled.is_reproducible
+    rendered = sampled.render()
+    assert "reproducible | yes" in rendered and "oracle-grounded detection" in rendered
+
+    # Every per-run block the fixture prints has to render too -- a benchmark that fails its bars
+    # and then raises while reporting why is a benchmark that has to be paid for twice.
+    for sample in sampled.samples:
+        assert sample.render()
+        assert sample.render_disagreements() == "(no disagreements)"
+# --- A candidate that cannot hold the response contract ------------------------------------------
+#
+# **Measured from a real billed run.** `claude-haiku-4-5` answered the first case with a prose
+# preamble -- *"Looking at this Java processor against the COBOL paragraph 1300-B-WRITE-TX, I need to
+# examine fidelity against each..."* -- ahead of its fenced JSON, where the prompt says *"Respond
+# with a JSON array and nothing else."* That aborted the whole benchmark on its first call and
+# discarded the seventeen it had already been paid for.
+#
+# The pipeline still refuses such a response. The *benchmark* records it, because "this candidate
+# cannot answer" is the most decisive thing a candidate comparison can discover.
+
+_PROSE_THEN_JSON = (
+    "Looking at this Java processor against the COBOL paragraph, I need to examine each "
+    "criterion in turn.\n\n```json\n[]\n```"
+)
+
+
+def test_a_response_with_a_prose_preamble_is_recorded_rather_than_raised():
+    """The exact shape a real candidate produced, and the reason `attempt_case` exists."""
+    case = CASES[0]
+    outcome = attempt_case(case, "source", adjudicate=lambda _s, _u: _PROSE_THEN_JSON)
+
+    assert isinstance(outcome, MalformedResponse)
+    assert outcome.case_name == case.name
+    assert outcome.error == "JudgeResponseParseError"
+    assert "Looking at this Java processor" in outcome.excerpt, (
+        "the excerpt has to show *how* the contract was broken, or a report of it is unactionable"
+    )
+
+
+def test_judge_case_still_raises_on_the_same_response():
+    """`attempt_case` is a benchmark affordance and must not soften the pipeline's refusal.
+
+    Everywhere outside a candidate comparison there is one judge, and a broken answer from it is a
+    broken run -- ADR-0024's whole argument for pinning the model is that the instrument must not
+    drift quietly.
+    """
+    with pytest.raises(JudgeResponseParseError):
+        judge_case(CASES[0], "source", adjudicate=lambda _s, _u: _PROSE_THEN_JSON)
+
+
+def test_a_run_with_a_malformed_response_is_not_reported_as_answered():
+    summary = BenchmarkSummary(
+        results=(),
+        model="stub",
+        malformed=(MalformedResponse("some_case", "JudgeResponseParseError", "prose..."),),
+    )
+    assert not summary.answered_everything
+    assert not SampledBenchmark(samples=(summary, summary)).answered_everything
+
+
+def test_rates_over_a_partial_answer_set_are_flagged_in_the_report():
+    """**The trap this guards.** Every rate is computed over the cases the judge answered.
+
+    So a candidate that fails to answer its *hardest* cases and answers the rest correctly reports a
+    better detection rate than one that answered them all and got a single verdict wrong. The number
+    is not wrong arithmetically; it is a measurement of a different, easier corpus. The report has to
+    say so on its face, because a table of rates is what gets quoted.
+    """
+    perfect = _summary(_perfect)
+    crippled = BenchmarkSummary(
+        results=perfect.results,
+        model="stub",
+        malformed=(MalformedResponse("hardest_case", "JudgeResponseParseError", "prose..."),),
+    )
+    sampled = SampledBenchmark(samples=(crippled, crippled), model="stub")
+
+    # The arithmetic still says 1.00 -- which is exactly why the caveat has to be printed with it.
+    assert sampled.detection().mean == 1.0
+    rendered = sampled.render()
+    assert "Malformed responses" in rendered
+    assert "not a measurement of this candidate" in rendered
+    assert "hardest_case" in rendered
+# --- Verdict churn: measured from the first real sampled run --------------------------------------
+
+
+def test_a_stable_score_can_hide_an_unstable_judge():
+    """**The finding the first billed sampled run produced, pinned as a test.**
+
+    Opus 5 returned `1.00 / 0.67 / 0.00` on all three runs with no unstable case -- and its raw
+    verdicts moved anyway. It flagged `fixed_width_text` on `interest_rounds` in run 1, not in
+    run 2, and on `interest_faithful` in run 3. Every one of those runs scored identically, because a
+    case is `correct` as long as its defect was caught and a criterion the case genuinely violates
+    is excluded from its false positives.
+
+    So *"the numbers repeat"* and *"the judge says the same thing"* are different claims. The first
+    is what pillar 22's criterion needs and what this harness bars on. The second is the leading
+    indicator: churn is what crosses a threshold later and moves a rate, which is the most likely
+    mechanism behind R2.23's 6-of-6 becoming R2.27's 4-of-6.
+    """
+    case = CASES[1]
+    extra = next(c.id for c in CRITERIA if c.id != case.failing_criterion)
+
+    def _run(with_extra: bool) -> BenchmarkSummary:
+        flags = {case.failing_criterion: "fail"}
+        if with_extra:
+            flags[extra] = "fail"
+        return BenchmarkSummary(
+            results=(
+                score_case(case, parse_judge_response(_response(**flags))),
+            ),
+            model="stub",
+        )
+
+    sampled = SampledBenchmark(samples=(_run(True), _run(False)), model="stub")
+
+    churn = sampled.unstable_verdicts()
+    assert case.name in churn, "the judge answered differently and the harness has to notice"
+    assert len(set(churn[case.name])) == 2
+
+    rendered = sampled.render()
+    assert "Verdict churn" in rendered
+    assert "recorded rather than barred" in rendered.lower()
+
+
+def test_verdict_churn_is_reported_but_does_not_fail_reproducibility():
+    """Barring on churn would fail a judge whose reported numbers are perfectly stable.
+
+    That is the wrong trade: the rates are what get quoted, and a harness that refused a judge for
+    varying on a criterion its scoring already accounts for would be unusable. The churn is recorded
+    so the *next* surprise is diagnosable, not so this one is punished.
+    """
+    case = CASES[1]
+    extra = next(c.id for c in CRITERIA if c.id != case.failing_criterion)
+
+    def _run(with_extra: bool) -> BenchmarkSummary:
+        flags = {case.failing_criterion: "fail"}
+        if with_extra:
+            flags[extra] = "fail"
+        return BenchmarkSummary(
+            results=(score_case(case, parse_judge_response(_response(**flags))),), model="stub"
+        )
+
+    sampled = SampledBenchmark(samples=(_run(True), _run(True)), model="stub")
+    assert sampled.unstable_verdicts() == {}, "identical verdicts are not churn"
+    assert sampled.is_reproducible
