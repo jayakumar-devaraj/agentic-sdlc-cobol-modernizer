@@ -60,9 +60,10 @@ from tests.evaluations.judge import (
     CANDIDATE_JUDGES,
     DEFAULT_SAMPLES,
     BenchmarkSummary,
+    CaseResult,
     SampledBenchmark,
     adjudicator_for,
-    judge_case,
+    attempt_case,
 )
 
 FIXTURE_ROOT = Path(__file__).resolve().parents[1] / "fixtures" / "tenant_repo_sample"
@@ -96,14 +97,20 @@ def sampled(request) -> SampledBenchmark:
     # price is unknown is awkward in a repo whose § 4b argument is about cost per unit of review --
     # and the first two runs of this benchmark could not say, because nothing bound an accumulator.
     with collect_usage() as usage:
-        samples = tuple(
-            BenchmarkSummary(
-                results=tuple(judge_case(case, source, adjudicate=adjudicate) for case in CASES),
-                model=model,
+        samples = []
+        for _ in range(SAMPLES):
+            # `attempt_case` rather than `judge_case`: a candidate that cannot hold the response
+            # contract is the most decisive thing this comparison can find, and aborting on it would
+            # turn that finding into a stack trace and discard the calls already paid for.
+            outcomes = [attempt_case(case, source, adjudicate=adjudicate) for case in CASES]
+            samples.append(
+                BenchmarkSummary(
+                    results=tuple(o for o in outcomes if isinstance(o, CaseResult)),
+                    model=model,
+                    malformed=tuple(o for o in outcomes if not isinstance(o, CaseResult)),
+                )
             )
-            for _ in range(SAMPLES)
-        )
-    rendered = SampledBenchmark(samples=samples, model=model)
+    rendered = SampledBenchmark(samples=tuple(samples), model=model)
 
     print(f"\n\n===== {model}, {SAMPLES} runs =====")
     print(
@@ -118,6 +125,8 @@ def sampled(request) -> SampledBenchmark:
     # what it looked like each time it did.
     for index, sample in enumerate(samples, start=1):
         print(f"--- run {index} of {SAMPLES} ---")
+        if sample.malformed:
+            print(f"malformed: {[bad.case_name for bad in sample.malformed]}")
         print(sample.render())
         print(
             f"oracle detection {sample.detection_rate(ground=Ground.ORACLE):.2f}  "
@@ -126,6 +135,30 @@ def sampled(request) -> SampledBenchmark:
         )
         print(f"{sample.render_disagreements()}\n")
     return rendered
+
+
+def test_the_judge_answers_in_the_contracted_format_every_time(sampled):
+    """**The first bar, because every number below is computed over the cases that were answered.**
+
+    The prompt says *"Respond with a JSON array and nothing else."* A candidate that prepends prose,
+    truncates, or invents a criterion id is not a judge that scored badly — it is a judge whose
+    score cannot be computed, and the rates would quietly be taken over the subset it managed. A
+    candidate failing to answer its hardest cases would then report a *better* detection rate than
+    one that answered them all and got one wrong.
+
+    Recorded rather than raised (`attempt_case`) so a failing candidate still produces a measured
+    rate instead of a stack trace on its first call. A candidate that fails this is struck from
+    `CANDIDATE_JUDGES` with the evidence written down, exactly as both Sonnets were for
+    `spec_extractor`.
+    """
+    assert sampled.answered_everything, (
+        f"{sampled.model} returned {len(sampled.malformed)} unparseable response(s) across "
+        f"{len(sampled.samples)} runs: "
+        f"{[(bad.case_name, bad.error) for bad in sampled.malformed]}. First excerpt: "
+        f"{sampled.malformed[0].excerpt if sampled.malformed else ''!r}. A model that cannot hold "
+        f"the response contract is not eligible to be this judge, and the rates reported for it are "
+        f"computed over the subset it answered rather than over the corpus"
+    )
 
 
 def test_the_judge_catches_every_defect_a_real_jvm_already_catches(sampled):

@@ -29,8 +29,10 @@ from tests.evaluations.judge import (
     SYSTEM_PROMPT,
     BenchmarkSummary,
     JudgeResponseParseError,
+    MalformedResponse,
     SampledBenchmark,
     Spread,
+    attempt_case,
     build_judge_prompt,
     judge_case,
     parse_judge_response,
@@ -593,3 +595,76 @@ def test_the_billed_fixtures_assembly_works_before_anything_is_billed():
     for sample in sampled.samples:
         assert sample.render()
         assert sample.render_disagreements() == "(no disagreements)"
+# --- A candidate that cannot hold the response contract ------------------------------------------
+#
+# **Measured from a real billed run.** `claude-haiku-4-5` answered the first case with a prose
+# preamble -- *"Looking at this Java processor against the COBOL paragraph 1300-B-WRITE-TX, I need to
+# examine fidelity against each..."* -- ahead of its fenced JSON, where the prompt says *"Respond
+# with a JSON array and nothing else."* That aborted the whole benchmark on its first call and
+# discarded the seventeen it had already been paid for.
+#
+# The pipeline still refuses such a response. The *benchmark* records it, because "this candidate
+# cannot answer" is the most decisive thing a candidate comparison can discover.
+
+_PROSE_THEN_JSON = (
+    "Looking at this Java processor against the COBOL paragraph, I need to examine each "
+    "criterion in turn.\n\n```json\n[]\n```"
+)
+
+
+def test_a_response_with_a_prose_preamble_is_recorded_rather_than_raised():
+    """The exact shape a real candidate produced, and the reason `attempt_case` exists."""
+    case = CASES[0]
+    outcome = attempt_case(case, "source", adjudicate=lambda _s, _u: _PROSE_THEN_JSON)
+
+    assert isinstance(outcome, MalformedResponse)
+    assert outcome.case_name == case.name
+    assert outcome.error == "JudgeResponseParseError"
+    assert "Looking at this Java processor" in outcome.excerpt, (
+        "the excerpt has to show *how* the contract was broken, or a report of it is unactionable"
+    )
+
+
+def test_judge_case_still_raises_on_the_same_response():
+    """`attempt_case` is a benchmark affordance and must not soften the pipeline's refusal.
+
+    Everywhere outside a candidate comparison there is one judge, and a broken answer from it is a
+    broken run -- ADR-0024's whole argument for pinning the model is that the instrument must not
+    drift quietly.
+    """
+    with pytest.raises(JudgeResponseParseError):
+        judge_case(CASES[0], "source", adjudicate=lambda _s, _u: _PROSE_THEN_JSON)
+
+
+def test_a_run_with_a_malformed_response_is_not_reported_as_answered():
+    summary = BenchmarkSummary(
+        results=(),
+        model="stub",
+        malformed=(MalformedResponse("some_case", "JudgeResponseParseError", "prose..."),),
+    )
+    assert not summary.answered_everything
+    assert not SampledBenchmark(samples=(summary, summary)).answered_everything
+
+
+def test_rates_over_a_partial_answer_set_are_flagged_in_the_report():
+    """**The trap this guards.** Every rate is computed over the cases the judge answered.
+
+    So a candidate that fails to answer its *hardest* cases and answers the rest correctly reports a
+    better detection rate than one that answered them all and got a single verdict wrong. The number
+    is not wrong arithmetically; it is a measurement of a different, easier corpus. The report has to
+    say so on its face, because a table of rates is what gets quoted.
+    """
+    perfect = _summary(_perfect)
+    crippled = BenchmarkSummary(
+        results=perfect.results,
+        model="stub",
+        malformed=(MalformedResponse("hardest_case", "JudgeResponseParseError", "prose..."),),
+    )
+    sampled = SampledBenchmark(samples=(crippled, crippled), model="stub")
+
+    # The arithmetic still says 1.00 -- which is exactly why the caveat has to be printed with it.
+    assert sampled.detection().mean == 1.0
+    rendered = sampled.render()
+    assert "Malformed responses" in rendered
+    assert "not a measurement of this candidate" in rendered
+    assert "hardest_case" in rendered

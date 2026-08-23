@@ -366,12 +366,62 @@ def judge_case(
     return score_case(case, parse_judge_response(raw))
 
 
+def attempt_case(
+    case: EvalCase,
+    cobol_source: str,
+    *,
+    adjudicate: AdjudicateFn = _default_adjudicate,
+) -> CaseResult | MalformedResponse:
+    """`judge_case`, but a response the contract forbids comes back as data.
+
+    **Only the candidate benchmark uses this.** Everywhere else a malformed judge response should
+    raise, because everywhere else there is one judge and a broken answer from it is a broken run.
+    A benchmark exists precisely to find out whether a candidate *can* answer, and that question has
+    an answer worth recording rather than an exception worth propagating.
+    """
+    raw = adjudicate(SYSTEM_PROMPT, build_judge_prompt(case, cobol_source))
+    try:
+        return score_case(case, parse_judge_response(raw))
+    except JudgeResponseParseError as error:
+        return MalformedResponse(
+            case_name=case.name,
+            error=type(error).__name__,
+            # Enough of the response to see *how* it broke the contract -- prose preamble, prose
+            # epilogue, truncation -- without pasting a page of it into a report.
+            excerpt=" ".join(raw.split())[:160],
+        )
+
+
+@dataclass(frozen=True)
+class MalformedResponse:
+    """A case the judge answered in a shape the contract forbids, kept rather than raised.
+
+    **Why this is data and not an exception.** `parse_judge_response` is deliberately strict, and it
+    is right to be: a judge that answers three of four criteria and is scored as though the fourth
+    passed would report a miss as a clean run. But a *benchmark comparing candidates* has a
+    different job from a pipeline node. "This model cannot hold the response contract" is the single
+    most decisive thing a candidate comparison can discover, and a harness that aborts on it turns
+    its most useful finding into a stack trace and loses the other seventeen calls it had paid for.
+
+    So the pipeline still refuses, and the benchmark records.
+    """
+
+    case_name: str
+    error: str
+    excerpt: str
+
+
 @dataclass(frozen=True)
 class BenchmarkSummary:
     """A whole run, reported so the two grounds cannot be quietly averaged together.
 
     Mixing them would let four agreements with this repo's own reading of the COBOL outvote a
     disagreement with a real JVM, which is the direction of error this package exists to avoid.
+
+    **`malformed` is not cosmetic and the rates below are not valid without it.** Every rate here is
+    computed over cases the judge actually answered, so a candidate that fails to answer the hard
+    ones would score perfectly on the remainder. `answered_everything` is the guard, and the
+    benchmark bars on it before it reads any rate.
     """
 
     results: tuple[CaseResult, ...]
@@ -380,6 +430,13 @@ class BenchmarkSummary:
     #: candidates, an assertion message naming the *pinned* model while reporting a candidate's score
     #: is worse than no message.
     model: str = ""
+    #: Cases whose response could not be parsed at all. See the class docstring: the rates below
+    #: mean nothing unless this is empty.
+    malformed: tuple[MalformedResponse, ...] = ()
+
+    @property
+    def answered_everything(self) -> bool:
+        return not self.malformed
 
     def _subset(
         self, *, ground: Ground | None = None, defective: bool | None = None
@@ -532,6 +589,15 @@ class SampledBenchmark:
     def false_positives(self, *, ground: Ground | None = None) -> Spread:
         return Spread(tuple(s.false_positive_rate(ground=ground) for s in self.samples))
 
+    @property
+    def malformed(self) -> tuple[MalformedResponse, ...]:
+        """Every unparseable response across every run, flattened."""
+        return tuple(bad for sample in self.samples for bad in sample.malformed)
+
+    @property
+    def answered_everything(self) -> bool:
+        return all(sample.answered_everything for sample in self.samples)
+
     def unstable_cases(self) -> dict[str, tuple[int, int]]:
         """Cases the judge did not score the same way every time: name -> (correct runs, total).
 
@@ -580,6 +646,16 @@ class SampledBenchmark:
             f"| false-positive rate | {self.false_positives().render()} |",
             f"| reproducible | {'yes' if self.is_reproducible else 'NO'} |",
         ]
+        if self.malformed:
+            lines.append("")
+            lines.append(
+                f"**Malformed responses — {len(self.malformed)} of "
+                f"{sum(len(s.results) + len(s.malformed) for s in self.samples)} calls did not hold "
+                f"the response contract.** Every rate above is computed over the answered cases "
+                f"only and is not a measurement of this candidate:"
+            )
+            for bad in self.malformed:
+                lines.append(f"- `{bad.case_name}`: {bad.error} — {bad.excerpt}")
         unstable = self.unstable_cases()
         if unstable:
             lines.append("")
