@@ -664,3 +664,88 @@ def test_the_account_comparison_would_catch_a_wrong_balance(built):
     mutated[3]["ACCT-CURR-BAL"] = FieldValue("ACCT-CURR-BAL", "00000000001{", 2)
     result = compare(mutated, oracle, ACCOUNT_LAYOUT, {})
     assert any("record 3 ACCT-CURR-BAL" in mismatch for mismatch in result.mismatches)
+#: `CVTRA01Y`'s TRAN-CAT-BAL-RECORD, 50 bytes -- the **third** file this program writes.
+#:
+#: Written out here rather than in `test_cobol_oracle_comparison` because `CBACT04C` only ever reads
+#: this record; `CBTRN02C` is the program that produces it, and the comparison's view of a layout
+#: belongs with the comparison that uses it.
+#:
+#: The trailing `FILLER PIC X(22)` is omitted, the same way `ACCOUNT_LAYOUT` omits its `X(178)`:
+#: ADR-0029 compares field contents and leaves record framing out of scope.
+TCATBAL_LAYOUT: tuple[tuple[str, int, int, int | None], ...] = (
+    ("TRANCAT-ACCT-ID", 0, 11, 0),
+    ("TRANCAT-TYPE-CD", 11, 2, None),
+    ("TRANCAT-CD", 13, 4, 0),
+    ("TRAN-CAT-BAL", 17, 11, 2),
+)
+
+
+def _tcatbal_key(record: dict[str, FieldValue]) -> str:
+    """The composite `TRAN-CAT-KEY`, which is what the indexed file is ordered by."""
+    return (
+        record["TRANCAT-ACCT-ID"].raw + record["TRANCAT-TYPE-CD"].raw + record["TRANCAT-CD"].raw
+    )
+
+
+def test_the_balance_file_matches_field_for_field_with_nothing_excluded(built):
+    """**The third file, and the one that completes the claim.**
+
+    `CBACT04C` writes two files and both are compared, which is what `1 of 4` has always meant.
+    `CBTRN02C` writes three in scope -- the transaction master, the account file, and this -- so
+    comparing two of them would have been a weaker measurement wearing the same name. `DALYREJS` is
+    the fourth and is scoped out of generation by ADR-0038, not by convenience.
+
+    **Nothing is excluded.** `2700-UPDATE-TCATBAL` moves all three key parts from the transaction
+    and the cross-reference, then accumulates the amount into the balance -- four fields, all
+    producible. It is also the half that exercises `upsert` (ADR-0037) and `optional_lookups`
+    (ADR-0042) against real data: 50 rows are read and 50 more are created.
+    """
+    candidate = parse_fixed_records(built / CANDIDATE_BALANCES, TCATBAL_LAYOUT, 50)
+    oracle = parse_fixed_records(_oracle("tcatbal-posted.dat"), TCATBAL_LAYOUT, 50)
+
+    result = compare(
+        sorted(candidate, key=_tcatbal_key), sorted(oracle, key=_tcatbal_key), TCATBAL_LAYOUT, {}
+    )
+    assert result.passed, "\n".join(result.mismatches[:10])
+    assert result.compared == 100 * len(TCATBAL_LAYOUT)
+    print(f"\nCBTRN02C balances: {result.render()}")
+
+
+def test_the_balance_comparison_would_catch_a_wrong_total(built):
+    """Shown to fail on the real candidate, and on the field the `upsert` accumulates into."""
+    candidate = sorted(
+        parse_fixed_records(built / CANDIDATE_BALANCES, TCATBAL_LAYOUT, 50), key=_tcatbal_key
+    )
+    oracle = sorted(
+        parse_fixed_records(_oracle("tcatbal-posted.dat"), TCATBAL_LAYOUT, 50), key=_tcatbal_key
+    )
+    mutated = [dict(record) for record in candidate]
+    mutated[5]["TRAN-CAT-BAL"] = FieldValue("TRAN-CAT-BAL", "0000000000A", 2)
+    result = compare(mutated, oracle, TCATBAL_LAYOUT, {})
+    assert any("record 5 TRAN-CAT-BAL" in mismatch for mismatch in result.mismatches)
+
+
+def test_every_in_scope_file_this_program_writes_is_compared(built):
+    """The check that stops the claim quietly narrowing to whichever files were easy.
+
+    `CBTRN02C` writes four files. Three are compared field-for-field above; the fourth, `DALYREJS`,
+    is refused by name in the job (ADR-0038) -- a decision rather than an omission, and the job
+    would name it if it were generated.
+
+    Asserted as an **exact** set rather than a subset: a fourth output appearing in the job's output
+    directory should fail here, because the round-trip claim is about everything the program writes.
+    """
+    output_dir = built / "roundtrip" / "output"
+    assert {path.name for path in output_dir.iterdir()} == {CANDIDATE_TRANSACTIONS.name}, (
+        "an output this comparison does not cover would make the round-trip claim narrower than "
+        "it reads"
+    )
+
+    # The other two are rewritten in place, which is what `replace` and `upsert` mean here.
+    for relative in (CANDIDATE_ACCOUNTS, CANDIDATE_BALANCES):
+        assert (built / relative).is_file(), f"{relative} was never produced"
+
+    assert not list((built / "roundtrip").glob("**/dalyrejs*")), (
+        "ADR-0038 scopes the reject file out of generation; if it starts being written it needs a "
+        "comparison of its own before the round-trip count can include this program"
+    )
