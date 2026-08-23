@@ -148,10 +148,24 @@ JOB = BatchJobDesign(
 #: `Z-GET-DB2-FORMAT-TIMESTAMP` reads a clock, and a body may not (ADR-0026's
 #: `NonDeterministicBodyError`). A fixed instant keeps the run reproducible; the field is excluded
 #: from the comparison for exactly this reason, so the value never stands in for COBOL's.
-_PROC_TS = '"2026-08-12-00.00.00.000000"'
+#: **Spaces, not a literal, and the judge is why.** `TRAN-PROC-TS` is `PIC X(26)` and the COBOL fills
+#: it from `FUNCTION CURRENT-DATE` per record -- a source no input to this step supplies, which is
+#: exactly why the differential excludes it (`CBTRN02C_EXCLUSIONS`).
+#:
+#: This was a hardcoded timestamp until the eval judge flagged it as an invented value on all three
+#: runs of ADR-0050's benchmark, and it was right: the rubric's `no_invented_values` says a field
+#: whose source is not reachable must be **left unset**, never invented. A literal passes the
+#: differential precisely because the field is excluded from it, so nothing else in this repository
+#: was ever going to catch it.
+#:
+#: The model-authored body reached the same answer unprompted and wrote spaces. This makes the
+#: scripted body agree with it, and makes `posting_faithful` a clean specimen for all four criteria
+#: rather than one carrying a declared impurity.
+_PROC_TS = "CobolText.spaces(26)"
 
 _IMPORTS = [
     "java.math.BigDecimal",
+    "com.modernized.batch.cobol.CobolText",
     f"{DEFAULT_DOMAIN_PACKAGE}.Account",
     f"{DEFAULT_DOMAIN_PACKAGE}.PostingResult",
     f"{DEFAULT_DOMAIN_PACKAGE}.Tran",
