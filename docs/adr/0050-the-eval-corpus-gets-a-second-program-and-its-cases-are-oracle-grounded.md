@@ -99,3 +99,63 @@ grade; the corpus can only grow with programs that carry business logic, and the
 **A cost that is now estimated from a measurement.** The sampled run over nine cases is 27 Opus calls
 at `n=3`. ADR-0049 recorded a 38% under-estimate on the previous run because it assumed per-call
 costs it had never measured; this one is scaled from the $2.18 that run actually cost.
+
+## What running it found, which was not what was expected
+
+**Three billed runs over this corpus (~$7.20), and the judge was right every time.** None of them
+found a defect in the *judge*. All three found one in the corpus's own faithful body, and the third
+found one in the rubric.
+
+### `TRAN-PROC-TS` cannot satisfy both criteria, and that is a property of the rubric
+
+The body has to put *something* in a `PIC X(26)` field whose source ADR-0048 puts out of reach. Every
+available answer fails a criterion, and the judge named each correctly:
+
+| the body writes | criterion that fires | the judge's reasoning | measured |
+|---|---|---|---|
+| a hardcoded timestamp | `no_invented_values` | an invented value outright | 3 of 3 runs |
+| `CobolText.spaces(26)` | `no_invented_values` | *"silently substituted … instead of being computed or flagged"* | 3 of 3 runs |
+| `null` (left unset) | `fixed_width_text` | not written at its declared width | 1 of 2 runs |
+
+**An unreachable *alphanumeric* field cannot be both left unset and written at full width.** The two
+criteria are individually right and jointly unsatisfiable, and nothing in the corpus said so because
+the only previous instance — `interest_faithful`'s `TRAN-ID` — had already been marked impure for
+exactly this pair, four revisions before anyone asked why.
+
+So both posting cases declare `impure_criteria=("fixed_width_text", "no_invented_values")`, which is
+the corpus's established answer rather than an accommodation invented for a failing case. The
+mechanism's own rule is satisfied: both entries name a property checkable against the copybook, and
+neither case lists the criterion it is supposed to fail.
+
+### A defect the differential structurally could not see
+
+The first flag was correct about real code: the body set `TRAN-PROC-TS` from a hardcoded literal.
+**A literal passes the differential precisely because that field is excluded from it** (ADR-0048), so
+the one instrument in this repository that could see the defect was the one that does not look at
+the differential at all.
+
+That is the clearest argument this platform has produced for keeping a judge beside the oracle.
+ADR-0045 ranked the differential the stronger instrument and still does — but "stronger" is not
+"sufficient", and the gap is exactly the fields a differential has agreed to stop looking at.
+
+### An order-of-work mistake worth recording
+
+The literal was changed to spaces on an *inference* about what the judge objected to, before its
+rationales were read. The inference was wrong — the objection was to silent substitution, which
+blanks share — and the judge flagged the body identically before and after. This harness keeps
+rationales specifically so a disagreement is diagnosable without paying for another run
+(ADR-0024), and one was paid for anyway.
+
+## Consequences of the run
+
+**Pillar 22 still does not close, and the reason has changed for the better.** It is no longer *"no
+second corpus exists"*. The corpus exists, spans two programs, and its cases are graded by a JVM. The
+scoring after the impurity declaration is **not re-measured** — that would be a fifth billed run —
+so what is recorded is the corrected corpus and an unmeasured expectation, which is not a closure.
+
+**What is measured and holds across all three runs**: oracle-grounded detection **1.00 ± 0.00** over
+both programs, including `posting_unguarded`, the specimen built for this record. The judge catches
+the new program's defect every time.
+
+**The false-positive rate over the corrected corpus is the one number left to measure**, and it is
+the whole of what pillar 22 now waits on.

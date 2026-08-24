@@ -431,10 +431,20 @@ CASES: tuple[EvalCase, ...] = (
         body=_POSTING_BODY,
         imports=tuple(_POSTING_IMPORTS),
         failing_criterion=None,
-        # No impurity to declare. Unlike the interest bodies, this one builds no intermediate carrier
-        # with placeholder fields -- every field it sets is copied from an input at full width, which
-        # is exactly why the differential compares `TRAN-ID` and `TRAN-ORIG-TS` here (ADR-0048).
-        impure_criteria=(),
+        # **The two criteria are unsatisfiable together here, and that is a finding about the rubric
+        # rather than about this body** (ADR-0050). `TRAN-PROC-TS` is `PIC X(26)` and ADR-0048 puts
+        # it out of reach -- the COBOL fills it from `FUNCTION CURRENT-DATE` per record. An
+        # unreachable *alphanumeric* field therefore cannot satisfy both:
+        #
+        #   - write 26 spaces, and `no_invented_values` fires -- measured, three runs of three:
+        #     *"silently substituted ... instead of being computed or flagged"*;
+        #   - leave it unset, and `fixed_width_text` fires -- measured, one run of two: it is not
+        #     written at its declared width.
+        #
+        # The judge is right both times. `interest_faithful` declares the identical pair for the
+        # identical reason (`TRAN-ID`, out of reach by ADR-0026), which is what makes this the
+        # corpus's established answer rather than an accommodation invented for a failing case.
+        impure_criteria=("fixed_width_text", "no_invented_values"),
         ground=Ground.ORACLE,
         evidence=(
             "the strongest faithful case in this corpus: under real Maven it matches CBTRN02C's own "
@@ -452,7 +462,9 @@ CASES: tuple[EvalCase, ...] = (
         body=_POSTING_UNGUARDED,
         imports=tuple(_POSTING_IMPORTS),
         failing_criterion="guard_applied",
-        impure_criteria=(),
+        # The same `TRAN-PROC-TS` tension as its faithful sibling -- this body differs from it by one
+        # `if` and nothing else, so it inherits the impurity along with everything else.
+        impure_criteria=("fixed_width_text", "no_invented_values"),
         ground=Ground.ORACLE,
         evidence=(
             "the faithful body minus `1500-B-LOOKUP-ACCT`'s credit-limit check, and nothing else. "
