@@ -343,3 +343,67 @@ and ADR-0048 makes that tractable.
 Haiku's verbosity. An evaluation harness whose own price is mis-estimated by 38% is a small irony in
 a repo whose § 4b argument is about cost per unit of review, and the number is written down so the
 next estimate starts from a measurement.
+### A second program in the eval corpus, and what three billed runs found
+
+**Why a second program.** ADR-0049 measured the pinned judge reproducible and deliberately did not
+close pillar 22: every case derived from `CBACT04C`, so the harness measured a judge against one
+program's idioms and reported it as a property of the judge. ADR-0044's rule needs a second instance.
+
+**Both new cases are `ORACLE`-grounded**, which was the expensive choice and the point. They could
+have been read off the COBOL and labelled; instead:
+
+- `posting_faithful` is the exact body `test_cbtrn02c_round_trip` runs under real Maven, matched
+  against `CBTRN02C`'s own output on **4,144 fields** (ADR-0048).
+- `posting_unguarded` is that body **minus one `if`**. Command and real output:
+
+```
+$ pytest tests/system/test_cbtrn02c_round_trip.py -q -s -k "dropped_guard or unguarded"
+unguarded CBTRN02C: 300 records against the oracle's 262
+2 passed in 56.34s
+```
+
+With no credit-limit guard **every one of the 300 daily transactions posts** — the expiry guard
+rejects none on this corpus. That trips the hand-written wiring's own run assertion
+(`written > 0 && written < 300`) and fails the Maven build *before* the differential is consulted, so
+the defect is caught twice over for free.
+
+**Three billed runs over the corpus, ~$7.20, and none of them found a defect in the judge.**
+
+```
+===== claude-opus-5, 3 runs (27 calls, $2.40) =====
+| oracle-grounded detection | 1.00 ± 0.00 |
+| false-positive rate       | 0.33 ± 0.00 |   <- posting_faithful, all 3 runs
+```
+
+**The flag was correct about real code.** The body set `TRAN-PROC-TS` from a hardcoded timestamp,
+where the COBOL fills it from `FUNCTION CURRENT-DATE` per record. **A literal passes the differential
+precisely because ADR-0048 excludes that field from it** — so the one instrument in this repository
+that could see the defect was the one that does not look at the differential at all. That is the
+clearest argument this platform has produced for keeping a judge beside the oracle.
+
+**Then the rubric turned out to have an unsatisfiable pair.** Every available value for that field
+fails a criterion, and the judge named each correctly:
+
+| the body writes | criterion that fires | measured |
+|---|---|---|
+| a hardcoded timestamp | `no_invented_values` | 3 of 3 runs |
+| `CobolText.spaces(26)` | `no_invented_values` — *"silently substituted"* | 3 of 3 runs |
+| `null` (left unset) | `fixed_width_text` — not at declared width | 1 of 2 runs |
+
+An unreachable **alphanumeric** field cannot be both left unset and written at full width. Both
+posting cases now declare `impure_criteria=("fixed_width_text", "no_invented_values")` — the same
+pair `interest_faithful` has carried for `TRAN-ID` since long before anyone asked why, which is what
+makes it the corpus's established answer rather than an accommodation for a failing case.
+
+**An order-of-work mistake, recorded.** The literal was changed to spaces on an inference about what
+the judge objected to, *before its rationales were read*. The inference was wrong — the objection was
+to silent substitution, which blanks share — and the judge flagged the body identically before and
+after. This harness keeps rationales precisely so a disagreement is diagnosable without paying for
+another run, and one was paid for anyway.
+
+**Scope, stated exactly. Pillar 22 does not close, and the reason has changed.** It is no longer *"no
+second corpus exists"* — the corpus exists, spans two programs, and its cases are graded by a JVM.
+The scoring after the impurity declaration is **not re-measured**; that is a fifth billed run. What
+is measured and holds across all three: **oracle-grounded detection 1.00 ± 0.00 over both programs**,
+including the specimen built for this entry. The false-positive rate over the corrected corpus is the
+one number pillar 22 now waits on.

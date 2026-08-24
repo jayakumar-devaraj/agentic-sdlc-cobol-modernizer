@@ -20,6 +20,7 @@ from tests.evaluations.corpus import (
     CRITERIA,
     CRITERIA_BY_ID,
     FAITHFUL_CASES,
+    PROGRAM,
     UNFAITHFUL_CASES,
     Ground,
 )
@@ -211,7 +212,13 @@ def test_every_oracle_grounded_case_cites_a_test_that_still_exists():
     """
     import re
 
-    from tests.system import test_interest_equivalence
+    from tests.system import test_cbtrn02c_round_trip, test_interest_equivalence
+
+    # Searched across the modules that own the runs rather than one of them: the corpus spans two
+    # programs since ADR-0050, and a check hard-coded to the first program's module would have
+    # silently stopped covering the second -- which is the shape of guard that passes while
+    # enforcing nothing.
+    modules = (test_interest_equivalence, test_cbtrn02c_round_trip)
 
     for case in CASES:
         if case.ground is not Ground.ORACLE:
@@ -219,6 +226,67 @@ def test_every_oracle_grounded_case_cites_a_test_that_still_exists():
         cited = re.findall(r"\btest_\w+", case.evidence)
         assert cited, f"{case.name} is oracle-grounded but cites no test"
         for name in cited:
-            assert hasattr(test_interest_equivalence, name), (
-                f"{case.name} cites {name!r}, which no longer exists in test_interest_equivalence"
+            assert any(hasattr(module, name) for module in modules), (
+                f"{case.name} cites {name!r}, which no longer exists in "
+                f"{[m.__name__.rsplit('.', 1)[-1] for m in modules]}"
             )
+# --- The second instance (ADR-0050) ---------------------------------------------------------------
+
+
+def test_the_corpus_covers_more_than_one_program():
+    """**The property ADR-0044's rule is about, asserted rather than assumed.**
+
+    A corpus drawn from one program measures a judge against one program's idioms and reports it as
+    a property of the judge. Every case here derived from `CBACT04C` until ADR-0050, which is the
+    specific reason ADR-0049 could not close pillar 22 despite measuring the judge reproducible.
+
+    Asserted as a count rather than by naming `CBTRN02C`, so that removing the second program fails
+    here rather than leaving a rule about second instances enforced by nobody.
+    """
+    programs = {case.program for case in CASES}
+    assert len(programs) >= 2, f"a corpus of one program is not a second instance: {programs}"
+
+
+def test_each_program_contributes_a_faithful_case_and_a_defective_one():
+    """Neither half alone measures anything.
+
+    A program contributing only defective bodies cannot show a judge invents no false positives on
+    its idioms; one contributing only faithful bodies cannot show the judge detects anything there.
+    Both directions have to be present per program or the second instance is half an instance.
+    """
+    for program in sorted({case.program for case in CASES}):
+        cases = [case for case in CASES if case.program == program]
+        assert any(case.failing_criterion is None for case in cases), f"{program}: no faithful case"
+        assert any(
+            case.failing_criterion is not None for case in cases
+        ), f"{program}: no defective case"
+
+
+def test_the_second_program_is_graded_by_a_jvm_rather_than_a_reading():
+    """The weaker corpus would have been easy, and would have been worth much less.
+
+    `CBTRN02C`'s cases could have been `SOURCE`-grounded -- read the COBOL, write a plausible defect,
+    label it. Both are `ORACLE` instead: the faithful body is the one matched against COBOL's own
+    output on 4,144 fields, and the defective one is that body minus a single `if`, run under real
+    Maven and shown to write 300 records where COBOL writes 262.
+    """
+    for case in CASES:
+        if case.program == PROGRAM:
+            continue
+        assert case.ground is Ground.ORACLE, (
+            f"{case.name} is the second instance and is graded by a reading; the point of adding "
+            "it was that its verdicts come from a run"
+        )
+
+
+def test_the_second_programs_bodies_are_the_ones_that_were_actually_run():
+    """Imported, never retyped -- the same rule the interest bodies follow and for the same reason.
+
+    The moment a corpus body diverges from the string a JVM compiled, its `ORACLE` ground becomes a
+    claim about a body no JVM ever saw.
+    """
+    from tests.system.test_cbtrn02c_round_trip import _BODY, _UNGUARDED_BODY
+
+    by_name = {case.name: case for case in CASES}
+    assert by_name["posting_faithful"].body is _BODY
+    assert by_name["posting_unguarded"].body is _UNGUARDED_BODY

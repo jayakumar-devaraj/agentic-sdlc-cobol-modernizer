@@ -148,7 +148,25 @@ JOB = BatchJobDesign(
 #: `Z-GET-DB2-FORMAT-TIMESTAMP` reads a clock, and a body may not (ADR-0026's
 #: `NonDeterministicBodyError`). A fixed instant keeps the run reproducible; the field is excluded
 #: from the comparison for exactly this reason, so the value never stands in for COBOL's.
-_PROC_TS = '"2026-08-12-00.00.00.000000"'
+#: **Spaces, not a literal, and the judge is why.** `TRAN-PROC-TS` is `PIC X(26)` and the COBOL fills
+#: it from `FUNCTION CURRENT-DATE` per record -- a source no input to this step supplies, which is
+#: exactly why the differential excludes it (`CBTRN02C_EXCLUSIONS`).
+#:
+#: This was a hardcoded timestamp until the eval judge flagged it as an invented value on all three
+#: runs of ADR-0050's benchmark, and it was right: the rubric's `no_invented_values` says a field
+#: whose source is not reachable must be **left unset**, never invented. A literal passes the
+#: differential precisely because the field is excluded from it, so nothing else in this repository
+#: was ever going to catch it.
+#:
+#: **`null`, following the sibling this corpus already grades as faithful.** `_COMPLETE_BODY` writes
+#: `null` for `TRAN-ID` -- the field ADR-0026 puts out of reach for `CBACT04C` -- and the judge does
+#: not flag it. That is the criterion's own wording: *left unset*, not substituted.
+#:
+#: Two earlier attempts were both substitutions and both wrong. A hardcoded timestamp is an invented
+#: value outright. `CobolText.spaces(26)` reads better and is the same defect: the judge's rationale
+#: was *"silently substituted ... instead of being computed or flagged"*, and blanks are a
+#: substitution exactly as a literal is.
+_PROC_TS = "null"
 
 _IMPORTS = [
     "java.math.BigDecimal",
@@ -329,7 +347,7 @@ def _render_wiring_into(project: Path, design: UnifiedDesign) -> None:
     )
 
 
-def generate_wire_build_and_run(project: Path, design, entry, **generate_kwargs):
+def generate_wire_build_and_run(project: Path, design, entry, *, expect_build=True, **generate_kwargs):
     """Generate the processor, add the wiring, stage the corpus, build and run.
 
     Shared by the scripted path and the live one so that **the only difference between them is who
@@ -356,7 +374,11 @@ def generate_wire_build_and_run(project: Path, design, entry, **generate_kwargs)
         stage_as_fixed_records(CORPUS / source, staged / name, width)
 
     result = compile_project(project, goal="verify")
-    assert result.succeeded, "\n".join(d.message for d in result.diagnostics[:10])
+    # `expect_build=False` is for a **deliberately damaged** body, where the run failing is the
+    # finding rather than a problem. It is not a general escape hatch: the faithful path still
+    # asserts, so a real regression there cannot hide behind this parameter.
+    if expect_build:
+        assert result.succeeded, "\n".join(d.message for d in result.diagnostics[:10])
     return project, outcome
 
 
@@ -826,3 +848,88 @@ def test_a_model_authored_run_is_compared_against_the_same_oracle(tmp_path, desi
 
     for result in (transactions, accounts, balances):
         assert result.passed, "\n".join(result.mismatches[:10])
+#: `_BODY` with `1500-B-LOOKUP-ACCT`'s credit-limit guard removed, and nothing else changed.
+#:
+#: **A corpus specimen, and the only honest way to build one.** `tests/evaluations/` grades a judge
+#: against bodies whose expected verdict is *known*; the strongest form of knowing is that a real JVM
+#: already returned it. This body is derived from the faithful one by deleting one `if`, so a
+#: disagreement between the two runs is attributable to that guard and to nothing else -- the same
+#: construction `test_interest_equivalence` uses for `_ALWAYS_WRITES_BODY`.
+#:
+#: The guard it drops is the one ADR-0039 measured: judged per item, 25 of `CBTRN02C`'s 38 rejections
+#: are ordering rather than the transaction, so a body that never rejects at all writes strictly more
+#: than the program does.
+_UNGUARDED_BODY = _BODY.replace(
+    """if (item.account().acctCreditLimit().compareTo(projected) < 0) {
+    return null;
+}
+""",
+    "",
+)
+
+
+@pytest.fixture(scope="module")
+def built_unguarded(tmp_path_factory, design, entry):
+    """The same job with the credit-limit guard deleted, built and run for real.
+
+    A second Maven build, paid for deliberately: it is what turns *"dropping this guard would be a
+    defect"* from a reading of the COBOL into a verdict a JVM returned.
+    """
+    project, _ = generate_wire_build_and_run(
+        tmp_path_factory.mktemp("cbtrn02c-unguarded") / "target-project",
+        design,
+        entry,
+        expect_build=False,
+        author=lambda routing, s, u: json.dumps(
+            {"imports": list(_IMPORTS), "body": _UNGUARDED_BODY, "notes": ""}
+        ),
+        advise=lambda routing, s, u: json.dumps(
+            {"repairable": False, "reason": "scripted", "instruction": ""}
+        ),
+    )
+    return project
+
+
+def test_the_unguarded_body_differs_from_the_guard_and_nothing_else():
+    """The specimen is the faithful body minus one `if`, asserted rather than assumed.
+
+    If an edit to `_BODY` ever stops that replacement matching, this fails here rather than silently
+    producing a specimen identical to the faithful one -- which would make the corpus case built on
+    it a check that cannot fail.
+    """
+    assert _UNGUARDED_BODY != _BODY
+    assert "acctCreditLimit().compareTo(projected)" not in _UNGUARDED_BODY
+    assert "acctExpiraionDate()" in _UNGUARDED_BODY, "only the credit-limit guard is dropped"
+    assert len(_BODY) - len(_UNGUARDED_BODY) < 120, "one `if`, not a rewrite"
+
+
+def test_the_oracle_catches_the_dropped_guard(built_unguarded):
+    """**The verdict that makes this an `ORACLE`-grounded corpus case** — and it is caught twice.
+
+    Without the credit-limit check every one of the 300 daily transactions posts: the expiry guard
+    rejects none of them on this corpus, so the count goes straight from 262 to 300. That trips the
+    hand-written wiring's own run assertion (`written > 0 && written < 300`) and **fails the Maven
+    build before the differential is ever consulted**, which is why this fixture expects the build to
+    fail rather than asserting it succeeds.
+
+    Both levels are asserted here. A judge that misses this defect has missed one a real JVM catches
+    twice over, for free, on every run.
+    """
+    written = (built_unguarded / CANDIDATE_TRANSACTIONS).stat().st_size // 350
+    assert written > 262, (
+        "a body with no credit-limit guard must accept more than COBOL does; if this ever stops "
+        "being true the specimen is not a specimen"
+    )
+    assert written == 300, (
+        "and it accepts *everything* -- the expiry guard rejects nothing on this corpus, which is "
+        "what makes the count assertion in the wiring trip as well as the differential"
+    )
+
+    result = compare(
+        _in_key_order(parse_fixed_records(built_unguarded / CANDIDATE_TRANSACTIONS, TRAN_LAYOUT, 350)),
+        _in_key_order(parse_fixed_records(_oracle("transact-stage1.dat"), TRAN_LAYOUT, 350)),
+        TRAN_LAYOUT,
+        CBTRN02C_EXCLUSIONS,
+    )
+    assert not result.passed, "the differential has to see it, or the ground is not ORACLE"
+    print(f"\nunguarded CBTRN02C: {written} records against the oracle's 262")
