@@ -35,7 +35,7 @@ import pytest
 
 from cobol_modernizer import cli
 from cobol_modernizer.core.contracts import DesignCliResult, DesignDocument
-from cobol_modernizer.prompts_registry_client.loader import prompt_path
+from cobol_modernizer.prompts_registry_client.loader import node_prompt_version, prompt_path
 
 FIXTURE_ROOT = Path(__file__).parent.parent / "fixtures" / "tenant_repo_sample"
 PROGRAMS = ["CBCUS01C", "CBACT01C"]
@@ -116,8 +116,11 @@ def fake_anthropic(monkeypatch):
     """Replace only the SDK client. Returns the (node, model, effort, ceiling) calls actually made."""
     import anthropic
 
+    # The version each node *names*, not the registry default: this fake identifies the calling
+    # node by matching its system prompt exactly, so a node that moved to a new version would
+    # otherwise arrive as "a system prompt from no known registry entry" (ADR-0053).
     _FakeAnthropic.prompts = {
-        name: prompt_path(name).read_text(encoding="utf-8")
+        name: prompt_path(name, node_prompt_version(name)).read_text(encoding="utf-8")
         for name in ("spec_extractor", "spec_critic", "solution_architect")
     }
     _FakeAnthropic.calls = []

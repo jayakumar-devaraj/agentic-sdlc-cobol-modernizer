@@ -192,8 +192,13 @@ def test_build_critique_prompt_puts_the_stable_blocks_first_and_the_narration_la
     narration_at = prompt.index("# spec.md under review for CBACT04C")
 
     assert known_facts_at < first_source_at < narration_at
-    # The narration is the tail: nothing follows it, so everything before it is the stable span.
-    assert prompt.endswith(faithful_extraction.spec_markdown)
+    # The narration is the tail: nothing follows it but its own closing tag, so everything before
+    # it is the stable span. It is wrapped as of ADR-0053, which moved the last bytes of the
+    # prompt without moving the order this test is about.
+    assert prompt.endswith("</untrusted-cobol-source>")
+    tail = prompt[narration_at:]
+    assert '<untrusted-cobol-source label="CBACT04C-spec">' in tail
+    assert faithful_extraction.spec_markdown in tail
 
 
 def test_build_critique_prompt_shares_a_real_prefix_with_the_extractor_prompt():

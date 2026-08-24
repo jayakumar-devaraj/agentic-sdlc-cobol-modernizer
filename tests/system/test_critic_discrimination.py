@@ -36,7 +36,7 @@ from cobol_modernizer.nodes.spec_critic import (
 )
 from cobol_modernizer.nodes.spec_extractor import SpecExtractionResult, extract_field_mappings
 from cobol_modernizer.parsing.cobol_parser import extract_paragraphs
-from cobol_modernizer.prompts_registry_client.loader import prompt_path
+from cobol_modernizer.prompts_registry_client.loader import node_prompt_version, prompt_path
 from cobol_modernizer.tools.tenant_repo import resolve_program
 
 FIXTURE_ROOT = Path(__file__).parent.parent / "fixtures" / "tenant_repo_sample"
@@ -138,7 +138,9 @@ def _score_with(model: str) -> list[dict]:
     result = model_client.call_model(
         "spec_critic",
         model,
-        prompt_path("spec_critic").read_text(encoding="utf-8"),
+        prompt_path("spec_critic", node_prompt_version("spec_critic")).read_text(
+            encoding="utf-8"
+        ),
         build_critique_prompt(FIXTURE_ROOT, extraction),
         effort="medium",
         max_output_tokens=28_000,
@@ -191,7 +193,9 @@ def _score_with_real() -> list[dict]:
     result = model_client.call_model(
         "spec_critic",
         "claude-haiku-4-5-20251001",
-        prompt_path("spec_critic").read_text(encoding="utf-8"),
+        prompt_path("spec_critic", node_prompt_version("spec_critic")).read_text(
+            encoding="utf-8"
+        ),
         build_critique_prompt(FIXTURE_ROOT, extraction),
         effort="medium",
         max_output_tokens=28_000,

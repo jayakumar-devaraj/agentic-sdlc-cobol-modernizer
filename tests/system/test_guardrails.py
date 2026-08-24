@@ -214,12 +214,24 @@ def resolved_program():
     return resolve_program(FIXTURE_ROOT, PROGRAM)
 
 
+#: A narration that is distinctive prose rather than an echo of the Known Facts block.
+#: `faithful_narrate` -- the shortcut every other module uses -- returns the Known Facts
+#: verbatim, and a narration identical to trusted content cannot be located by any test that
+#: asks *where* it appears: it is already in the prompt, outside the blocks, as itself.
+#: `test_critic_discrimination` guards the same property for its own fixture, and for the same
+#: reason.
+_NARRATION = (
+    "# CBACT04C\n\n"
+    "## Business rules\n\n"
+    "- Monthly interest is computed per transaction-category balance and posted at the\n"
+    "  account break. NARRATION-SENTINEL-9f3c, which appears nowhere in the Known Facts and\n"
+    "  nowhere in the COBOL.\n"
+)
+
+
 @pytest.fixture(scope="module")
 def faithful_extraction():
-    def narrate(model, system_prompt, user_content):
-        return user_content.split("<untrusted-cobol-source")[0]
-
-    return extract_spec(FIXTURE_ROOT, PROGRAM, narrate=narrate)
+    return extract_spec(FIXTURE_ROOT, PROGRAM, narrate=lambda *_: _NARRATION)
 
 
 @pytest.fixture(scope="module")
@@ -351,21 +363,22 @@ def test_the_boundary_check_fails_when_a_comment_line_sits_outside_the_block(res
     assert comment not in outside_the_untrusted_blocks(f"# Known Facts\n\n{wrapped}")
 
 
-def test_spec_critic_leaves_the_narration_it_judges_outside_the_boundary(
+def test_spec_critic_puts_the_narration_it_judges_inside_the_boundary(
     critic_prompt, faithful_extraction
 ):
-    """**Pinned, not designed around**: the one place the boundary does not hold today.
+    """The place the boundary did not hold, closed one commit after this check found it.
 
-    `spec_critic` wraps every COBOL source unit and then appends `spec_markdown` raw, while
-    `solution_architect` and `modernization_engineer` both wrap that same artifact. The injection
-    path is real and short: a directive-shaped COBOL comment influences the extractor's narration,
-    and the narration lands here outside the block. It is recorded rather than fixed in the change
-    that found it because the fix edits a live prompt -- `prompts/registry/spec_critic/v1_0_0.md`
-    names the section it appends -- and a prompt edit wants a live critic run to say the node still
-    discriminates, which is a billed measurement, not a free one.
+    `spec_critic` wrapped every COBOL source unit and then appended `spec_markdown` raw, while
+    `solution_architect` and `modernization_engineer` both wrapped that same artifact. The
+    injection path was real and short: a directive-shaped COBOL comment influences the extractor's
+    narration, and the narration landed here outside the block -- in front of the only independent
+    check the human gate sees (ADR-0001).
 
-    This test fails the day someone wraps it. That is the intent: the pin is what makes the fix
-    visible instead of silently changing what the guardrail covers.
+    ADR-0053 closed it, at the cost the pin predicted: a live prompt version (`v1_1_0`, the first
+    in this registry) and a billed run to confirm the node still discriminates. Asserted both ways
+    below -- present in the prompt, absent from what is left after the blocks are cut out -- so a
+    prompt that simply stopped sending the narration cannot pass this.
     """
-    outside = outside_the_untrusted_blocks(critic_prompt)
-    assert faithful_extraction.spec_markdown in outside
+    narration = faithful_extraction.spec_markdown
+    assert narration in critic_prompt, "the narration is not in the prompt at all"
+    assert narration not in outside_the_untrusted_blocks(critic_prompt)
