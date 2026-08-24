@@ -158,14 +158,18 @@ JOB = BatchJobDesign(
 #: differential precisely because the field is excluded from it, so nothing else in this repository
 #: was ever going to catch it.
 #:
-#: The model-authored body reached the same answer unprompted and wrote spaces. This makes the
-#: scripted body agree with it, and makes `posting_faithful` a clean specimen for all four criteria
-#: rather than one carrying a declared impurity.
-_PROC_TS = "CobolText.spaces(26)"
+#: **`null`, following the sibling this corpus already grades as faithful.** `_COMPLETE_BODY` writes
+#: `null` for `TRAN-ID` -- the field ADR-0026 puts out of reach for `CBACT04C` -- and the judge does
+#: not flag it. That is the criterion's own wording: *left unset*, not substituted.
+#:
+#: Two earlier attempts were both substitutions and both wrong. A hardcoded timestamp is an invented
+#: value outright. `CobolText.spaces(26)` reads better and is the same defect: the judge's rationale
+#: was *"silently substituted ... instead of being computed or flagged"*, and blanks are a
+#: substitution exactly as a literal is.
+_PROC_TS = "null"
 
 _IMPORTS = [
     "java.math.BigDecimal",
-    "com.modernized.batch.cobol.CobolText",
     f"{DEFAULT_DOMAIN_PACKAGE}.Account",
     f"{DEFAULT_DOMAIN_PACKAGE}.PostingResult",
     f"{DEFAULT_DOMAIN_PACKAGE}.Tran",
