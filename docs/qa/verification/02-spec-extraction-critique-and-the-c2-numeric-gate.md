@@ -268,3 +268,48 @@ declare fields in.**
 
 **Command**: `pytest tests/system/test_numeric_field_coverage.py -v`
 **Result**: 16/16 passed.
+
+---
+
+## The untrusted boundary, asserted against the prompts the nodes actually send (2026-08-24, ADR-0052)
+
+Twenty tests covered `core/guardrails.py` as a unit — wrap, raise on delimiter forgery, flag
+injection phrasings without flagging ordinary comments — and none covered the property the
+repository depends on: that no tenant text reaches a model **outside** the block the model is told
+is inert data. What stood in for it was a CI step asserting `tests/system/test_guardrails.py`
+existed as a file.
+
+Each of the four prompt-building nodes is now run through its real entrypoint with only the model
+call replaced, and the prompt it sends is captured from that callback. Every
+`<untrusted-cobol-source …>` block is cut out of that prompt, and no comment line of any source unit
+the program resolves to may appear in what remains.
+
+**Measured through that capture path, not through the builder in isolation.** `spec_extractor`'s
+prompt for `CBACT04C` is **74,230 characters** — the same figure ADR-0017 measured from the other
+direction, arrived at here independently — of which **16,254 sit outside the untrusted blocks**, all
+of it the deterministic Known Facts block this repo computes itself. Six source units resolve:
+`CBACT04C` contributing 53 comment lines and its five copybooks 30 more. **Zero of the 83 are
+outside.**
+
+**Shown failing first, on deliberately damaged input.** One line appended to `build_prompt` echoing
+`resolved.source_text` after the wrapped sections:
+
+```
+AssertionError: 73 tenant comment line(s) reached the prompt outside the untrusted block,
+first: ('CBACT04C', '      *****...')
+1 failed, 2 passed
+```
+
+The two undamaged nodes stayed green in the same run, so the failure is attributable to the damage
+rather than to a check that fires indiscriminately. The damage was reverted with `git checkout --`
+and never reached a commit.
+
+**It found something already true.** `spec_critic` wraps every COBOL source unit and then appends
+`extraction.spec_markdown` raw, where `solution_architect` and `modernization_engineer` both wrap
+that same artifact. Pinned by a test recording the current state rather than designed around: the
+fix edits a live prompt, and a prompt edit wants a billed critic run to say the node still
+discriminates. ADR-0052 states what would be wrong if it is never fixed.
+
+**Command**: `pytest tests/system/test_guardrails.py -q`
+**Result**: 27 passed in 0.34s. CI runs that exact command as a named step, replacing the
+file-existence check.

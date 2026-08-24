@@ -65,19 +65,22 @@ jobs:
           npm install --no-fund --no-audit --no-save mermaid jsdom
           node scripts/validate-mermaid.mjs
 
-      - name: Assert no tenant vocabulary is silently treated as trusted instructions
+      - name: Assert no tenant text reaches a model outside the untrusted block
         # This repo is the *inverse* of control-plane's domain-agnostic rule (ADR-0001's
         # design agent note): it is expected to carry COBOL/CardDemo vocabulary. What must
         # never happen instead is COBOL source text being read as instructions rather than
-        # data — see .claude/agents/development.md. No enforcement exists yet because no
-        # node reads COBOL source yet (Milestone C1); this step is a placeholder that fails
-        # loudly once nodes.spec_extractor exists without a corresponding guardrail test.
-        run: |
-          if [ -f src/cobol_modernizer/nodes/spec_extractor.py ] && [ ! -f tests/system/test_guardrails.py ]; then
-            echo "::error::spec_extractor exists with no guardrail test covering it"
-            exit 1
-          fi
-          echo "no extraction node yet, or guardrail test present"
+        # data — see .claude/agents/development.md.
+        #
+        # This step used to check only that tests/system/test_guardrails.py *existed* if
+        # spec_extractor.py did, and its comment still said no node read COBOL source. Four do.
+        # It now runs the boundary section of that module, which asserts the real property
+        # against the prompt each node actually sends — captured through the node's own injected
+        # model callback — and fails if a single tenant comment line lands outside the wrapped
+        # block. ADR-0052 records why a behavioural check rather than an import-level one.
+        #
+        # Deliberately run again after the full suite above: a boundary regression should be a
+        # distinctly named red, not one line among eleven hundred. It costs under a second.
+        run: pytest tests/system/test_guardrails.py -q
 
   # Compiles and tests templates/target-spring-boot-baseline on the exact JDK it pins.
   # ADR-0034 makes this a gate rather than an intention: the Java 25 risk is not the language but
