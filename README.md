@@ -119,8 +119,8 @@ by coincidence. Same single cause, now showing in every field it can reach.
 **Still true.** Nothing has been written to the real `card-service` repository, and generating a
 stateful control-break writer is out of scope. **`2 of 4`, wiring hand-written, is the reachable
 maximum** (G17, `docs/adr/0035`): `CBCUS01C` and `CBACT01C` contribute a sequential read and a
-print, so the remaining two cannot round-trip in this sense at all. What is open now is whether step
-52's *"full recorded Track C dry run, all four programs"* is reachable as worded — not this number.
+print, so the remaining two cannot round-trip in this sense at all. That boundary is now part of
+the round-trip denominator rather than an open question about it (`docs/adr/0051`).
 Rendering `CBTRN02C` needed four
 facts `CBACT04C` never did: an `upsert` write mode (`docs/adr/0037`), a declared `reads_own_writes`
 step (`docs/adr/0040`), a working set its reader and writer share at chunk 1 (`docs/adr/0041`), and
