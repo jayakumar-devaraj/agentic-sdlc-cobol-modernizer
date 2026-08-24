@@ -36,8 +36,10 @@
   building. Two further limits worth keeping visible rather than folding into a green tick — the
   corpus scores `modernization_engineer`'s method bodies only, so **`solution_architect` has still
   never been scored** (Open Issue 6, untouched by this work, and still blocked on there being no
-  golden unified design to score against); and six cases with two faithful ones is a floor that rules
-  out a judge flagging everything, not a measured false-positive rate.
+  golden unified design to score against); and **nine cases with three faithful ones**, across two
+  programs since ADR-0050, is still a floor that rules out a judge flagging everything rather than a
+  settled false-positive rate — the rate over the corrected corpus is the one number pillar 22 waits
+  on.
 - *(historical, closed — kept because the original wording named the wrong cause)* The original
   form of this gap was that `_default_narrate`/`_default_critique`/`_default_architect` had never
   been invoked at all, with every test injecting a fake in their place, and it said to "revisit

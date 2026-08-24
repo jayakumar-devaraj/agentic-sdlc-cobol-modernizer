@@ -380,9 +380,15 @@ on it (`docs/adr/0024`). It runs in the ordinary suite at no cost — the judge'
 behind an injectable seam, and the tests above exercise the prompt, the response contract and the
 scoring with scripted judges.
 
-The corpus is graded by things that are not opinions: three of its seven cases are the exact bodies
-`tests/system/test_interest_equivalence.py` runs through real Maven against the hand-computed oracle,
-so a judge that misses one has been shown to miss a defect a JVM catches.
+The corpus is graded by things that are not opinions: five of its nine cases are the exact bodies a
+real JVM has already returned a verdict on — three through `test_interest_equivalence` against the
+hand-computed oracle, and two through `test_cbtrn02c_round_trip` against COBOL's own output. A judge
+that misses one has been shown to miss a defect a JVM catches.
+
+**It spans two programs** (`docs/adr/0050`), which is what `docs/adr/0044`'s rule requires before any
+result is a property of the judge rather than of one program's idioms. `CBTRN02C`'s pair is a
+different shape, not more of the same: its guard decides whether a record exists at all, and its
+unreachable field is a per-record clock read rather than a per-run counter.
 
 **A run is `n` runs, and every metric carries its spread** (`docs/adr/0049`). Reporting one sample of
 a non-deterministic instrument as a measurement is the defect that cost this harness its green
@@ -390,7 +396,7 @@ status: it scored 6 of 6 at a 0.00 false-positive rate once and 4 of 6 at 0.50 t
 bars now apply to **every run rather than the mean** — a judge that catches every defect in two runs
 of three has a mean of 0.67 and an eligibility of none.
 
-Measured over three runs of the current corpus:
+Measured over three runs, on the seven-case corpus that preceded the second program:
 
 | | `claude-opus-5` | `claude-haiku-4-5` |
 |---|---|---|
@@ -402,21 +408,30 @@ Measured over three runs of the current corpus:
 
 † over the subset it answered, and so not a measurement of that candidate.
 
-**Haiku 4.5 is struck from the candidate list** on all three grounds, and it was not even cheaper —
+**Haiku 4.5 was struck from the candidate list** on all three grounds, and it was not even cheaper —
 $1.93 against $2.18 for sixteen times the output. The Opus pin `docs/adr/0024` called scaffolding
 has now survived its own comparison.
 
-**What this does not say.** The pillar this fixes is not closed: `docs/adr/0044` requires a second
-instance and every case here derives from `CBACT04C`. And *reproducible* means the numbers repeat,
-not that the judge says the same thing — Opus returned identical rates on all three runs while its
-raw verdicts moved, which is recorded as **verdict churn** and deliberately not barred on.
+**Its disagreements have three times turned out to be correct about the code** rather than about the
+judge: a carried record's placeholder fields, `TRAN-SOURCE` written unpadded into a `PIC X(10)`, and
+— on the two-program corpus — a `TRAN-PROC-TS` invented from a literal. **That last one is the case
+for keeping a judge beside the oracle**: a literal passes the differential *precisely because*
+`docs/adr/0048` excludes that field from it, so the only instrument that could see the defect was the
+one that does not look at the differential.
 
-Its disagreements have twice turned out to be **correct about the code** rather than about the judge:
-a carried record's placeholder fields, and `TRAN-SOURCE` written unpadded into a `PIC X(10)`. Cases
-therefore declare which criteria they are clean specimens for, because a metric that scores an
-instrument against a fallible reference reports the reference's errors as the instrument's. The
-benchmark is opt-in because it spends real subscription quota — **one call per case per run, so 21
-per candidate at the default `n=3`: $2.18 measured for Opus, $1.93 for Haiku**:
+Cases therefore declare which criteria they are clean specimens for, because a metric that scores an
+instrument against a fallible reference reports the reference's errors as the instrument's. Chasing
+that third disagreement found the rubric holds a pair no body can satisfy at once: an unreachable
+**alphanumeric** field can be left unset *or* written at its declared width, never both.
+
+**What this does not say.** The pillar this fixes is **not closed**. `docs/adr/0044`'s second-instance
+requirement is now met, but the false-positive rate over the corrected corpus is unmeasured, and a
+rate no run produced is not a result. And *reproducible* means the numbers repeat, not that the judge
+says the same thing — Opus returned identical rates across runs while its raw verdicts moved, which is
+recorded as **verdict churn** and deliberately not barred on.
+
+The benchmark is opt-in because it spends real subscription quota — **one call per case per run, so
+27 at the default `n=3` over nine cases: $2.40 measured**:
 
 ```bash
 COBOL_MODERNIZER_RUN_LIVE_CLI_TESTS=1 ./.venv/Scripts/python -m pytest tests/evaluations/test_judge_benchmark.py -q -s

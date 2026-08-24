@@ -269,7 +269,8 @@ same prompt, scored 4 of 6 at 0.50. Neither run was wrong; the *summary* was, be
 sample of a non-deterministic instrument as a measurement. ADR-0045 decided the fix and ADR-0049
 records what running it found.
 
-**Command** (opt-in, real money — three runs per candidate, six cases each):
+**Command** (opt-in, real money — three runs per candidate, seven cases each at the time; the
+corpus reached nine with ADR-0050):
 
 ```
 $ COBOL_MODERNIZER_RUN_LIVE_CLI_TESTS=1 pytest tests/evaluations/test_judge_benchmark.py -q -s
