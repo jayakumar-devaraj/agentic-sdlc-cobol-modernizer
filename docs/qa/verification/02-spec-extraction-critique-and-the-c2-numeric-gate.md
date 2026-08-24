@@ -313,3 +313,48 @@ discriminates. ADR-0052 states what would be wrong if it is never fixed.
 **Command**: `pytest tests/system/test_guardrails.py -q`
 **Result**: 27 passed in 0.34s. CI runs that exact command as a named step, replacing the
 file-existence check.
+
+---
+
+## The critic still discriminates with the narration inside the boundary (2026-08-24, ADR-0053)
+
+The defect the boundary check found (entry above) is closed: `spec_critic` wraps the narration it
+judges under `<PROGRAM>-spec`, and `prompts/registry/spec_critic/v1_1_0.md` — **the first `v1_1_0`
+in this registry** — says so to the model. The question that gated the change was whether the node
+still catches a wrong narration once the text it judges arrives delimited.
+
+**Command**: `COBOL_MODERNIZER_RUN_LIVE_CLI_TESTS=1 pytest tests/system/test_critic_discrimination.py -q -s`
+**Result**: **7 passed in 556.93s (9m16s)** — four free, three billed, four model calls, ~$0.56 at
+the per-call costs measured on 2026-08-08.
+
+| assertion | what held |
+|---|---|
+| `test_both_tiers_catch_every_planted_error[claude-haiku-4-5-20251001]` | at least one rule below `0.7` per planted error — **three of three** |
+| `test_both_tiers_catch_every_planted_error[claude-opus-5]` | the same, on the strongest model |
+| `test_the_low_confidence_threshold_separates_good_from_bad` | `bad_min < 0.7 < clean_min` |
+
+The three corruptions are chosen so the deterministic fidelity checks **cannot** catch them, which
+`test_the_deterministic_checks_do_not_catch_these_corruptions` asserts rather than assumes — so what
+passed here is the model's own contribution on the prompt version this node now sends.
+
+**A pre-flight check, free, before the money was spent**: the version resolved through
+`node_prompt_version` is `v1_1_0`, the narration is wrapped under `CBCUS01C-spec`, and the user
+prompt is 21,960 characters. Without `node_prompt_version` this benchmark would have loaded
+`v1_0_0`'s text and sent it beside a `v1_1_0` payload — a silent mismatch whose output would have
+looked like a real result.
+
+**What this run did not leave, and the harness defect that explains it.** The confidence scores
+themselves were not recorded. This module printed them only inside an assertion message, which does
+not render when the assertion holds, so a passing run left nothing behind.
+`tests/evaluations/test_judge_benchmark.py` has carried the rule in its own comment since it was
+written — *printed so a real run leaves the artifact the verification report needs, whether or not
+the assertions below pass* — and this module never adopted it. It does now: `_parsed_and_printed`
+prints the score distribution, token counts and notional cost on every call, plus the rationale of
+every flagged rule (ADR-0024, and trap 10 on what skipping rationales cost). **That fix cannot
+recover this run**; recovering the numbers would mean paying for it again, which was not worth
+$0.56 for a result whose assertions already passed.
+
+So what is claimed here is what the assertions checked: on `v1_1_0`, both tiers still catch every
+planted error and the threshold still separates. Whether wrapping moved the scores relative to
+2026-08-08's 0.00/0.20/0.40 and 0.30/0.15/0.35 is **not** claimed, and the next run of this module
+will be able to say.

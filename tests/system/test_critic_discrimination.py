@@ -36,7 +36,7 @@ from cobol_modernizer.nodes.spec_critic import (
 )
 from cobol_modernizer.nodes.spec_extractor import SpecExtractionResult, extract_field_mappings
 from cobol_modernizer.parsing.cobol_parser import extract_paragraphs
-from cobol_modernizer.prompts_registry_client.loader import prompt_path
+from cobol_modernizer.prompts_registry_client.loader import node_prompt_version, prompt_path
 from cobol_modernizer.tools.tenant_repo import resolve_program
 
 FIXTURE_ROOT = Path(__file__).parent.parent / "fixtures" / "tenant_repo_sample"
@@ -133,21 +133,49 @@ def test_the_deterministic_checks_also_pass_the_uncorrupted_narration():
 # --- Billed: the actual discrimination benchmark --------------------------------------------------
 
 
+def _parsed_and_printed(result, model: str, narration_kind: str) -> list[dict]:
+    """Parse the critic's JSON, and print the scores this run actually produced.
+
+    `test_judge_benchmark` states the rule in its own words -- printed so a real run leaves the
+    artifact the verification report needs, **whether or not the assertions pass**. This module had
+    the inverse defect and paid for it: the ADR-0053 run passed, printed nothing (scores appear only
+    in an assertion message, which does not render when the assertion holds), and recovering the
+    numbers would have meant buying the run a second time.
+    """
+    text = result.text.strip()
+    for fence in ("```json", "```"):
+        text = text.removeprefix(fence)
+    rules = json.loads(text.removesuffix("```").strip())
+
+    flagged = [r for r in rules if r["confidence"] < LOW_CONFIDENCE_THRESHOLD]
+    print(f"\n===== {model}, {narration_kind} narration =====")
+    print(
+        f"{len(rules)} rules scored, {len(flagged)} below {LOW_CONFIDENCE_THRESHOLD}  "
+        f"in={result.input_tokens} out={result.output_tokens}  "
+        f"notional=${result.notional_cost_usd if result.notional_cost_usd is not None else 0.0:.4f}"
+    )
+    print(f"scores: {sorted(r['confidence'] for r in rules)}")
+    # The rationales, for the flagged ones only. ADR-0024 keeps these precisely so a disagreement is
+    # diagnosable without paying for another run, and trap 10 records what skipping them cost.
+    for rule in flagged:
+        print(f"  [{rule['confidence']}] {rule['rule']}\n      {rule['rationale']}")
+    return rules
+
+
 def _score_with(model: str) -> list[dict]:
     extraction = _extraction(corrupted_narration())
     result = model_client.call_model(
         "spec_critic",
         model,
-        prompt_path("spec_critic").read_text(encoding="utf-8"),
+        prompt_path("spec_critic", node_prompt_version("spec_critic")).read_text(
+            encoding="utf-8"
+        ),
         build_critique_prompt(FIXTURE_ROOT, extraction),
         effort="medium",
         max_output_tokens=28_000,
         backend="claude_cli",
     )
-    text = result.text.strip()
-    for fence in ("```json", "```"):
-        text = text.removeprefix(fence)
-    return json.loads(text.removesuffix("```").strip())
+    return _parsed_and_printed(result, model, "corrupted")
 
 
 @pytest.mark.live_claude_cli
@@ -158,6 +186,15 @@ def test_both_tiers_catch_every_planted_error(model):
     Haiku was *more* decisive on the `APPL-EOF` constant (0.00 vs 0.30) at 2.3x lower cost
     ($0.1058 vs $0.2388), which is the evidence ADR-0004 asked for and did not have: the cheap
     tier is not a compromise for this node.
+
+    **Re-run 2026-08-24 on prompt v1_1_0** (ADR-0053), after the narration moved inside the untrusted
+    block: both tiers still flag at least one rule per planted error, and the threshold still
+    separates a corrupted narration from a clean one. Four calls, 9m16s.
+
+    **That run left no scores, and this is why the printing exists now.** The numbers appeared only
+    inside the assertion message below, which does not render when the assertion holds -- so a
+    passing run recorded nothing, and recovering it would have meant buying the run a second time.
+    `test_judge_benchmark` had stated the rule in its own comment since it was written.
     """
     rules = _score_with(model)
     flagged = [r for r in rules if r["confidence"] < LOW_CONFIDENCE_THRESHOLD]
@@ -191,13 +228,12 @@ def _score_with_real() -> list[dict]:
     result = model_client.call_model(
         "spec_critic",
         "claude-haiku-4-5-20251001",
-        prompt_path("spec_critic").read_text(encoding="utf-8"),
+        prompt_path("spec_critic", node_prompt_version("spec_critic")).read_text(
+            encoding="utf-8"
+        ),
         build_critique_prompt(FIXTURE_ROOT, extraction),
         effort="medium",
         max_output_tokens=28_000,
         backend="claude_cli",
     )
-    text = result.text.strip()
-    for fence in ("```json", "```"):
-        text = text.removeprefix(fence)
-    return json.loads(text.removesuffix("```").strip())
+    return _parsed_and_printed(result, "claude-haiku-4-5-20251001", "real")

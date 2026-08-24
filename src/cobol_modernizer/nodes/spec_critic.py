@@ -41,7 +41,10 @@ from pathlib import Path
 from pydantic import BaseModel
 
 from cobol_modernizer.core.complexity import critic_tier
-from cobol_modernizer.core.guardrails import prepare_untrusted_cobol_for_prompt
+from cobol_modernizer.core.guardrails import (
+    prepare_untrusted_cobol_for_prompt,
+    wrap_untrusted_cobol,
+)
 from cobol_modernizer.core.model_client import call_model
 from cobol_modernizer.core.model_routing import RoutingDecision, resolve_routing
 from cobol_modernizer.core.source_units import iter_source_units
@@ -58,6 +61,13 @@ from cobol_modernizer.tools.tenant_repo import resolve_program
 logger = logging.getLogger(__name__)
 
 _NODE_NAME = "spec_critic"
+
+#: The prompt version this node sends. Named rather than defaulted, because the payload and the
+#: prompt describing it have to move together: v1_1_0 is the first version whose text says the
+#: narration arrives wrapped, and sending it beside a v1_0_0 payload -- or the reverse -- would
+#: tell the model to expect a boundary that is not there (ADR-0053). Public because whatever
+#: else has to send this same system prompt asks `loader.node_prompt_version` for it.
+PROMPT_VERSION = "v1_1_0"
 
 _TABLE_ROW_RE = re.compile(
     r"^\|\s*(?P<field>[^|]*?)\s*\|\s*(?P<pic>[^|]*?)\s*\|\s*(?P<java_type>[^|]*?)\s*\|"
@@ -237,9 +247,17 @@ def build_critique_prompt(worktree_root: Path, extraction: SpecExtractionResult)
     Caching is not claimed here and no `cache_control` is set -- see ADR-0017 for why that half was
     measured and dropped. This function only stops the ordering from being the blocker.
 
-    `prompts/registry/spec_critic/v1_0_0.md` states this same order to the model and **must stay in
+    `prompts/registry/spec_critic/v1_1_0.md` states this same order to the model and **must stay in
     step with it**: a prompt that tells the critic to expect the narration first while the payload
-    delivers it last is worse than either order chosen consistently.
+    delivers it last is worse than either order chosen consistently. That version is named in
+    `PROMPT_VERSION` rather than defaulted for the same reason -- v1_1_0 is also the first version
+    whose text says the narration arrives **wrapped**, which it now does.
+
+    The narration is wrapped under `<PROGRAM>-spec`, the label `modernization_engineer` already
+    uses for this artifact, and for `solution_architect`'s stated reason: a narration is an LLM's
+    account of untrusted text, so trusting it because this platform produced it would launder the
+    input it came from. Until ADR-0053 this node appended it raw, and a boundary check over the
+    real prompts is what found that (ADR-0052).
 
     Re-resolves the program from `worktree_root` rather than requiring the caller to keep the
     original `ResolvedProgram` around -- `spec_critic` can run against a `SpecExtractionResult`
@@ -264,7 +282,10 @@ def build_critique_prompt(worktree_root: Path, extraction: SpecExtractionResult)
         known_facts
         + "\n\n"
         + "\n\n".join(wrapped_sections)
-        + f"\n\n# spec.md under review for {extraction.program_name}\n\n{extraction.spec_markdown}"
+        + f"\n\n# spec.md under review for {extraction.program_name}\n\n"
+        + wrap_untrusted_cobol(
+            extraction.spec_markdown, source_label=f"{extraction.program_name}-spec"
+        )
     )
 
 
@@ -326,7 +347,7 @@ def _default_critique(routing: RoutingDecision, system_prompt: str, user_content
 
 
 def _load_system_prompt() -> str:
-    return prompt_path(_NODE_NAME).read_text(encoding="utf-8")
+    return prompt_path(_NODE_NAME, PROMPT_VERSION).read_text(encoding="utf-8")
 
 
 def critique_spec(
