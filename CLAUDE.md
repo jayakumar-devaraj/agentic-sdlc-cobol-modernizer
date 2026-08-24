@@ -7,6 +7,20 @@ repository is reproducible by anyone who clones it, not just on the machine that
 The three roles this file refers to are defined as executable agents in
 [`.claude/agents/`](.claude/agents/).
 
+## Before the first command of a session
+
+[`docs/development-environment.md`](docs/development-environment.md) holds the toolchain facts and
+the traps that have actually cost time here — the `JAVA_HOME` export without which every Java test
+fails as *"build failed, zero diagnostics"*, the Python that must be `.venv/Scripts/python.exe`, the
+three separate things Docker is needed for, and what each live test costs to run.
+
+**Referenced rather than inlined**, per the hub-and-spoke rule below: this file loads unconditionally
+every session, and that one is needed only when something is being run.
+
+It is committed for the reason stated at the top of this file. Those facts previously lived in an
+uncommitted session note on a single machine, so a clone anywhere else lost all of them — which is
+the opposite of a process reproducible by anyone who clones it.
+
 ## Commit discipline
 
 - Build one small piece at a time: write it, test it against something real (not just "looks
