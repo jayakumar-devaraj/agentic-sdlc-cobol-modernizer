@@ -401,3 +401,77 @@ field looks exactly like a right one. Recorded as an open gap rather than fixed 
 **Three calls, $0.84 notional, $0 billed.** Each one found a defect the injected-fake test suite
 could not: an under-specified design, a missing target API, and a missing class of deterministic
 fact. None of that Java has been compiled yet.
+
+---
+
+## The wheel a consumer would install, tested as a consumer would get it (step 46, ADR-0055)
+
+**What was verified, and why it needed verifying separately.** Every other entry in this report
+exercises the CLI from a source checkout, because that is how the repo is installed for development
+and in CI (`pip install -e ".[dev]"`). An editable install leaves the package inside the checkout,
+so `Path(__file__).resolve().parents[3]` — how six modules reached their data — still resolved to
+the repository root. **No test in the suite could distinguish a correctly packaged build from a
+broken one.**
+
+### The failure, before the fix
+
+```
+python -m build --wheel
+```
+
+Wheel contents: **zero non-Python files**. No `prompts/registry/`, no `config/*.yaml`, no
+`templates/`. Installed into a clean virtualenv and invoked for real:
+
+```
+cobol-modernizer design --programs CBACT04C --tenant-repo <fixture> --output <tmp> --json
+```
+
+```
+FileNotFoundError: [Errno 2] No such file or directory:
+  '...\probe-venv\Lib\prompts\registry\spec_extractor\v1_0_0.md'
+```
+
+Exit code **1** (checked without a pipe; an earlier reading of `0` was `tail`'s status, not the
+CLI's). `<venv>/Lib/` is what `parents[3]` resolves to once the package is in `site-packages`.
+
+### After the fix
+
+Same build command, same clean-venv install:
+
+| | before | after |
+|---|---|---|
+| non-Python files in the wheel | **0** | **48** |
+| `data/prompts` entries | 0 | 6 |
+| `data/config` entries | 0 | 2 |
+| `data/templates` entries | 0 | 40 |
+
+Asked of the installed package, with no source tree on any path it consults:
+
+```
+DATA_ROOT exists:       True
+prompt read ok:         True      # spec_extractor v1_0_0
+spec_critic v1_1_0 ok:  True      # the versioned prompt ADR-0053 added
+catalog loads:          True
+template pom present:   True
+template java files:    9
+```
+
+### What this entry does not claim
+
+**No live model call was made to establish it**, and the test that pins it does not make one either.
+`design` and `generate` both reach a model on their first node; the packaging question is answered
+entirely by whether an installed package can read its own files, so that is what is asserted.
+
+One live call was spent by accident getting here, and it is recorded rather than omitted: an
+invocation intended to fail fast at the prompt load instead got *past* it — the fix had worked — and
+into a real `spec_extractor` call before the two-minute timeout killed it. No output was written and
+at most one call on one program was billed. The lesson is written into `test_packaging.py`'s own
+docstring: **a probe of a fixed path is not the same command as a probe of a broken one.**
+
+### The standing check
+
+`tests/system/test_packaging.py` — four tests, ~100 seconds. It builds a real wheel, asserts every
+runtime data file is inside it, asserts the Java baseline arrived whole (9 of 9 `.java` files, not
+just the `pom.xml`), installs it into a throwaway virtualenv and asks that installation for its own
+data. `build` is a declared dev dependency rather than an assumed one, because the fixture skips
+when it is missing and a guard that silently skips is exactly the defect Open Issue 3 recorded.

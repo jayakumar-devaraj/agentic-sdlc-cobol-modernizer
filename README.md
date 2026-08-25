@@ -317,12 +317,25 @@ trust a hand-written copy of the contract.
 
 ## Quickstart
 
+Working on this repo:
+
 ```bash
 py -3.12 -m venv .venv
 ./.venv/Scripts/pip install -e ".[dev]"
 ./.venv/Scripts/cobol-modernizer design --programs CBCUS01C CBACT01C CBTRN02C CBACT04C --tenant-repo <path> --output <path> --json
 ./.venv/Scripts/cobol-modernizer generate --design <path>/design.json --tenant-repo <path> --output <path> --json
 ```
+
+Installing it as a consumer — which is how control-plane obtains it (ADR-0055):
+
+```bash
+pip install "cobol-modernizer @ git+https://github.com/jayakumar-devaraj/agentic-sdlc-cobol-modernizer@<tag>"
+```
+
+A pinned tag, not a branch. The wheel carries its own prompts, model config and Java baseline as
+package data, so an install needs no checkout. What it does **not** carry, and what the invoking
+environment must provide: the `claude` CLI on `PATH` for either subcommand, and additionally
+**JDK 25, Maven and a running Docker daemon** for `generate`.
 
 `design` is real and runs the full pipeline. By default it reaches a model through the **`claude`
 CLI** (ADR-0013), which authenticates from an existing Claude subscription — **no API key
@@ -332,7 +345,9 @@ per-tenant quotas and real cost attribution. It writes
 `<output>/design.json` and `<output>/<PROGRAM>/spec.md` per program, and exits non-zero with a
 `status: "error"` object on stdout if anything fails. Pass `--run-id` to reuse control-plane's own
 audit-log run id, so its records and this CLI's stderr logs share one identifier; omit it and one
-is generated and reported back. `generate` still returns an error status — it lands in Milestone C4.
+is generated and reported back. `generate` is real too: Milestone C4 is complete, so it renders the
+project, calls a model for the method bodies, drives a real Maven build and self-heals from real
+compile errors.
 
 With `--json`, stdout carries exactly one JSON object and nothing else; all logging goes to stderr.
 Two subcommands, not one — see `docs/adr/0003` for why.
