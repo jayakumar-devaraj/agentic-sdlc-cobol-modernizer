@@ -44,6 +44,7 @@ from pathlib import Path
 from typing import Literal
 
 from cobol_modernizer.core.complexity import ComplexityTier
+from cobol_modernizer.core.guardrails import wrap_untrusted_cobol
 from cobol_modernizer.core.model_client import call_model
 from cobol_modernizer.core.model_routing import RoutingDecision, resolve_routing
 from cobol_modernizer.core.structured_output import parse_with_repair, strip_code_fence
@@ -57,6 +58,12 @@ from cobol_modernizer.tools.local_compiler import CompileDiagnostic, CompileResu
 logger = logging.getLogger(__name__)
 
 _NODE_NAME = "build_validator"
+
+#: v1_1_0 (ADR-0056): the statements, the imports and the diagnostics now arrive **inside** the
+#: `<untrusted-cobol-source>` block, and the prompt says what that means. v1_0_0 described them in
+#: prose and handed them over undelimited -- the same shape ADR-0053 found and closed in
+#: `spec_critic`, one node further down the same chain. v1_0_0 stays readable.
+PROMPT_VERSION = "v1_1_0"
 
 _REQUIRED_KEYS = frozenset({"repairable", "reason", "instruction"})
 
@@ -183,7 +190,11 @@ def build_validator_prompt(
     change.
     """
     lines = ["## Compile errors in model-authored statements", ""]
-    lines += [error.render() for error in errors]
+    lines.append(
+        wrap_untrusted_cobol(
+            "\n".join(error.render() for error in errors), source_label="compiler-diagnostics"
+        )
+    )
 
     lines += ["", "## The statements those errors point at", ""]
     for path in sorted({error.file for error in errors}):
@@ -204,12 +215,25 @@ def build_validator_prompt(
         )
         if import_numbers:
             lines.append(f"### {path} -- imports this model supplied")
-            lines += [f"{number}: {source_lines[number - 1].strip()}" for number in import_numbers]
+            lines.append(
+                wrap_untrusted_cobol(
+                    "\n".join(
+                        f"{number}: {source_lines[number - 1].strip()}"
+                        for number in import_numbers
+                    ),
+                    source_label=f"{path}-imports",
+                )
+            )
             lines.append("")
 
         body = source_lines[span[0] - 1 : span[1]]
         lines.append(f"### {path} (lines {span[0]}-{span[1]})")
-        lines += [f"{span[0] + offset}: {text}" for offset, text in enumerate(body)]
+        lines.append(
+            wrap_untrusted_cobol(
+                "\n".join(f"{span[0] + offset}: {text}" for offset, text in enumerate(body)),
+                source_label=f"{path}-statements",
+            )
+        )
         lines.append("")
     return "\n".join(lines)
 
@@ -256,7 +280,7 @@ def _default_advise(routing: RoutingDecision, system_prompt: str, user_content: 
 
 
 def _load_system_prompt() -> str:
-    return read_prompt(_NODE_NAME)
+    return read_prompt(_NODE_NAME, PROMPT_VERSION)
 
 
 def validate_build(

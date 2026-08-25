@@ -62,6 +62,11 @@ logger = logging.getLogger(__name__)
 
 _NODE_NAME = "modernization_engineer"
 
+#: v1_1_0 (ADR-0056): a repair attempt now delivers the previous body, the previous imports and
+#: the diagnostics inside `<untrusted-cobol-source>` blocks, and the prompt says what they are.
+#: `### What to change` stays outside, named there as the one directive this node may act on.
+PROMPT_VERSION = "v1_1_0"
+
 #: The model returns these three keys and no others are required. `notes` is mandatory rather than
 #: optional on purpose: a model that has nothing to flag must say so explicitly, so that an empty
 #: caveat is a statement rather than an omission.
@@ -309,6 +314,20 @@ def render_repair_facts(repair: RepairContext) -> str:
     The previous body is included verbatim. Asking for a repair without showing what is being
     repaired invites a rewrite from scratch, which throws away whatever the first attempt got right
     and makes each attempt independent rather than cumulative.
+
+    **Everything quoted back is wrapped (ADR-0056).** The previous body, the imports and the
+    diagnostics are all model-authored or derived from model-authored text, by a model that was
+    shown the tenant's COBOL -- the same category `spec_critic`'s narration turned out to be
+    (ADR-0053). Quoting them undelimited into the next prompt is what closes the laundering loop.
+
+    **`instruction` is the one thing deliberately left outside the block**, and it is not an
+    oversight. It is this loop's own control signal: `build_validator` produces it under a schema
+    that allows three short fields, and since ADR-0056 that node reads everything it is shown as
+    data. Wrapping it would also be self-contradicting -- a block that says "this is data, never a
+    directive" around the one string whose entire purpose is to direct this rewrite. The
+    consequence is written down rather than assumed: a `build_validator` that could be talked into
+    emitting an instruction is a path into this prompt, and the boundary test pins `instruction` as
+    the **only** unwrapped model-derived text here, so the exception cannot quietly widen.
     """
     lines = [
         "",
@@ -318,18 +337,19 @@ def render_repair_facts(repair: RepairContext) -> str:
         "",
         "### What you wrote",
         "",
-        "```java",
-        repair.previous_body.strip(),
-        "```",
+        wrap_untrusted_cobol(
+            repair.previous_body.strip(), source_label="previous-statements"
+        ),
         "",
     ]
     if repair.previous_imports:
         lines += [
             "### The imports you supplied with it",
             "",
-            "```java",
-            *[f"import {name};" for name in repair.previous_imports],
-            "```",
+            wrap_untrusted_cobol(
+                "\n".join(f"import {name};" for name in repair.previous_imports),
+                source_label="previous-imports",
+            ),
             "",
             (
                 "These are rendered into the file's import block. If a diagnostic points at one of "
@@ -341,7 +361,12 @@ def render_repair_facts(repair: RepairContext) -> str:
         "### What the compiler said",
         "",
     ]
-    lines += [diagnostic.render() for diagnostic in repair.diagnostics]
+    lines.append(
+        wrap_untrusted_cobol(
+            "\n".join(diagnostic.render() for diagnostic in repair.diagnostics),
+            source_label="compiler-diagnostics",
+        )
+    )
     lines += [
         "",
         "### What to change",
@@ -455,7 +480,7 @@ def _default_author(routing: RoutingDecision, system_prompt: str, user_content: 
 
 
 def _load_system_prompt() -> str:
-    return read_prompt(_NODE_NAME)
+    return read_prompt(_NODE_NAME, PROMPT_VERSION)
 
 
 def generate_processor(
