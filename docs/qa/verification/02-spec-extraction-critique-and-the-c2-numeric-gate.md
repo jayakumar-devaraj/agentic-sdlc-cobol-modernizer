@@ -428,3 +428,70 @@ carries the diagnosis, that it carries none of the model's words, and that a par
 (`TypeError`) reaches the caller without spending a call. Whether a real model complies on the
 second ask is the open half, and the honest place to settle it is the next billed run that happens
 to hit one.
+
+---
+
+## The generate loop's boundary, and the two prompts that were outside it (ADR-0056)
+
+**What was verified.** The boundary property this report already claims for the design phase —
+untrusted text reaches a model only inside the block it is told is inert data — now holds for the
+`generate` phase too. It did not before, in two places that ADR-0053 named as out of scope.
+
+**Command:**
+
+```
+.venv/Scripts/python.exe -m pytest tests/system/test_guardrails.py -q
+```
+
+**Result: 30 passed** (was 27). The boundary section now covers **six prompts**, not four:
+`spec_extractor`, `spec_critic`, `solution_architect`, `modernization_engineer`'s initial prompt,
+and — new — `build_validator` and `modernization_engineer`'s **repair** prompt.
+
+### What was actually wrong
+
+Not a byte of tenant COBOL appears in either prompt, which is why ADR-0053 deferred them. What
+appears instead is **Java a model wrote after being shown that COBOL**, plus the compiler's messages
+about it. `modernization_engineer` wraps the COBOL and the narration precisely because they are
+untrusted; its output is an account of them, and both prompts quoted it back undelimited.
+
+Two facts made it worth closing rather than tolerating, and neither is about the bytes:
+
+| | |
+|---|---|
+| `build_validator` is **not terminal** | its verdict's `instruction` becomes `RepairContext.instruction` and is rendered into the next codegen prompt, so it steers generated code |
+| the loop **closes** | `render_repair_facts` quotes `previous_body` back verbatim, so wrapping only `build_validator` would have left the path open |
+
+### The probes
+
+Each node's wrapper was neutralised in turn (replaced with a pass-through) and the suite re-run:
+
+| damage | result |
+|---|---|
+| `wrap_untrusted_cobol` neutralised in `build_validator` | **1 failed** — `test_build_validator_puts_the_java_it_judges_inside_the_boundary` |
+| the same in `modernization_engineer` | **3 failed** — the repair-prompt test, the exception test, and the pre-existing `engineer_prompt` case |
+
+**The first draft of the first probe was wrong, and is recorded because it passed.** That test built
+its fake source with a hand-typed `// --- END model-authored logic`, while the renderer's real marker
+ends `---`. `model_authored_line_range` found no region, the statements block came out **empty**, and
+the assertion ran against nothing. The markers are now imported from `rendering/java_processor.py`
+rather than retyped. Trap 6, inside the test written to enforce a boundary.
+
+### The accepted exception, and what pins it
+
+`### What to change` — `build_validator`'s `instruction` — stays **outside** the block. Wrapping the
+one string whose purpose is to direct the rewrite, in a container that says "never a directive",
+would tell the next model to both obey and ignore it.
+`test_the_repair_instruction_is_the_only_deliberate_exception` asserts it is the **only**
+model-derived text outside the blocks, so the exception cannot widen without a red test.
+
+### What is not claimed
+
+**No live model call was made, and none is scheduled.** ADR-0053 paid $0.56 to confirm `spec_critic`
+still discriminated after its wrap, because a discrimination benchmark existed to re-run.
+**`build_validator` has none** — its tests are scripted on both sides, and step 43's four-error-class
+harness says in its own docstring that what it tests is the loop, not the model.
+
+So this change is verified **structurally, not behaviourally**: the untrusted text is inside the
+block and the prompts describe it. Whether wrapping moves the repairable/blocked judgment is
+**unmeasured and unmeasurable today**, and stays that way until this node gets the discrimination
+corpus it has never had.

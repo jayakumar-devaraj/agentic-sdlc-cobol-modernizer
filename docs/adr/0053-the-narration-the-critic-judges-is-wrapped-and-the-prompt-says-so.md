@@ -1,5 +1,14 @@
 # ADR-0053: The narration `spec_critic` judges is wrapped, and a prompt version says so
 
+> **Amendment note (2026-08-25, [ADR-0056](0056-the-generate-loop-wraps-what-it-quotes-back.md)).**
+> The question this record left open — whether `build_validator`'s unwrapped Java needs a boundary —
+> is now decided: **it does**, and so does `modernization_engineer`'s repair prompt, which quotes the
+> same body back. Nothing in the decision below changes. What did not survive is this record's
+> *reason* for deferring: *"its prompt carries model-authored Java and compiler diagnostics rather
+> than tenant source"* is true of the bytes and false of the provenance, since that Java is a model's
+> account of the tenant COBOL `modernization_engineer` wraps — the same category this record wrapped
+> the narration for.
+
 ## Status
 
 **Accepted** (2026-08-24). Closes the defect

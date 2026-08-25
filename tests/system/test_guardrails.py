@@ -142,7 +142,12 @@ def test_ordinary_functional_comment_is_not_flagged():
 # Everything above tests `core/guardrails.py` as a unit: given text, does it wrap, does it flag.
 # That is necessary and it is not the property this repository depends on. The property is that
 # no tenant text reaches a model *outside* the block the model is told is inert data -- a
-# statement about the four nodes that build prompts, not about the module they call.
+# statement about the prompts the nodes build, not about the module they call.
+#
+# **Six prompts, not four** (ADR-0056). It covered the extractor, critic, architect and the
+# engineer's *initial* prompt; `build_validator` and the engineer's *repair* prompt were outside it,
+# and both quoted model-authored Java back undelimited. "Model-authored" is not the same as
+# "trusted": that Java is a model's account of the tenant COBOL the engineer wraps.
 #
 # Asserted against the prompt each node really sends, captured through the same injected callback
 # that node's own tests use, rather than by calling the prompt builders directly. **G21 is why**:
