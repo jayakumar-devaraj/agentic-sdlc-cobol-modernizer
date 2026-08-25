@@ -148,12 +148,17 @@ def parse_with_repair[T](
     if max_attempts < 1:
         raise ValueError(f"max_attempts must be at least 1, got {max_attempts}")
 
+    # `while True` rather than `for attempt in range(...)`: the loop always leaves through a
+    # `return` or a `raise`, so a bounded loop needs an unreachable statement after it to satisfy
+    # the return type -- a line no test can reach, in a repo that uses no `pragma: no cover`
+    # anywhere and would therefore carry it as a permanent uncovered line.
+    attempt = 1
     current = raw_response
-    for attempt in range(1, max_attempts + 1):
+    while True:
         try:
             return parse(current)
         except on as error:
-            if attempt == max_attempts:
+            if attempt >= max_attempts:
                 logger.warning(
                     "structured output unparseable after repair node=%s attempts=%d error=%s",
                     node, attempt, type(error).__name__,
@@ -164,5 +169,4 @@ def parse_with_repair[T](
                 node, attempt, max_attempts, type(error).__name__,
             )
             current = reask(render_repair_instruction(error, current))
-
-    raise AssertionError("unreachable: the loop above either returns or raises")
+            attempt += 1
