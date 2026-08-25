@@ -129,7 +129,44 @@ def _generate(program_entry, entities, author, **overrides):
     return generate_processor(FIXTURE_ROOT, program_entry, STEP, entities, **kwargs)
 
 
+def _preamble_then_comply(payload: dict, sent: list[str]):
+    """A model that prefixes prose to its first answer and complies on the second.
+
+    The measured failure mode (ADR-0049): 5 of 21 sampled calls broke the response contract, every
+    one of them a prose preamble ahead of otherwise-valid JSON.
+    """
+    good = json.dumps(payload)
+    responses = [f"Here is the processor body you asked for:\n\n{good}", good]
+
+    def author(routing, system_prompt: str, user_content: str) -> str:
+        sent.append(user_content)
+        return responses.pop(0)
+
+    return author
+
+
 # --- The happy path, end to end through real fixture source -----------------------------------
+
+
+def test_a_prose_preamble_is_repaired(program_entry, entities):
+    """The wiring to `parse_with_repair`, pinned (ADR-0054). A damage probe with `max_attempts=1`
+    left this file green, so the repair path was wired and entirely uncovered."""
+    sent: list[str] = []
+    author = _preamble_then_comply(
+        {
+            "imports": ["java.math.BigDecimal", "com.modernized.batch.cobol.CobolArithmetic"],
+            "body": GOOD_BODY,
+            "notes": "",
+        },
+        sent,
+    )
+
+    result = _generate(program_entry, entities, author)
+
+    assert isinstance(result, GeneratedProcessor)
+    assert len(sent) == 2, "the node re-asked exactly once"
+    assert "could not be parsed" in sent[1]
+    assert sent[1].startswith(sent[0]), "the request itself is unchanged -- only appended to"
 
 
 def test_a_processor_is_generated_and_carries_its_provenance(program_entry, entities):
