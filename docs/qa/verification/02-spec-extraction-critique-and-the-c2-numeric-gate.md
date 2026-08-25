@@ -358,3 +358,73 @@ So what is claimed here is what the assertions checked: on `v1_1_0`, both tiers 
 planted error and the threshold still separates. Whether wrapping moved the scores relative to
 2026-08-08's 0.00/0.20/0.40 and 0.30/0.15/0.35 is **not** claimed, and the next run of this module
 will be able to say.
+
+---
+
+## The structured-output repair loop, and the two defects the probes found (step 35, ADR-0054)
+
+`core/structured_output.parse_with_repair` is plan step 35's shared repair-retry loop, wired into
+all four structured-output nodes. It is fully unit-testable, so what is worth recording here is not
+*"the tests pass"* — it is what the **damage probes** established, since both findings below were
+invisible to a green suite.
+
+**Command**, run on the branch before the ADR was written:
+
+```
+.venv/Scripts/python.exe -m pytest tests/system/test_structured_output.py \
+    tests/system/test_spec_critic.py tests/system/test_solution_architect.py \
+    tests/system/test_modernization_engineer.py tests/system/test_build_validator.py -q
+```
+
+### Probe 1 — the boundary property, which failed on the first real node
+
+The loop is specified to send the parse error and **no model-authored text** (ADR-0054 decision 3).
+That property was written as an assertion before any node was wired, and it **failed on
+`spec_critic`**: three of the four parse errors interpolate the response into their own message
+(`f"... is not valid JSON: {exc}. Raw response: {raw_response!r}"`), so an instruction built to
+carry "the error and nothing else" carried the response too — injected text included.
+
+| probe | result |
+|---|---|
+| `test_critique_spec_repair_never_quotes_the_malformed_response`, before `redact_response` | **failed** — the injected string reached the second prompt |
+| the same test, after | passes |
+| implementation damaged to append the prior response deliberately | **that test alone fails**; the other 9 in its module pass |
+
+The last row is the isolation check: the property is pinned by a test that fails for this reason and
+no other. Redaction matches the `repr()` form as well as the plain text, because `!r` is what
+actually put the text there — `test_redaction_removes_the_repr_form_an_f_string_produces` fails if
+only the plain form is excised.
+
+### Probe 2 — three of four nodes were wired and wholly uncovered
+
+After wiring, `max_attempts=1` was set in each node in turn — which disables repair entirely, making
+the node behave exactly as it did before this change.
+
+| node | tests in file at probe time | result with repair disabled |
+|---|---|---|
+| `spec_critic` | 25 | **2 failed**, 23 passed — covered |
+| `solution_architect` | 35 | **35 passed** — uncovered |
+| `modernization_engineer` | 46 | **46 passed** — uncovered |
+| `build_validator` | 22 | **22 passed** — uncovered |
+
+`spec_critic` differs from the other three only because its two repair tests were written first, in
+the same commit as the loop; nothing about that node made it easier to cover.
+
+Nothing distinguished a wired loop from an unwired one in three of the four. One test per node now
+drives the measured failure — a prose preamble ahead of valid JSON, the shape ADR-0049 observed on
+5 of 21 sampled calls — and asserts the node re-asked exactly once with the request unchanged.
+**Re-running the probe after that fails exactly those three and nothing else** (3 failed, 103
+passed), which is the evidence the coverage is real rather than incidental.
+
+This is trap 6 in `docs/development-environment.md` applied to a change of this repo's own: a test
+that passes on the artifact that produced it is not evidence.
+
+### What is not claimed
+
+No live model call was made for any of this. The repair path has never run against a real model that
+actually broke the contract — the failure it repairs is reproduced from ADR-0049's recorded
+excerpts, not re-observed. What is verified is that the loop re-asks, that it re-asks once, that it
+carries the diagnosis, that it carries none of the model's words, and that a parser defect
+(`TypeError`) reaches the caller without spending a call. Whether a real model complies on the
+second ask is the open half, and the honest place to settle it is the next billed run that happens
+to hit one.

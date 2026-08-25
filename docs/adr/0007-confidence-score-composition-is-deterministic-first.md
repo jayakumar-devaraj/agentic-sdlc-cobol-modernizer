@@ -1,5 +1,14 @@
 # 0007 - Confidence-score composition is deterministic-first, weakest-link, no repair-retry yet
 
+> **Amendment note (2026-08-25, ADR-0054).** Decision 3's *"yet"* has expired, exactly on the terms
+> this record set for it: the shared loop was built once, in `core/structured_output.py`, when its
+> contract was known — never as the `spec_critic`-specific miniature decision 3 refused. Decisions
+> 1 and 2 stand unchanged, and so does the substance of 3: a response still unparseable after the
+> one repair attempt raises `SpecCritiqueParseError` and is never defaulted to an empty rule list.
+> What changed is how many times the model is asked, not what happens when it will not answer.
+> The title's *"no repair-retry yet"* is left as written rather than edited, per this repo's rule
+> that a superseded record is marked rather than rewritten.
+
 ## Context
 
 ADR-0001's consequences state plainly that `spec_critic`'s confidence score is "the only
