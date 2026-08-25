@@ -1,5 +1,12 @@
 # 0010 - `unified_design`'s real shape, and where the deterministic/LLM split falls
 
+> **Amendment note (2026-08-25, ADR-0054).** Decision 5 — *"not built in miniature here a third
+> time"* — is now satisfied rather than deferred: `solution_architect` calls the shared
+> `core.structured_output.parse_with_repair`, and the third miniature was never written. Every
+> validation this record specifies is untouched; the node still refuses a design referencing a
+> program, entity, step role or REST method it did not offer. The loop buys one more attempt at a
+> parseable answer, never a laxer definition of a valid one.
+
 ## Context
 
 ADR-0008 deliberately left `DesignDocument.unified_design` untyped (`dict | None`) until

@@ -252,10 +252,33 @@ def test_a_non_boolean_repairable_raises():
 
 
 def test_malformed_json_raises():
+    """Still raises -- but only after the repair attempt, since this fake never complies."""
     source = _render("return item;")
     span = model_authored_line_range(source)
     with pytest.raises(BuildValidatorParseError, match="not valid JSON"):
         validate_build(_result(_error(span[0])), {REL: source}, advise=lambda r, s, u: "nope")
+
+
+def test_a_prose_preamble_is_repaired():
+    """The wiring to `parse_with_repair`, pinned (ADR-0054). A damage probe with
+    `max_attempts=1` left this file's 30 tests green, so the path was wholly uncovered."""
+    source = _render("return item;")
+    span = model_authored_line_range(source)
+    payload = json.dumps({"repairable": True, "reason": "missing import", "instruction": "add it"})
+    responses = [f"Looking at the diagnostics, here is my verdict:\n\n{payload}", payload]
+    sent: list[str] = []
+
+    def preamble_then_comply(routing, system_prompt, user_content):
+        sent.append(user_content)
+        return responses.pop(0)
+
+    verdict = validate_build(
+        _result(_error(span[0])), {REL: source}, advise=preamble_then_comply
+    )
+
+    assert verdict.outcome == "repairable"
+    assert len(sent) == 2, "the node re-asked exactly once"
+    assert "could not be parsed" in sent[1]
 
 
 # --- The prompt shows only what the model may change ----------------------------------------------

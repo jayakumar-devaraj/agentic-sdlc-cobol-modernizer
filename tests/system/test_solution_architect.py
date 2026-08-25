@@ -187,6 +187,34 @@ def test_design_solution_end_to_end_with_a_fake_architect(all_program_entries):
     assert len(design.rest_endpoints) == 1
 
 
+def test_design_solution_repairs_a_prose_preamble(all_program_entries):
+    """The wiring to `parse_with_repair`, pinned (ADR-0054).
+
+    Written after a damage probe: setting `max_attempts=1` here left all 35 tests in this file
+    green, so the repair path was wired and entirely uncovered. A test that only passes on the
+    happy path cannot tell a wired loop from an unwired one.
+    """
+    responses: list[str] = []
+    sent: list[str] = []
+
+    def preamble_then_comply(model, system_prompt, user_content):
+        sent.append(user_content)
+        if not responses:
+            entities = build_domain_entities(FIXTURE_ROOT, all_program_entries)
+            good = _fake_architect_response(entities, all_program_entries)
+            responses.append(good)
+            return f"Certainly! Here is the unified design:\n\n{good}"
+        return responses.pop()
+
+    design = design_solution(
+        FIXTURE_ROOT, all_program_entries, architect=preamble_then_comply
+    )
+
+    assert len(design.domain_entities) == 7
+    assert len(sent) == 2, "the node re-asked exactly once"
+    assert "could not be parsed" in sent[1]
+
+
 def test_design_solution_resolves_real_model_and_real_system_prompt(all_program_entries):
     captured = {}
 
