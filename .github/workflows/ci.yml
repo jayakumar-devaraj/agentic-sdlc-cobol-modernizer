@@ -78,6 +78,10 @@ jobs:
         # model callback — and fails if a single tenant comment line lands outside the wrapped
         # block. ADR-0052 records why a behavioural check rather than an import-level one.
         #
+        # Six prompts since ADR-0056, not four: build_validator and the engineer's repair prompt
+        # both quoted model-authored Java back undelimited, and that Java is a model's account of
+        # the tenant COBOL the engineer wraps.
+        #
         # Deliberately run again after the full suite above: a boundary regression should be a
         # distinctly named red, not one line among eleven hundred. It costs under a second.
         run: pytest tests/system/test_guardrails.py -q
