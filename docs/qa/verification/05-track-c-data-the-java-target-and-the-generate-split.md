@@ -475,3 +475,27 @@ runtime data file is inside it, asserts the Java baseline arrived whole (9 of 9 
 just the `pom.xml`), installs it into a throwaway virtualenv and asks that installation for its own
 data. `build` is a declared dev dependency rather than an assumed one, because the fixture skips
 when it is missing and a guard that silently skips is exactly the defect Open Issue 3 recorded.
+
+### What the damage probe corrected, recorded because the first explanation was wrong
+
+The probe deleted `data/templates/**/*` from `[tool.setuptools.package-data]` and expected the tests
+above to fail. **They passed.** The first hypothesis — a stale `build/lib` tree from an earlier build
+leaking files into a later one — was tested and refuted: removing `build/` made no difference.
+
+The measured cause, three builds in a fully clean tree:
+
+| `pyproject.toml` state | template files in wheel |
+|---|---|
+| default, glob present | 40 |
+| default, **glob deleted** | 40 |
+| `include-package-data = false` **and** glob deleted | **0** |
+
+`setuptools` defaults `include_package_data` to true for pyproject-configured projects, so moving the
+data inside the package is what fixes the wheel; the globs are redundant. They are kept deliberately
+and the reason is written where someone would delete them.
+
+**The consequence for this entry's own evidence**: these tests cannot be damage-probed by editing one
+line of `package-data`. What they verify is the property that matters — the files are in the built
+artifact and an installed copy can read them — which is checked against the artifact itself and holds
+whichever mechanism put them there. The `build/` removal stays in the fixture as determinism, and is
+labelled a precaution rather than a diagnosis, because it explained nothing that was observed.

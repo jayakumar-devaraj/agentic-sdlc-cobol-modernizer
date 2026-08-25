@@ -84,8 +84,8 @@ control-plane's router exists.
 
 ### 2. The package carries its own data, in one place, reached by one resolver
 
-`prompts/`, `config/` and `templates/` move to `src/cobol_modernizer/data/`, declared as
-`[tool.setuptools.package-data]`, and resolved through a single `core/package_data.py`:
+`prompts/`, `config/` and `templates/` move to `src/cobol_modernizer/data/` and are resolved through
+a single `core/package_data.py`:
 
 ```python
 DATA_ROOT = Path(__file__).resolve().parent.parent / "data"
@@ -94,6 +94,15 @@ DATA_ROOT = Path(__file__).resolve().parent.parent / "data"
 The same path in a source checkout and in an installed wheel — there is no "installed or not" branch
 to get wrong and no environment variable to forget. Six `parents[3]` expressions become three
 constants.
+
+**The move is the fix; the `[tool.setuptools.package-data]` globs are not.** Measured while probing
+this change: deleting the `data/templates` glob leaves all 40 template files in the wheel, because
+setuptools defaults `include_package_data` to true for pyproject-configured projects and the files
+are now inside the package. Only `include-package-data = false` *together with* deleting the glob
+produces an empty wheel. The globs are kept anyway, and the reason is this ADR's whole subject:
+relying on an implicit default for the thing that makes an install work is how the original defect
+happened. Recorded rather than quietly left in, so the next reader does not delete a redundant-looking
+block and reintroduce a dependency on a default.
 
 **`schemas/` deliberately does not move.** Its only readers are `scripts/generate_schemas.py` and
 `tests/system/test_schemas.py`; nothing on the runtime path opens it. Moving it would have been

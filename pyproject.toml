@@ -34,9 +34,20 @@ build-backend = "setuptools.build_meta"
 where = ["src"]
 
 # The CLI's own data: prompt registry, model catalog/routing config, and the Spring Boot baseline
-# copied into every generated project. Without this the wheel contains zero non-Python files and an
-# installed `cobol-modernizer design` dies on a missing prompt (ADR-0055). It went unnoticed because
-# CI installs with `pip install -e .`, where the package is still in the source tree.
+# copied into every generated project (ADR-0055).
+#
+# **This block is redundant today, and is kept deliberately.** What actually puts these files in the
+# wheel is that they now live *inside* the package: setuptools defaults `include_package_data` to
+# true for pyproject-configured projects, so `src/cobol_modernizer/data/**` is picked up with or
+# without the globs below. Measured, not assumed -- deleting the `data/templates` line changes
+# nothing, and only `include-package-data = false` *together with* deleting it drops the 40 template
+# files. The globs stay because relying on an implicit default for the thing that makes an install
+# work is how this defect happened in the first place; a future setuptools that flips that default
+# should not silently produce an empty wheel again.
+#
+# One consequence worth knowing before "simplifying" this: a damage probe that deletes a line here
+# cannot fail. `tests/system/test_packaging.py` still guards the property that matters -- the files
+# are in the wheel and an installed copy can read them -- by inspecting the built artifact.
 #
 # `schemas/` is deliberately absent: nothing in the runtime path reads it -- only
 # `scripts/generate_schemas.py` and `tests/system/test_schemas.py` do.

@@ -19,6 +19,7 @@ throwaway environment with no source tree in sight, and ask that installation fo
 from __future__ import annotations
 
 import os
+import shutil
 import subprocess
 import sys
 import venv
@@ -50,7 +51,26 @@ def _run(*command: str, cwd: Path | None = None) -> subprocess.CompletedProcess:
 
 @pytest.fixture(scope="module")
 def wheel(tmp_path_factory) -> Path:
-    """A real wheel, built from this checkout."""
+    """A real wheel, built from this checkout into a fresh `build/` tree.
+
+    `build/` is removed first for determinism: `setuptools` stages into `build/lib/` and does not
+    clean it between builds, so in principle a file from an earlier build could survive into a later
+    one. **Stated as a precaution rather than as a diagnosis** — a damage probe found no difference
+    with and without the removal, so this is not the explanation for anything observed here.
+
+    **What that probe did establish** is worth knowing before trusting this module: deleting
+    `data/templates/**/*` from `[tool.setuptools.package-data]` does *not* make these tests fail,
+    because setuptools defaults `include_package_data` to true for pyproject-configured projects and
+    the data now lives inside the package. Only disabling that default *and* removing the glob
+    produces an empty wheel. So these tests cannot be damage-probed by editing one line of
+    `package-data`; what they do guard is the property that matters — the files are in the built
+    artifact, and an installed copy can read them — which holds regardless of which mechanism put
+    them there.
+    """
+    stale = REPO_ROOT / "build"
+    if stale.exists():
+        shutil.rmtree(stale)
+
     outdir = tmp_path_factory.mktemp("dist")
     result = _run(sys.executable, "-m", "build", "--wheel", "--outdir", str(outdir), cwd=REPO_ROOT)
     if result.returncode != 0:
