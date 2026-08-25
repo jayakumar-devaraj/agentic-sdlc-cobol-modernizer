@@ -20,7 +20,9 @@ import pytest
 
 from cobol_modernizer.core.structured_output import (
     MAX_CONTENT_ATTEMPTS,
+    REDACTED,
     parse_with_repair,
+    redact_response,
     render_repair_instruction,
     strip_code_fence,
 )
@@ -182,10 +184,34 @@ def test_the_repair_instruction_never_quotes_the_malformed_response() -> None:
 def test_the_repair_instruction_carries_the_parse_error() -> None:
     """Without the reason, the second attempt is a bare retry of a prompt the model already
     ignored once -- and the observed failure is a model ignoring an instruction."""
-    instruction = render_repair_instruction(FakeParseError("response must be a JSON array"))
+    instruction = render_repair_instruction(
+        FakeParseError("response must be a JSON array"), "prose only"
+    )
 
     assert "response must be a JSON array" in instruction
     assert "nothing else" in instruction
+
+
+def test_redaction_removes_the_repr_form_an_f_string_produces() -> None:
+    """Three of the four real parse errors interpolate the response with `!r`. That form, not the
+    plain text, is what actually appears in the message -- redacting only the plain text would
+    have looked correct and shipped the leak."""
+    raw = 'Sure! Here you go: {"a": 1}'
+    message = f"spec_critic response is not valid JSON: line 1. Raw response: {raw!r}"
+
+    redacted = redact_response(message, raw)
+
+    assert "Sure! Here you go" not in redacted
+    assert REDACTED in redacted
+    assert "spec_critic response is not valid JSON" in redacted, "the diagnosis itself survives"
+
+
+def test_redaction_leaves_a_message_that_never_quoted_the_response_alone() -> None:
+    """`build_validator`'s errors do not embed the response. Redaction must be a no-op there,
+    not a mangling."""
+    message = "build_validator response missing required key(s): ['instruction']"
+
+    assert redact_response(message, "some unparseable text") == message
 
 
 def test_default_cap_is_two() -> None:

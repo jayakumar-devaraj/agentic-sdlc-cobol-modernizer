@@ -55,17 +55,45 @@ def strip_code_fence(text: str) -> str:
     return stripped.strip()
 
 
-def render_repair_instruction(error: Exception) -> str:
+#: Stands in for the model's own words wherever an error message quoted them back.
+REDACTED = "<the unparseable response, omitted here on purpose>"
+
+
+def redact_response(message: str, raw_response: str) -> str:
+    """Remove the model's own output from a parse error message.
+
+    **This is not a precaution, it is a fix for a defect this repo actually had.** Three of the
+    four parse errors embed what the model said -- `spec_critic`'s reads
+    `f"... is not valid JSON: {exc}. Raw response: {raw_response!r}"` -- which are excellent
+    messages for a human reading a log and exactly the wrong thing to paste into the next prompt.
+    Writing `render_repair_instruction` to "carry the error and nothing else" was therefore not
+    sufficient on its own: the error was not free of model output, and the boundary test in
+    `tests/system/test_spec_critic.py` caught it (ADR-0054).
+
+    The redaction is exact rather than heuristic: the caller knows precisely what the model
+    returned, so both the plain text and its `repr()` form -- the one an f-string's `!r` produces
+    -- are excised by literal match. Nothing is guessed at, and a message that never quoted the
+    response is returned unchanged.
+    """
+    stripped = raw_response.strip()
+    for form in (repr(raw_response), repr(stripped), raw_response, stripped):
+        if form and form in message:
+            message = message.replace(form, REDACTED)
+    return message
+
+
+def render_repair_instruction(error: Exception, raw_response: str) -> str:
     """The correction appended to the original prompt when a response could not be parsed.
 
-    **It carries this repo's own parse error and nothing else.** The obvious alternative -- quote
-    the malformed response back and ask the model to fix *that* -- is deliberately not taken, for
-    two reasons that point the same way:
+    **It carries this repo's own parse error and nothing else** -- with the model's own words
+    redacted out of that error by `redact_response`. The obvious alternative -- quote the
+    malformed response back and ask the model to fix *that* -- is deliberately not taken, for two
+    reasons that point the same way:
 
     1. **It would put model-authored text inside a prompt, unwrapped.** That is the exact question
        ADR-0053 left open for `build_validator` rather than answering in passing, and a repair loop
-       spanning four nodes is the worst place to pre-empt it. The error message is this repo's own
-       computed fact -- the same category as the Known Facts every node already sends unwrapped.
+       spanning four nodes is the worst place to pre-empt it. The redacted error message is this
+       repo's own computed fact -- the same category as the Known Facts every node sends unwrapped.
     2. **A malformed response is untrusted content.** `spec_critic` and `spec_extractor` read
        tenant COBOL, so a response echoing an injected instruction back into the next prompt is a
        laundering path straight through the boundary `core/guardrails` exists to hold.
@@ -73,9 +101,10 @@ def render_repair_instruction(error: Exception) -> str:
     Re-asking without the prior text costs one more full prompt rather than a diff. That is the
     price, it is stated rather than hidden, and ADR-0054 records why it is worth paying.
     """
+    reason = redact_response(str(error), raw_response)
     return (
         "Your previous response to this exact request could not be parsed, and the request is "
-        f"unchanged. The parser reported: {error}\n\n"
+        f"unchanged. The parser reported: {reason}\n\n"
         "Respond again with the required JSON value and nothing else -- no explanation before it, "
         "no commentary after it, no code fence around it. Do not apologise or acknowledge this "
         "correction; return only the JSON."
@@ -134,6 +163,6 @@ def parse_with_repair[T](
                 "structured output repair node=%s attempt=%d/%d error=%s",
                 node, attempt, max_attempts, type(error).__name__,
             )
-            current = reask(render_repair_instruction(error))
+            current = reask(render_repair_instruction(error, current))
 
     raise AssertionError("unreachable: the loop above either returns or raises")

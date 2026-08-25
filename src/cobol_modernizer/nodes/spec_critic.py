@@ -19,10 +19,13 @@ framing shapes two decisions this module makes, both worth stating explicitly (s
    nine well-supported ones -- the score exists so a human gate can trust "the weakest claim in
    this spec is at least this trustworthy", not "the typical claim is".
 
-Structured output from the critic model (`_parse_rule_confidence`) has no repair-retry loop --
-that's Milestone C3's own, separately-scoped piece of work (plan step 35, a repair-retry loop for
-`solution_architect`'s `design.json` too). A malformed critic response is a hard failure here, not
-guessed past with an empty rule list that would make `overall_confidence` silently meaningless.
+Structured output from the critic model (`_parse_rule_confidence`) runs through
+`core.structured_output.parse_with_repair` -- plan step 35's shared repair-retry loop, built once
+for all four structured-output nodes rather than four times (ADR-0054). A response that is still
+unparseable after the repair attempt is a hard failure here, not guessed past with an empty rule
+list that would make `overall_confidence` silently meaningless. What the loop changes is how many
+times the model is asked; what it deliberately does not change is what happens when it will not
+answer.
 
 Like `spec_extractor`, the live critic model call is injected (`critique`) so this module's tests
 exercise every deterministic step -- fidelity checks, prompt construction -- against real data
@@ -48,7 +51,7 @@ from cobol_modernizer.core.guardrails import (
 from cobol_modernizer.core.model_client import call_model
 from cobol_modernizer.core.model_routing import RoutingDecision, resolve_routing
 from cobol_modernizer.core.source_units import iter_source_units
-from cobol_modernizer.core.structured_output import strip_code_fence
+from cobol_modernizer.core.structured_output import parse_with_repair, strip_code_fence
 from cobol_modernizer.nodes.spec_extractor import (
     PicMapping,
     SpecExtractionResult,
@@ -92,8 +95,9 @@ class RuleConfidence(BaseModel):
 class SpecCritiqueParseError(Exception):
     """The critic model's response could not be parsed into structured `RuleConfidence` entries.
 
-    Per the module docstring, there is no repair-retry loop yet (Milestone C3, plan step 35) --
-    callers must not catch this and fall back to an empty rule list or a default confidence value,
+    Raised only once `parse_with_repair` has spent its repair attempt (ADR-0054), so reaching a
+    caller means the model was asked twice and would not answer in the required shape. Callers
+    must still not catch this and fall back to an empty rule list or a default confidence value,
     either of which would make `overall_confidence` claim independence it doesn't have.
     """
 
@@ -294,7 +298,8 @@ def _parse_rule_confidence(raw_response: str) -> list[RuleConfidence]:
 
     Raises:
         SpecCritiqueParseError: the response isn't valid JSON, isn't a JSON array, or an entry is
-            missing a required field or has a `confidence` outside `[0.0, 1.0]`. No repair-retry
+            missing a required field or has a `confidence` outside `[0.0, 1.0]`. Called through
+            `parse_with_repair`, so one such failure buys a second attempt before it propagates
             -- see the module docstring.
     """
     candidate = strip_code_fence(raw_response)
@@ -396,7 +401,13 @@ def critique_spec(
         len(fidelity_issues),
     )
     raw_response = critique(routing, system_prompt, user_content)
-    rule_confidence = _parse_rule_confidence(raw_response)
+    rule_confidence = parse_with_repair(
+        _NODE_NAME,
+        raw_response,
+        _parse_rule_confidence,
+        lambda instruction: critique(routing, system_prompt, f"{user_content}\n\n{instruction}"),
+        on=SpecCritiqueParseError,
+    )
 
     if fidelity_issues:
         overall_confidence = 0.0
