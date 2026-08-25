@@ -22,8 +22,9 @@ from cobol_modernizer.core.model_catalog import (
     load_catalog,
     select_model,
 )
+from cobol_modernizer.core.package_data import CONFIG_ROOT
 
-_REAL_CATALOG = Path(__file__).resolve().parents[2] / "config" / "model_catalog.yaml"
+_REAL_CATALOG = CONFIG_ROOT / "model_catalog.yaml"
 
 PROFILE = TokenProfile(typical_input_tokens=36_000, typical_output_tokens=13_000)
 

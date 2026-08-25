@@ -22,8 +22,9 @@ from cobol_modernizer.core.model_routing import (
     load_model_routing,
     resolve_routing,
 )
+from cobol_modernizer.core.package_data import CONFIG_ROOT
 
-_REAL_CONFIG_PATH = Path(__file__).resolve().parents[2] / "config" / "model_routing.yaml"
+_REAL_CONFIG_PATH = CONFIG_ROOT / "model_routing.yaml"
 
 
 def _valid_config() -> dict:

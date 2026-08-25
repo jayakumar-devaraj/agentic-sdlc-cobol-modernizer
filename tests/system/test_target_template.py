@@ -21,7 +21,9 @@ import pytest
 
 MAVEN_NS = {"m": "http://maven.apache.org/POM/4.0.0"}
 
-TEMPLATE_ROOT = Path(__file__).resolve().parents[2] / "templates" / "target-spring-boot-baseline"
+from cobol_modernizer.core.package_data import TEMPLATES_ROOT
+
+TEMPLATE_ROOT = TEMPLATES_ROOT / "target-spring-boot-baseline"
 POM_PATH = TEMPLATE_ROOT / "pom.xml"
 
 # ADR-0034. Changing this number is a decision, not a refactor: it has to move here and
@@ -80,7 +82,12 @@ def test_the_ci_workflow_builds_on_the_same_release_the_pom_pins() -> None:
         encoding="utf-8"
     )
     assert 'java-version: "25"' in workflow
-    assert "working-directory: templates/target-spring-boot-baseline" in workflow
+    # Derived from `TEMPLATE_ROOT` rather than restated as a literal. The previous spelling was
+    # hardcoded, so when ADR-0055 moved the template under the package this assertion failed --
+    # correctly, but by pointing at CI rather than at itself. Reading the path from the same
+    # constant the rest of this module uses means the next move updates it for free (trap 8).
+    relative = TEMPLATE_ROOT.relative_to(Path(__file__).resolve().parents[2]).as_posix()
+    assert f"working-directory: {relative}" in workflow
 
 
 def test_the_maven_wrapper_pins_an_exact_maven_version() -> None:

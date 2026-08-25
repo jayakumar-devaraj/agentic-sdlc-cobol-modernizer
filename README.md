@@ -12,9 +12,9 @@ for why.
 - **Internal sub-pipeline**: LangGraph (in-process, in-memory checkpointer — not durable; see
   ADR-0001)
 - **State/validation**: Pydantic
-- **LLM client**: `anthropic` SDK — model per node resolved from `config/model_routing.yaml`
+- **LLM client**: `anthropic` SDK — model per node resolved from `cobol_modernizer/data/config/model_routing.yaml`
   (static, not a routing engine; see ADR-0004)
-- **Config**: PyYAML (`config/model_routing.yaml`)
+- **Config**: PyYAML (`cobol_modernizer/data/config/model_routing.yaml`)
 - **Testing**: pytest, pytest-cov
 
 ## Architecture
@@ -37,9 +37,9 @@ branches are capped rather than fanning out without limit.
 
 **Which model runs is computed, not hardcoded** (ADR-0014, ADR-0015). `core/complexity.py` measures
 the work before any call — paragraph count, field counts, and the exact prompt about to be sent —
-and classifies it into a tier. `config/model_routing.yaml` then states what that tier *needs*
+and classifies it into a tier. `cobol_modernizer/data/config/model_routing.yaml` then states what that tier *needs*
 (minimum capability, effort, output ceiling, and a measured token profile) and names no model at
-all; `config/model_catalog.yaml` holds each model's price, capability rank, and `verified_for` —
+all; `cobol_modernizer/data/config/model_catalog.yaml` holds each model's price, capability rank, and `verified_for` —
 the nodes it has real benchmark evidence for. Selection is the cheapest catalogued model that
 clears the bar and is verified for that node.
 
@@ -350,7 +350,7 @@ owns; production never points at it. `tests/fixtures/db_credentials_sample/local
 matching local credentials pre-filled (a docker-compose default password for a local-only,
 unreachable-from-outside container, not a real secret — see that file's own header comment).
 
-`templates/target-spring-boot-baseline/` is a real Maven project, not a scaffold of placeholders —
+`cobol_modernizer/data/templates/target-spring-boot-baseline/` is a real Maven project, not a scaffold of placeholders —
 `mvn -B verify` inside it needs **JDK 25** and a running Docker daemon, and CI builds it on every
 push. There is still no sandboxed-compiler stack driving it from Python; that's the rest of
 Milestone C4.
@@ -443,7 +443,7 @@ Every other test in the repo is free.
 
 `.github/workflows/ci.yml` runs lint + the test suite with the coverage floor above on every push
 and pull request, and a second job (`template-build`) compiles and tests
-`templates/target-spring-boot-baseline/` on JDK 25 against a real PostgreSQL container. That job
+`cobol_modernizer/data/templates/target-spring-boot-baseline/` on JDK 25 against a real PostgreSQL container. That job
 exists so an ecosystem dependency that has not caught up to the pinned JDK fails here rather than
 inside the self-healing compile loop, where a compile-error-driven loop cannot diagnose it
 (`docs/adr/0019`). No deployment pipeline yet — this repo has nothing running in production until

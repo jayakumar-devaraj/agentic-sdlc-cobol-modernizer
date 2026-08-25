@@ -86,7 +86,7 @@ from cobol_modernizer.parsing.key_assignments import (
     key_components,
 )
 from cobol_modernizer.parsing.record_layout import compute_record_layouts
-from cobol_modernizer.prompts_registry_client.loader import prompt_path
+from cobol_modernizer.prompts_registry_client.loader import read_prompt
 from cobol_modernizer.tools.pic_mapper import PicMapping
 from cobol_modernizer.tools.tenant_repo import resolve_program
 
@@ -805,7 +805,7 @@ def _default_architect(routing: RoutingDecision, system_prompt: str, user_conten
 
 
 def _load_system_prompt() -> str:
-    return prompt_path(_NODE_NAME).read_text(encoding="utf-8")
+    return read_prompt(_NODE_NAME)
 
 
 def design_solution(

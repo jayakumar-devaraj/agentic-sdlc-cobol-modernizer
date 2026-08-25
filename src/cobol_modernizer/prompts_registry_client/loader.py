@@ -1,4 +1,4 @@
-"""Loads versioned prompt text from prompts/registry/.
+"""Loads versioned prompt text from this package's own `data/prompts/registry/`.
 
 Skeleton only (Milestone C1) — real hierarchical resolution (system > role > task) and semver
 lookup land alongside the first node that actually needs it, in Milestone C2. For now this
@@ -10,7 +10,9 @@ from __future__ import annotations
 import importlib
 from pathlib import Path
 
-_REGISTRY_ROOT = Path(__file__).resolve().parents[3] / "prompts" / "registry"
+from cobol_modernizer.core.package_data import PROMPTS_ROOT, require
+
+_REGISTRY_ROOT = PROMPTS_ROOT
 
 #: The version a persona resolves to when its node names none. Every persona started here.
 DEFAULT_VERSION = "v1_0_0"
@@ -38,3 +40,17 @@ def prompt_path(persona: str, version: str = DEFAULT_VERSION) -> Path:
     themselves until the real loader (with caching and hierarchical composition) lands in C2.
     """
     return _REGISTRY_ROOT / persona / f"{version}.md"
+
+
+def read_prompt(persona: str, version: str = DEFAULT_VERSION) -> str:
+    """The persona's prompt text, or `PackageDataMissingError` naming the install.
+
+    Separate from `prompt_path` on purpose. `prompt_path` stays a pure path construction because
+    two tests legitimately ask it about files that do not exist -- one probes every node's declared
+    version precisely to catch a missing one cheaply, before the first live call that would
+    otherwise find it at cost. A constructor that raised would break the question being asked.
+    The read is where a missing file means the *install* is wrong rather than the argument.
+    """
+    return require(
+        prompt_path(persona, version), what=f"the {persona} prompt at {version}"
+    ).read_text(encoding="utf-8")

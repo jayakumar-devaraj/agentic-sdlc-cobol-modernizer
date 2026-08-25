@@ -30,6 +30,12 @@ def pytest_configure(config: pytest.Config) -> None:
         "live_claude_cli: hits the real `claude` CLI; skipped unless "
         f"{LIVE_CLI_ENV_VAR}=1 is set",
     )
+    config.addinivalue_line(
+        "markers",
+        "slow: builds a wheel or a throwaway virtualenv. Costs minutes, not money -- unlike "
+        "`live_claude_cli`, this one always runs, because the defect it catches (ADR-0055) is "
+        "invisible to every other test in the suite.",
+    )
 
 
 def pytest_collection_modifyitems(config: pytest.Config, items: list[pytest.Item]) -> None:

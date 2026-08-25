@@ -57,7 +57,7 @@ from cobol_modernizer.parsing.cobol_parser import (
     extract_paragraphs,
     extract_record_fields,
 )
-from cobol_modernizer.prompts_registry_client.loader import prompt_path
+from cobol_modernizer.prompts_registry_client.loader import read_prompt
 from cobol_modernizer.tools.pic_mapper import (
     PicMapping,
     UnsupportedPicConstructError,
@@ -267,7 +267,7 @@ def _default_narrate(routing: RoutingDecision, system_prompt: str, user_content:
 
 
 def _load_system_prompt() -> str:
-    return prompt_path(_NODE_NAME).read_text(encoding="utf-8")
+    return read_prompt(_NODE_NAME)
 
 
 def extract_spec(
