@@ -44,6 +44,7 @@ from cobol_modernizer.core.contracts import (
     ProgramDesignEntry,
     UnifiedDesign,
 )
+from cobol_modernizer.core.package_data import TEMPLATES_ROOT
 from cobol_modernizer.nodes.build_validator import AdviseFn, ValidationVerdict, validate_build
 from cobol_modernizer.nodes.modernization_engineer import (
     AuthorFn,
@@ -69,7 +70,7 @@ logger = logging.getLogger(__name__)
 MAX_HEAL_ATTEMPTS = 3
 
 #: The baseline Maven project `generate` copies into an empty target repo (ADR-0009, ADR-0034).
-TEMPLATE_DIR = Path(__file__).resolve().parents[3] / "templates" / "target-spring-boot-baseline"
+TEMPLATE_DIR = TEMPLATES_ROOT / "target-spring-boot-baseline"
 
 #: Where generated processors are declared. `card-service`'s own package, not this repo's.
 DEFAULT_PACKAGE = "com.modernized.batch.processor"

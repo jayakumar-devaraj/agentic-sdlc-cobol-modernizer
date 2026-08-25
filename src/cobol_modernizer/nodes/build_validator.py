@@ -47,7 +47,7 @@ from cobol_modernizer.core.complexity import ComplexityTier
 from cobol_modernizer.core.model_client import call_model
 from cobol_modernizer.core.model_routing import RoutingDecision, resolve_routing
 from cobol_modernizer.core.structured_output import parse_with_repair, strip_code_fence
-from cobol_modernizer.prompts_registry_client.loader import prompt_path
+from cobol_modernizer.prompts_registry_client.loader import read_prompt
 from cobol_modernizer.rendering.java_processor import (
     model_authored_line_numbers,
     model_authored_line_range,
@@ -256,7 +256,7 @@ def _default_advise(routing: RoutingDecision, system_prompt: str, user_content: 
 
 
 def _load_system_prompt() -> str:
-    return prompt_path(_NODE_NAME).read_text(encoding="utf-8")
+    return read_prompt(_NODE_NAME)
 
 
 def validate_build(

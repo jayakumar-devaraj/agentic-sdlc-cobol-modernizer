@@ -82,7 +82,7 @@ jobs:
         # distinctly named red, not one line among eleven hundred. It costs under a second.
         run: pytest tests/system/test_guardrails.py -q
 
-  # Compiles and tests templates/target-spring-boot-baseline on the exact JDK it pins.
+  # Compiles and tests src/cobol_modernizer/data/templates/target-spring-boot-baseline on the exact JDK it pins.
   # ADR-0034 makes this a gate rather than an intention: the Java 25 risk is not the language but
   # the ecosystem's bytecode tooling (Hibernate/ByteBuddy, Mockito's instrumentation agent,
   # Testcontainers), which fails at *runtime*. Running it here means an unsupported transitive
@@ -109,9 +109,9 @@ jobs:
       # asserts the JDK's own feature version -- and the build tool was the one thing left free to
       # drift under an image update.
       - name: Report the resolved toolchain
-        working-directory: templates/target-spring-boot-baseline
+        working-directory: src/cobol_modernizer/data/templates/target-spring-boot-baseline
         run: java -version && ./mvnw -B -ntp -version
 
       - name: Build and test the target baseline template
-        working-directory: templates/target-spring-boot-baseline
+        working-directory: src/cobol_modernizer/data/templates/target-spring-boot-baseline
         run: ./mvnw -B -ntp verify

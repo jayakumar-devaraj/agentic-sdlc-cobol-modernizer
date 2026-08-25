@@ -20,6 +20,7 @@ from pathlib import Path
 
 import pytest
 
+from cobol_modernizer.core.package_data import TEMPLATES_ROOT
 from cobol_modernizer.tools.local_compiler import (
     CompileDiagnostic,
     CompilerNotFoundError,
@@ -32,7 +33,7 @@ from cobol_modernizer.tools.local_compiler import (
     resolve_build_command,
 )
 
-TEMPLATE = Path(__file__).resolve().parents[2] / "templates" / "target-spring-boot-baseline"
+TEMPLATE = TEMPLATES_ROOT / "target-spring-boot-baseline"
 
 # Real output from `mvnw -B -ntp compile` against the template with `setScale` typo'd, trimmed to
 # the shape that matters. Note the error appears twice -- Maven's summary and its detail listing --

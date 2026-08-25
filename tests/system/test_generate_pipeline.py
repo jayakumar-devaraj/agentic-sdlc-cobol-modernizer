@@ -32,7 +32,9 @@ from cobol_modernizer.nodes.spec_extractor import extract_spec
 from cobol_modernizer.tools.local_compiler import compile_project
 
 FIXTURE_ROOT = Path(__file__).resolve().parents[1] / "fixtures" / "tenant_repo_sample"
-TEMPLATE = Path(__file__).resolve().parents[2] / "templates" / "target-spring-boot-baseline"
+from cobol_modernizer.core.package_data import TEMPLATES_ROOT
+
+TEMPLATE = TEMPLATES_ROOT / "target-spring-boot-baseline"
 PROGRAM = "CBACT04C"
 PACKAGE = "com.modernized.batch.processor"
 

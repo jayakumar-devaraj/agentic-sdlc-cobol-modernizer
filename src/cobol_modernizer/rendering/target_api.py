@@ -30,7 +30,9 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
 
-_TEMPLATE_ROOT = Path(__file__).resolve().parents[3] / "templates" / "target-spring-boot-baseline"
+from cobol_modernizer.core.package_data import TEMPLATES_ROOT
+
+_TEMPLATE_ROOT = TEMPLATES_ROOT / "target-spring-boot-baseline"
 
 _COBOL_PACKAGE = (
     _TEMPLATE_ROOT / "src" / "main" / "java" / "com" / "modernized" / "batch" / "cobol"

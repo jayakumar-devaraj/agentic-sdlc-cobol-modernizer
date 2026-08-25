@@ -29,8 +29,9 @@ from cobol_modernizer.core.model_catalog import (
     load_catalog,
     select_model,
 )
+from cobol_modernizer.core.package_data import CONFIG_ROOT
 
-_DEFAULT_CONFIG_PATH = Path(__file__).resolve().parents[3] / "config" / "model_routing.yaml"
+_DEFAULT_CONFIG_PATH = CONFIG_ROOT / "model_routing.yaml"
 
 #: The five node types ADR-0004 covers. A config file naming any other key, or missing one of
 #: these, is a real configuration defect -- not something to silently ignore or default around.

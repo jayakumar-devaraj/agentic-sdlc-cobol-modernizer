@@ -34,7 +34,9 @@ from pathlib import Path
 import yaml
 from pydantic import BaseModel
 
-_DEFAULT_CATALOG_PATH = Path(__file__).resolve().parents[3] / "config" / "model_catalog.yaml"
+from cobol_modernizer.core.package_data import CONFIG_ROOT
+
+_DEFAULT_CATALOG_PATH = CONFIG_ROOT / "model_catalog.yaml"
 
 
 class ModelCatalogError(Exception):

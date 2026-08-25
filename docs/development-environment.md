@@ -93,7 +93,16 @@ Ordered by how often they bite, not by severity.
     them precisely so a disagreement is diagnosable without paying for another run. Skipping them
     cost a billed run and a wrong fix.
 
-11. **Anything placed in `templates/target-spring-boot-baseline/` joins every generated project.**
+11. **Anything placed in `src/cobol_modernizer/data/templates/target-spring-boot-baseline/` joins
+    every generated project.** (Moved under the package at ADR-0055; it was `templates/` at the
+    repository root until then, and older records still say so.)
+
+13. **The four runtime data directories live inside the package, not beside `src/`.** Prompts,
+    model config and the Java baseline are packaged data (`cobol_modernizer/data/`), reached
+    through `core/package_data.py` rather than by counting `.parents[]`. **`pip install -e .` hides
+    any mistake here**, because the package is still in the source tree — a real wheel install is
+    the only thing that catches it, and `test_packaging.py` is what does. `schemas/` is *not*
+    package data and stays at the repository root: nothing in the runtime path reads it.
 
 12. **Emoji printed from Python on Windows crashes on cp1252.**
 

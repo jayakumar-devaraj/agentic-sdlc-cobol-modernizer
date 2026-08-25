@@ -20,6 +20,7 @@ from pathlib import Path
 import pytest
 
 from cobol_modernizer.core.contracts import BatchStepDesign
+from cobol_modernizer.core.package_data import TEMPLATES_ROOT
 from cobol_modernizer.nodes.build_validator import (
     BuildValidatorParseError,
     ValidationVerdict,
@@ -31,7 +32,7 @@ from cobol_modernizer.nodes.build_validator import (
 from cobol_modernizer.rendering.java_processor import model_authored_line_range, render_processor
 from cobol_modernizer.tools.local_compiler import CompileDiagnostic, CompileResult, compile_project
 
-TEMPLATE = Path(__file__).resolve().parents[2] / "templates" / "target-spring-boot-baseline"
+TEMPLATE = TEMPLATES_ROOT / "target-spring-boot-baseline"
 REL = "src/main/java/com/modernized/batch/processor/PassThroughProcessor.java"
 
 STEP = BatchStepDesign(

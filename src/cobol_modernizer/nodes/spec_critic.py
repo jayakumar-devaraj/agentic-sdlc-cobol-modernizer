@@ -9,7 +9,7 @@ framing shapes two decisions this module makes, both worth stating explicitly (s
    findings cannot be overridden by it.** `check_field_reference_fidelity`, `check_paragraph_coverage`,
    and `check_unsupported_constructs_carried_forward` mechanically re-verify that `spec_extractor`'s
    narration actually restated the same deterministic facts it was given -- the same "reproduce
-   exactly, never recompute" instruction `prompts/registry/spec_extractor/v1_0_0.md` gives the
+   exactly, never recompute" instruction `data/prompts/registry/spec_extractor/v1_0_0.md` gives the
    narrating model, now independently checked rather than trusted on faith. If any of these finds a
    real discrepancy, `overall_confidence` is `0.0` regardless of what the critic model's own
    per-rule scores say -- an independent check that a wrong-but-confident narration could talk its
@@ -58,7 +58,7 @@ from cobol_modernizer.nodes.spec_extractor import (
     UnsupportedField,
     render_known_facts,
 )
-from cobol_modernizer.prompts_registry_client.loader import prompt_path
+from cobol_modernizer.prompts_registry_client.loader import read_prompt
 from cobol_modernizer.tools.tenant_repo import resolve_program
 
 logger = logging.getLogger(__name__)
@@ -251,7 +251,7 @@ def build_critique_prompt(worktree_root: Path, extraction: SpecExtractionResult)
     Caching is not claimed here and no `cache_control` is set -- see ADR-0017 for why that half was
     measured and dropped. This function only stops the ordering from being the blocker.
 
-    `prompts/registry/spec_critic/v1_1_0.md` states this same order to the model and **must stay in
+    `data/prompts/registry/spec_critic/v1_1_0.md` states this same order to the model and **must stay in
     step with it**: a prompt that tells the critic to expect the narration first while the payload
     delivers it last is worse than either order chosen consistently. That version is named in
     `PROMPT_VERSION` rather than defaulted for the same reason -- v1_1_0 is also the first version
@@ -352,7 +352,7 @@ def _default_critique(routing: RoutingDecision, system_prompt: str, user_content
 
 
 def _load_system_prompt() -> str:
-    return prompt_path(_NODE_NAME, PROMPT_VERSION).read_text(encoding="utf-8")
+    return read_prompt(_NODE_NAME, PROMPT_VERSION)
 
 
 def critique_spec(
