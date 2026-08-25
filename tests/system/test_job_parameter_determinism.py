@@ -21,10 +21,11 @@ from pathlib import Path
 import pytest
 
 from cobol_modernizer.core.contracts import BatchStepDesign, JobParameter
+from cobol_modernizer.core.package_data import TEMPLATES_ROOT
 from cobol_modernizer.rendering.java_processor import render_processor
 from cobol_modernizer.tools.local_compiler import compile_project
 
-TEMPLATE = Path(__file__).resolve().parents[2] / "templates" / "target-spring-boot-baseline"
+TEMPLATE = TEMPLATES_ROOT / "target-spring-boot-baseline"
 PACKAGE = "com.modernized.batch.processor"
 
 STEP = BatchStepDesign(
