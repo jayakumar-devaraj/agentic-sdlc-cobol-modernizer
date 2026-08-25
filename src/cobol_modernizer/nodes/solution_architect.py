@@ -28,9 +28,11 @@ Three decisions worth stating explicitly, all from ADR-0010's full reasoning:
    `spec_extractor`'s own guardrail is defense in depth, not a guarantee, so a narration that got
    an injection past it must still never reach this node as instructions.
 
-No repair-retry loop for this node's own structured output either -- same posture as
-`nodes.spec_critic.SpecCritiqueParseError`. Milestone C3's real repair-retry loop (plan step 35)
-is separately-scoped work, not built in miniature a third time. Like `spec_extractor`/
+This node's structured output runs through `core.structured_output.parse_with_repair` -- plan step
+35's shared loop, which ADR-0010 deferred precisely so it would not be built in miniature a third
+time (ADR-0054). Note what it does *not* soften: every validation below still refuses a design
+referencing a program, entity, step role or REST method this node did not offer. The loop buys one
+more attempt at a parseable answer; it never widens what counts as a valid one. Like `spec_extractor`/
 `spec_critic`, the live architect model call is injected (`architect`) so this module's tests
 exercise every deterministic step -- domain-entity merging, prompt construction, response
 validation -- without a live Anthropic API credential this development environment does not have.
@@ -63,7 +65,7 @@ from cobol_modernizer.core.contracts import (
 from cobol_modernizer.core.guardrails import wrap_untrusted_cobol
 from cobol_modernizer.core.model_client import call_model
 from cobol_modernizer.core.model_routing import RoutingDecision, resolve_routing
-from cobol_modernizer.core.structured_output import strip_code_fence
+from cobol_modernizer.core.structured_output import parse_with_repair, strip_code_fence
 from cobol_modernizer.nodes.spec_extractor import group_field_mappings_by_source
 from cobol_modernizer.parsing.control_break import (
     ControlBreak,
@@ -113,7 +115,8 @@ class SolutionArchitectParseError(Exception):
 
     Raised for malformed JSON, a missing `batch_jobs`/`rest_endpoints` entry for a real program,
     or any reference to a domain entity/program that doesn't exist in what this node actually
-    provided as Known Facts -- see the module docstring for why there's no repair-retry yet.
+    provided as Known Facts. Raised only once `parse_with_repair` has spent its repair attempt
+    (ADR-0054), so reaching a caller means the model was asked twice.
     """
 
 
@@ -644,8 +647,9 @@ def _parse_unified_design_response(
     Raises:
         SolutionArchitectParseError: malformed JSON, a missing top-level key, a missing
             `batch_jobs` entry for a real program, or any reference to a domain entity, program,
-            step role, or REST method that isn't one of the real ones this node actually offered
-            -- see the module docstring for why there's no repair-retry to fall back on instead.
+            step role, or REST method that isn't one of the real ones this node actually offered.
+            Called through `parse_with_repair`, so one such failure buys a second attempt before it
+            propagates -- see the module docstring.
     """
     entity_names = {entity.name for entity in domain_entities}
     program_names = {entry.program_name for entry in programs}
@@ -852,8 +856,12 @@ def design_solution(
         len(programs), routing.tier.value, routing.model, routing.effort,
     )
     raw_response = architect(routing, system_prompt, user_content)
-    batch_jobs, rest_endpoints, composite_types = _parse_unified_design_response(
-        raw_response, domain_entities, programs
+    batch_jobs, rest_endpoints, composite_types = parse_with_repair(
+        _NODE_NAME,
+        raw_response,
+        lambda text: _parse_unified_design_response(text, domain_entities, programs),
+        lambda instruction: architect(routing, system_prompt, f"{user_content}\n\n{instruction}"),
+        on=SolutionArchitectParseError,
     )
 
     return UnifiedDesign(

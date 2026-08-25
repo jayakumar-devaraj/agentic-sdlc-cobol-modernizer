@@ -50,7 +50,7 @@ from cobol_modernizer.core.contracts import (
 from cobol_modernizer.core.guardrails import wrap_untrusted_cobol
 from cobol_modernizer.core.model_client import call_model
 from cobol_modernizer.core.model_routing import RoutingDecision, resolve_routing
-from cobol_modernizer.core.structured_output import strip_code_fence
+from cobol_modernizer.core.structured_output import parse_with_repair, strip_code_fence
 from cobol_modernizer.nodes.spec_extractor import group_field_mappings_by_source
 from cobol_modernizer.prompts_registry_client.loader import prompt_path
 from cobol_modernizer.rendering.java_processor import render_processor
@@ -524,8 +524,13 @@ def generate_processor(
         tier.value,
     )
 
-    body, imports, notes = _parse_body_response(
-        author(routing, _load_system_prompt(), user_content)
+    system_prompt = _load_system_prompt()
+    body, imports, notes = parse_with_repair(
+        _NODE_NAME,
+        author(routing, system_prompt, user_content),
+        _parse_body_response,
+        lambda correction: author(routing, system_prompt, f"{user_content}\n\n{correction}"),
+        on=ModernizationEngineerParseError,
     )
     class_name = processor_class_name(step)
 

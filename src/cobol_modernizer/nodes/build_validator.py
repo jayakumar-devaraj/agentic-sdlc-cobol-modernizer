@@ -22,8 +22,16 @@ rewrite of this method will conjure). The first is repairable; the second must s
 distinction is not hypothetical: the first real generate call in this repo failed for the second
 reason, and a loop lacking this check would have retried it three times.
 
-Same posture as every other node here: injectable model call, no repair-retry of its own (that is
-step 42's whole job), and a malformed response raises rather than being guessed past.
+Same posture as every other node here: injectable model call, and a response that is still
+malformed after `core.structured_output.parse_with_repair` has spent its one repair attempt raises
+rather than being guessed past.
+
+**Three attempt caps meet in this node's neighbourhood and none of them is the others.** Step 42's
+`MAX_HEAL_ATTEMPTS` bounds how many times a model rewrites code that did not compile -- the whole
+job this node's verdict gates. `MAX_CONTENT_ATTEMPTS` (ADR-0054) bounds re-asking for *this node's
+own verdict* when the verdict itself came back unparseable, which is a different question about a
+different prompt. `MAX_TRANSPORT_ATTEMPTS` bounds neither. They multiply if confused, which is why
+each is defined once and named for what it bounds.
 """
 
 from __future__ import annotations
@@ -38,7 +46,7 @@ from typing import Literal
 from cobol_modernizer.core.complexity import ComplexityTier
 from cobol_modernizer.core.model_client import call_model
 from cobol_modernizer.core.model_routing import RoutingDecision, resolve_routing
-from cobol_modernizer.core.structured_output import strip_code_fence
+from cobol_modernizer.core.structured_output import parse_with_repair, strip_code_fence
 from cobol_modernizer.prompts_registry_client.loader import prompt_path
 from cobol_modernizer.rendering.java_processor import (
     model_authored_line_numbers,
@@ -291,8 +299,14 @@ def validate_build(
         _NODE_NAME, len(model_errors), routing.model,
     )
 
-    repairable, reason, instruction = _parse_verdict(
-        advise(routing, _load_system_prompt(), build_validator_prompt(model_errors, generated_sources))
+    system_prompt = _load_system_prompt()
+    user_content = build_validator_prompt(model_errors, generated_sources)
+    repairable, reason, instruction = parse_with_repair(
+        _NODE_NAME,
+        advise(routing, system_prompt, user_content),
+        _parse_verdict,
+        lambda correction: advise(routing, system_prompt, f"{user_content}\n\n{correction}"),
+        on=BuildValidatorParseError,
     )
 
     verdict = ValidationVerdict(
