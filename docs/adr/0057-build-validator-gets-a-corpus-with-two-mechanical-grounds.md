@@ -25,7 +25,20 @@ Three findings, in order of what they cost to learn:
    from its placeholder — negligible input, dominant output — which is the measurement the stale
    `pin_reason` admitted nobody had.
 
-**v1_2_0 is unverified against a model.** Re-running is a further $0.37 and a separate decision.
+**Amended again 2026-08-26: v1_2_0 is verified.** Second run, n=2, **$0.3388** — `unresolved_import`
+now answers `repairable` in **both** samples, instability went from two cases to **none**, and
+`SYMBOL_ABSENT` held **6 of 6**. Total on this instrument: **$0.7064**, which bought a real prompt
+defect and its confirmed fix.
+
+**One further correction, and it is the uncomfortable kind.** `missing_import` still fails, stably.
+The model's reason is that deleting a dead reference to a non-existent type may or may not be the
+*correct* fix without the COBOL's intent — which is this node's own prompt followed exactly (*"When
+you are not sure, answer `false`"*). So the **ground** was re-examined instead of the prompt:
+`COMPILER_PROVEN` claimed the heal loop proves a rewrite is sufficient, but for this case the loop's
+proof came from a **scripted** author. That shows a rewrite exists, not that the error is
+unambiguously in the statements. Demoted to `REPO_HISTORY`, body and expected verdict unchanged.
+**This is a bar moving after a failure**; the reasoning is in the corpus and the verification entry
+so it can be argued with, and the prompt was not touched.
 
 *(Original:)* **The corpus and its harness are built and unrun.** No model has been called. Running
 it is a decision with a price, quoted below.
