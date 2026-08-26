@@ -90,13 +90,22 @@ def test_the_repairable_cases_are_step_43s_and_have_not_drifted():
     the ground claiming a run that never happened."""
     injected = {name: (body, tuple(imports)) for name, body, imports in _INJECTED_ERRORS}
 
-    proven = [c for c in CASES if c.ground is Ground.COMPILER_PROVEN]
-    assert {c.name for c in proven} == set(injected), (
-        "the compiler-proven cases and step 43's injected classes have diverged"
+    # Every injected class is still in the corpus, whatever its ground. `missing_import` was demoted
+    # to REPO_HISTORY at the second billed run -- its body is unchanged and its expected verdict is
+    # unchanged; only its claim to mechanical certainty was withdrawn. Checking *membership* rather
+    # than the compiler-proven subset is what keeps that demotion from also losing the drift check.
+    from_step_43 = [c for c in CASES if c.name in injected]
+    assert {c.name for c in from_step_43} == set(injected), (
+        "the corpus and step 43's injected classes have diverged"
     )
-    for case in proven:
+    for case in from_step_43:
         assert (case.body, case.imports) == injected[case.name]
         assert case.expected is Verdict.REPAIRABLE
+
+    proven = [c for c in CASES if c.ground is Ground.COMPILER_PROVEN]
+    assert {c.name for c in proven} == {"unknown_method", "unresolved_import", "wrong_return"}, (
+        "COMPILER_PROVEN must name only the classes whose fix the diagnostic itself implies"
+    )
 
 
 # --- The corpus is a corpus ------------------------------------------------------------------

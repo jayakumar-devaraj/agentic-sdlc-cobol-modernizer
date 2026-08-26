@@ -74,7 +74,14 @@ class ValidatorCase:
     absent_symbol: str = ""
 
 
-#: The four repairable cases, built from step 43's classes so the ground is a real Maven run.
+#: Cases whose fix is unambiguous once the diagnostic is read: correct the method name, correct the
+#: import, correct the return type. `COMPILER_PROVEN` means the heal loop repairs the exact body
+#: under real Maven.
+#:
+#: **`missing_import` is deliberately not in this set** -- see `_AMBIGUOUS` below. The label was
+#: wrong from the start and a run found it.
+_UNAMBIGUOUS = {"unknown_method", "unresolved_import", "wrong_return"}
+
 _REPAIRABLE: list[ValidatorCase] = [
     ValidatorCase(
         name=name,
@@ -84,11 +91,51 @@ _REPAIRABLE: list[ValidatorCase] = [
         ground=Ground.COMPILER_PROVEN,
         grounding=(
             "step 43's injected error class of the same name; "
-            "`test_the_loop_heals_every_injected_error_class` repairs it under real Maven, so a "
-            "rewrite is demonstrably sufficient"
+            "`test_the_loop_heals_every_injected_error_class` repairs it under real Maven, and the "
+            "fix the diagnostic implies is unambiguous -- a name, an import or a return type is "
+            "corrected, not a statement deleted on a guess about intent"
         ),
     )
     for name, body, imports in _INJECTED_ERRORS
+    if name in _UNAMBIGUOUS
+]
+
+#: **Demoted from `COMPILER_PROVEN` at the second billed run (2026-08-26), and the reasoning matters
+#: more than the reclassification.**
+#:
+#: `missing_import`'s body is `Tran t = null; return item;`. Step 43's loop does repair it -- but it
+#: repairs it with a **scripted** author that returns `return item;` on the second attempt. That
+#: proves a rewrite *exists*; it does not prove the error is unambiguously located in the
+#: statements, which is what `COMPILER_PROVEN` was defined to mean. The other three injected classes
+#: name a fix the diagnostic itself implies. This one requires **deleting a statement whose intent
+#: is unknowable**.
+#:
+#: The model said so, in both samples, without being asked: *"while the variable is never used (dead
+#: code), it is unclear whether this represents incomplete or incorrect translation requiring a
+#: design-level fix ... or whether safe removal is correct."* That is this node's system prompt being
+#: followed to the letter -- *"When you are not sure, answer `false` and say what you would need."*
+#:
+#: **This is a bar being moved after a failure, which is the shape that deserves suspicion**, so the
+#: distinction is stated rather than implied: the ground was over-claimed when it was written, and
+#: the run is what exposed it. What is *not* being done is tuning the prompt until the corpus
+#: passes -- the prompt is untouched, and the case stays in the corpus with its expected verdict
+#: intact. Only its claim to mechanical certainty is withdrawn.
+_AMBIGUOUS: list[ValidatorCase] = [
+    ValidatorCase(
+        name=name,
+        body=body,
+        imports=tuple(imports),
+        expected=Verdict.REPAIRABLE,
+        ground=Ground.REPO_HISTORY,
+        grounding=(
+            "step 43's `missing_import` class. A rewrite fixes it -- deleting the dead reference "
+            "compiles -- so `repairable` is defensible. But the loop's own proof used a scripted "
+            "author, and deciding that removal is *correct* needs the COBOL's intent, which this "
+            "node is not given. Reported, not asserted: both readings are honest"
+        ),
+    )
+    for name, body, imports in _INJECTED_ERRORS
+    if name not in _UNAMBIGUOUS
 ]
 
 
@@ -159,7 +206,7 @@ _BLOCKED: list[ValidatorCase] = [
 ]
 
 
-CASES: tuple[ValidatorCase, ...] = tuple(_REPAIRABLE + _BLOCKED)
+CASES: tuple[ValidatorCase, ...] = tuple(_REPAIRABLE + _AMBIGUOUS + _BLOCKED)
 
 #: The cases a bar may be applied to. `REPO_HISTORY` is deliberately excluded -- see `Ground`.
 GRADED: tuple[ValidatorCase, ...] = tuple(

@@ -552,3 +552,58 @@ a model error rather than a prompt defect, and it is **reported, not fixed**: on
 two samples is not evidence enough to move a prompt on.
 
 The `REPO_HISTORY` case split 1–1 across samples, which is exactly why it carries no bar.
+
+---
+
+## The second billed run — v1_2_0 verified, 2026-08-26, $0.3388
+
+Same command, same `n=2`, against the prompt the first run's finding produced.
+
+| | run 1 (`v1_1_0`) | run 2 (`v1_2_0`) |
+|---|---|---|
+| `unresolved_import` | **blocked in both samples** ✗ | **repairable in both** ✓ |
+| `SYMBOL_ABSENT` (expensive direction) | 6 of 6 ✓ | **6 of 6** ✓ |
+| unstable cases | `missing_import`, `job_level_fact…` | **none** |
+| malformed | 0 of 16 | 0 of 16 |
+| cost | $0.3676 | $0.3388 |
+| output tokens | 20,932 | 25,624 |
+
+**The prompt fix is confirmed.** `unresolved_import` — the case that failed in *both* samples on
+`v1_1_0` because the prompt told it the imports block was not the model's to change — now answers
+`repairable` in both. Instability went to **zero**; the `REPO_HISTORY` timestamp case, which split
+1–1 on `v1_1_0`, is now stable and correct in both samples.
+
+Total spent on this instrument: **$0.7064** across two runs, which bought a real prompt defect and
+its confirmed fix.
+
+### The one case that still fails, and why the corpus moved rather than the prompt
+
+`missing_import` (`Tran t = null; return item;`) came back `blocked` in both samples — stable now,
+where `v1_1_0` was 1 of 2. The sample-2 rationale is the substance:
+
+> *while the variable is never used (dead code), it is unclear whether this represents incomplete or
+> incorrect translation requiring a design-level fix … or whether safe removal is correct; without
+> knowing the method's intended behavior relative to the COBOL source, rewriting cannot be
+> confidently determined to fix the error correctly*
+
+That is this node's own system prompt followed exactly: *"When you are not sure, answer `false` and
+say what you would need in `reason`."*
+
+**So the ground was checked instead of the prompt.** `COMPILER_PROVEN` was defined as *the heal loop
+repairs this exact body under real Maven, so a rewrite is demonstrably sufficient*. For this case the
+loop's repair came from a **scripted author** returning `return item;` on attempt two — which proves
+a rewrite *exists*, not that the error is unambiguously located in the statements. The other three
+injected classes name a fix the diagnostic itself implies (a method name, an import, a return type).
+This one requires **deleting a statement whose intent is unknowable**, and the node is not given the
+COBOL that would settle it.
+
+`missing_import` is therefore **demoted to `REPO_HISTORY`** — reported, never asserted — with its
+body and its expected verdict unchanged. `COMPILER_PROVEN` now names only `unknown_method`,
+`unresolved_import` and `wrong_return`.
+
+**This is a bar moving after a failure, which is the shape that deserves suspicion**, so the
+distinction is on the record rather than left to inference: the ground was over-claimed when it was
+written, and the run is what exposed it. What was **not** done is tuning the prompt until the corpus
+passes — `v1_2_0` is untouched by this, and the case stays in the corpus. Only its claim to
+mechanical certainty is withdrawn. A reader who thinks that is the wrong call has every number above
+to argue from.
