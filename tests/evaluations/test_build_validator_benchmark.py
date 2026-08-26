@@ -44,6 +44,7 @@ from cobol_modernizer.core.package_data import TEMPLATES_ROOT
 from cobol_modernizer.nodes.build_validator import (
     BuildValidatorParseError,
     ValidationVerdict,
+    attribute_errors,
     validate_build,
 )
 from cobol_modernizer.rendering.java_processor import render_processor
@@ -76,8 +77,15 @@ def _render(case: ValidatorCase) -> str:
         STEP,
         package=PACKAGE,
         class_name=CLASS_NAME,
-        input_type="TranCatBal",
-        output_type="TranCatBal",
+        # `java.math.BigDecimal`, not a domain record. **This is load-bearing** -- see the
+        # `attributed_to_the_model_region` check below. A rendered domain type like `TranCatBal`
+        # does not exist in the bare baseline, so the *signature* fails to resolve, every
+        # diagnostic lands on the class declaration and the method signature, `attribute_errors`
+        # calls them rendered scaffolding, and `classify()` returns `blocked` deterministically
+        # **without calling a model at all**. `test_generate_pipeline`'s own `_heal` uses
+        # `BigDecimal` for exactly this reason.
+        input_type="java.math.BigDecimal",
+        output_type="java.math.BigDecimal",
         body=case.body,
         body_imports=case.imports,
         authored_by="benchmark",
@@ -104,6 +112,20 @@ def compiled_diagnostics(tmp_path_factory) -> dict[str, tuple]:
         result = compile_project(project, goal="compile")
         assert not result.succeeded, f"{case.name} compiled -- there is nothing to judge"
         assert result.errors, f"{case.name} produced no located diagnostic"
+
+        # **The check that makes this benchmark measure a model at all.** If any diagnostic lands
+        # outside the model-authored region, `classify()` short-circuits to `blocked` before the
+        # model is asked -- and the run reports a confident verdict nothing judged. The first
+        # attempt at this module did exactly that: it rendered a signature of `TranCatBal`, which
+        # the bare baseline does not define, so all eight cases "failed" on the deterministic path
+        # in 60 seconds and the bars reported the harness as a model result.
+        model_errors, rendered_errors = attribute_errors(result, {RELATIVE: _render(case)})
+        assert not rendered_errors, (
+            f"{case.name} put {len(rendered_errors)} error(s) outside the model-authored region "
+            f"({[f'{e.file}:{e.line}' for e in rendered_errors]}); `classify()` will answer "
+            "`blocked` deterministically and no model will be called"
+        )
+        assert model_errors, f"{case.name} produced no model-attributed diagnostic"
         diagnostics[case.name] = result
 
     return diagnostics

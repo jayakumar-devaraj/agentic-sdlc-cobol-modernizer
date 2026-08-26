@@ -9,8 +9,26 @@
 > structurally and not behaviourally… and cannot be until someone builds the discrimination corpus
 > this node has never had.
 
-**The corpus and its harness are built and unrun.** No model has been called. Running it is a
-decision with a price, quoted below.
+**Amended 2026-08-26: it has been run.** n=2, 16 calls, **$0.3676** against a $0.37 quote, zero
+malformed responses. Full numbers and rationales in
+[`docs/qa/verification/08-…`](../qa/verification/08-evaluation-harnesses-judge-injected-error-and-the-handoff.md).
+Three findings, in order of what they cost to learn:
+
+1. **The `SYMBOL_ABSENT` bar passed 6 of 6** — not one blocked case was called repairable, which is
+   the direction that spends the whole heal budget on an unfixable build.
+2. **The `COMPILER_PROVEN` bar failed, and the model was right.** `unresolved_import` came back
+   `blocked` in both samples because **v1_1_0 of this node's prompt was stale**: it said the imports
+   block is "not yours to change", which ADR-0025 had already made false. Fixed in **v1_2_0**. The
+   benchmark earned its cost on its first run by finding a prompt defect no test could see.
+3. **The cost quote was right for the wrong reason.** Predicted from a declared 8,000 input tokens;
+   real input was **144 tokens across all 16 calls**, with output at 20,932. The profile is inverted
+   from its placeholder — negligible input, dominant output — which is the measurement the stale
+   `pin_reason` admitted nobody had.
+
+**v1_2_0 is unverified against a model.** Re-running is a further $0.37 and a separate decision.
+
+*(Original:)* **The corpus and its harness are built and unrun.** No model has been called. Running
+it is a decision with a price, quoted below.
 
 ## Context
 

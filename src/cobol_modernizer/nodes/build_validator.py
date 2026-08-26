@@ -59,11 +59,18 @@ logger = logging.getLogger(__name__)
 
 _NODE_NAME = "build_validator"
 
-#: v1_1_0 (ADR-0056): the statements, the imports and the diagnostics now arrive **inside** the
+#: v1_2_0 (ADR-0057): **a model-supplied import is repairable**, and v1_1_0 said it was not. That
+#: sentence predated ADR-0025 and survived it, telling this node the imports block was "rendered
+#: deterministically and not yours to change" while `build_validator_prompt` was showing it those
+#: very imports under their own heading. The first billed run of the discrimination benchmark found
+#: it: `unresolved_import` came back `blocked` in **both** samples, with a rationale that was sound
+#: given what the prompt said.
+#:
+#: v1_1_0 (ADR-0056): the statements, the imports and the diagnostics arrive **inside** the
 #: `<untrusted-cobol-source>` block, and the prompt says what that means. v1_0_0 described them in
 #: prose and handed them over undelimited -- the same shape ADR-0053 found and closed in
-#: `spec_critic`, one node further down the same chain. v1_0_0 stays readable.
-PROMPT_VERSION = "v1_1_0"
+#: `spec_critic`, one node further down the same chain. Both earlier versions stay readable.
+PROMPT_VERSION = "v1_2_0"
 
 _REQUIRED_KEYS = frozenset({"repairable", "reason", "instruction"})
 

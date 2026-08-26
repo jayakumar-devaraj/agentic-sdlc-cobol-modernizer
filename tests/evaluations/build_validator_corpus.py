@@ -142,18 +142,18 @@ _BLOCKED: list[ValidatorCase] = [
     ),
     ValidatorCase(
         name="job_level_fact_not_on_the_item",
-        body="return item.withProcessedAt(java.time.LocalDateTime.now());",
+        body="return item.withProcessedAt(jobRunTimestamp);",
         imports=(),
         expected=Verdict.BLOCKED,
         ground=Ground.REPO_HISTORY,
         grounding=(
             "a value that is not reachable from the method's inputs at all. The engineer prompt "
             "records the real case: a timestamp from `FUNCTION CURRENT-DATE` is a job-level fact "
-            "belonging to the invocation, and a stateless processor has no access to it -- reaching "
-            "for a clock produces a record that differs between identical runs. **Reported, not "
-            "asserted**: `withProcessedAt` is genuinely absent, but a reasonable validator might "
-            "call the *clock* the repairable part, and grading that reading would promote it to "
-            "ground truth"
+            "belonging to the invocation, and a stateless processor has no access to it. The honest "
+            "fix is that the design must supply a job parameter (ADR-0026), which is outside a "
+            "method body. **Reported, not asserted**: a validator might reasonably call deleting "
+            "the call the repairable part, and grading that reading would promote it to ground "
+            "truth"
         ),
     ),
 ]
