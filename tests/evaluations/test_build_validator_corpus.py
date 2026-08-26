@@ -136,3 +136,58 @@ def test_repo_history_cases_are_excluded_from_the_graded_set():
 def test_case_by_name_raises_on_an_unknown_case():
     with pytest.raises(KeyError):
         case_by_name("no_such_case")
+
+
+# --- The billed module's own reporting path, exercised for free -------------------------------
+
+
+def test_the_benchmarks_summary_fields_exist_on_the_real_accumulator():
+    """A typo in the summary block cannot be allowed to wait for a paid run to surface.
+
+    Written after one did: the first draft printed `usage.cost_usd` and
+    `usage.calls_without_cost`, and the real fields are `notional_cost_usd` and
+    `calls_without_reported_cost`. Every test in the suite passed, because the only module that
+    touches them is skipped unless someone is spending money — so the first person to find it would
+    have been the one who had already paid for eight calls.
+
+    This asserts the attribute names against the real class rather than re-implementing the
+    formatting, which would just be a second place to get them wrong.
+    """
+    from cobol_modernizer.core.model_client import UsageAccumulator
+
+    usage = UsageAccumulator()
+    for attribute in (
+        "input_tokens",
+        "output_tokens",
+        "model_calls",
+        "notional_cost_usd",
+        "calls_without_reported_cost",
+    ):
+        assert hasattr(usage, attribute), (
+            f"the benchmark's summary prints `usage.{attribute}`, which does not exist"
+        )
+
+
+def test_the_benchmark_reports_every_case_including_the_ungraded_one():
+    """The report must show all eight cases, not just the six a bar applies to.
+
+    A summary that silently dropped the `REPO_HISTORY` case would make "reported, not asserted"
+    mean "not reported", which is the whole value of keeping it in the corpus.
+    """
+    from tests.evaluations import test_build_validator_benchmark as bench
+
+    assert len(bench.CASES) == len(CASES)
+    graded_names = {c.name for c in GRADED}
+    ungraded = [c.name for c in bench.CASES if c.name not in graded_names]
+    assert ungraded, "the benchmark would have nothing to report-but-not-assert"
+
+
+def test_the_benchmark_is_opt_in_behind_the_live_marker():
+    """Nothing here may spend money on an ordinary run. Asserted against the marker rather than
+    trusted to the docstring."""
+    from tests.evaluations import test_build_validator_benchmark as bench
+
+    marks = getattr(bench.test_build_validator_discriminates_repairable_from_blocked, "pytestmark", [])
+    assert any(mark.name == "live_claude_cli" for mark in marks), (
+        "the benchmark is not marked live_claude_cli and would run — and bill — in CI"
+    )
