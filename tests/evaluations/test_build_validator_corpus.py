@@ -191,3 +191,32 @@ def test_the_benchmark_is_opt_in_behind_the_live_marker():
     assert any(mark.name == "live_claude_cli" for mark in marks), (
         "the benchmark is not marked live_claude_cli and would run — and bill — in CI"
     )
+
+
+def test_no_case_body_is_refused_by_the_renderer_before_it_can_be_judged():
+    """Every case must be *reachable*, and one was not.
+
+    The first `job_level_fact_not_on_the_item` used `LocalDateTime.now()`. The renderer refuses that
+    outright (`NonDeterministicBodyError`) — the ambient-state guard sits **upstream** of the compile
+    loop — so the body was never rendered, never compiled, never produced a diagnostic, and could
+    never reach `build_validator` at all. The benchmark died in its fixture, before any model call.
+
+    That is a good fact about the pipeline and a defect in the corpus: a case the pipeline rejects
+    earlier is not a case this node can be measured on. Nothing else here checks reachability,
+    because nothing else here renders — so this does, for free, rather than letting the next such
+    case be found by a run someone paid for.
+    """
+    from cobol_modernizer.rendering.java_processor import render_processor
+    from tests.system.test_generate_pipeline import PACKAGE, STEP
+
+    for case in CASES:
+        render_processor(
+            STEP,
+            package=PACKAGE,
+            class_name="ReachabilityProbe",
+            input_type="TranCatBal",
+            output_type="TranCatBal",
+            body=case.body,
+            body_imports=case.imports,
+            authored_by="corpus-reachability-check",
+        )
