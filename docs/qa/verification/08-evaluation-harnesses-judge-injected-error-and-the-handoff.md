@@ -480,3 +480,75 @@ One more fact to have in hand before reading any result: this node is pinned to
 `claude-haiku-4-5-20251001`, the model **ADR-0049 struck from the judge candidates** — first ground,
 5 of 21 responses did not hold the response contract. The run will also be the first real exercise
 of ADR-0054's `parse_with_repair`, which now sits between that and a raised error.
+
+---
+
+## The first billed run of `build_validator`'s benchmark — 2026-08-26, $0.3676
+
+**Command** (n=2, the floor ADR-0049 set — never 1):
+
+```
+COBOL_MODERNIZER_RUN_LIVE_CLI_TESTS=1 COBOL_MODERNIZER_VALIDATOR_SAMPLES=2 \
+  ./.venv/Scripts/python -m pytest tests/evaluations/test_build_validator_benchmark.py -q -s
+```
+
+| | |
+|---|---|
+| calls | **16** (8 cases × 2 samples), 0 malformed |
+| cost | **$0.3676** — against a $0.37 quote |
+| input / output tokens | 144 / **20,932** |
+| model | `claude-haiku-4-5-20251001` |
+
+**The quoted number was right and its reasoning was wrong.** ADR-0057 predicted $0.37 from a
+declared profile of 8,000 input tokens per call, and called it an over-estimate. Real input was
+**144 tokens across all 16 calls** — the prompt is tiny, as expected. The cost landed on the quote
+anyway because output ran to **20,932 tokens**, roughly 1,300 per call against a declared 3,000. So
+the node's real profile is *inverted* from its placeholder: negligible input, dominant output. That
+is the first measurement this node has ever had, and it is what the stale `pin_reason` admitted was
+missing.
+
+### Results
+
+| | sample 1 | sample 2 |
+|---|---|---|
+| `SYMBOL_ABSENT` (the expensive direction) | **3 of 3** | **3 of 3** |
+| `COMPILER_PROVEN` | 3 of 4 | 2 of 4 |
+| unstable across samples | `missing_import` | `job_level_fact_not_on_the_item` |
+
+**The bar that matters most passed cleanly: 6 of 6.** Not one `blocked` case was called
+`repairable` — the direction the system prompt says spends the whole heal budget on a build that was
+never fixable. Zero malformed responses, on the model ADR-0049 struck for breaking the contract 5 of
+21 times; `parse_with_repair` never had to fire.
+
+### The defect it found, which is why it was worth $0.37
+
+`unresolved_import` was judged **`blocked` in both samples**, and the rationale was sound:
+
+> *"The import references the package `com.modernized.batch.nowhere`, which does not exist in the
+> target… the import error occurs at the class level before the method body is ever compiled."*
+
+**The model reasoned correctly from a stale prompt.** `v1_1_0` told it:
+
+> the class declaration, annotations, method signature and **imports block** are rendered
+> deterministically and are not yours to change — so they are not shown
+
+That sentence predates **ADR-0025** and survived it. G30 established the opposite: the generator
+supplies its own imports, the renderer marks them, and a diagnostic pointing at one **is** the
+model's to correct — `modernization_engineer`'s prompt says so to the generator in as many words.
+`build_validator_prompt` had been showing those imports under their own heading the whole time while
+its system prompt said they were not shown.
+
+Fixed in **`v1_2_0`**, which states plainly that a model-supplied import is repairable and why.
+
+### What is not claimed
+
+**`v1_2_0` is unverified against a model.** Re-running is a further $0.37 and a separate decision.
+What the numbers above measure is `v1_1_0`.
+
+`missing_import` was correct in sample 1 and wrong in sample 2 — genuine instability, caught only
+because `n=2` exists. Its sample-2 rationale (*"the type `Tran` does not exist in the codebase"*) is
+true of the bare baseline but misses that the statement referencing it is simply deletable. That is
+a model error rather than a prompt defect, and it is **reported, not fixed**: one disagreement in
+two samples is not evidence enough to move a prompt on.
+
+The `REPO_HISTORY` case split 1–1 across samples, which is exactly why it carries no bar.
