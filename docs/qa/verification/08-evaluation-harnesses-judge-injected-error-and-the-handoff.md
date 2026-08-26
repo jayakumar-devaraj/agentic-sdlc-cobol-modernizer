@@ -408,3 +408,75 @@ The scoring after the impurity declaration is **not re-measured**; that is a fif
 is measured and holds across all three: **oracle-grounded detection 1.00 ± 0.00 over both programs**,
 including the specimen built for this entry. The false-positive rate over the corrected corpus is the
 one number pillar 22 now waits on.
+
+---
+
+## `build_validator`'s corpus — built, grounded, and deliberately unrun (ADR-0057)
+
+**What is verified here is the instrument, not the node.** No model has been called. ADR-0056 closed
+this node's prompt boundary and recorded that it could not say whether the change moved the
+judgment, because nothing has ever measured that judgment. This is the missing instrument; pointing
+it at the node is a separate, priced decision.
+
+**Command** (free — the whole corpus module calls no model):
+
+```
+.venv/Scripts/python.exe -m pytest tests/evaluations/test_build_validator_corpus.py -q
+```
+
+**Result: 15 passed.**
+
+### What makes the cases evidence rather than opinion
+
+`tests/evaluations/corpus.py` must report its source-grounded cases rather than assert on them,
+because grading a reading of COBOL promotes an interpretation to ground truth. Seven of these eight
+cases avoid that, because both verdicts are checkable by machine:
+
+| Ground | Cases | What makes it a fact |
+|---|---|---|
+| `COMPILER_PROVEN` | 4 | the heal loop repairs these exact bodies under real Maven (step 43), so a rewrite is demonstrably sufficient — imported from that harness, not copied |
+| `SYMBOL_ABSENT` | 3 | the symbol is absent from a rendered project, so no rewrite and no import reaches it |
+| `REPO_HISTORY` | 1 | this repo's reading — **reported, never asserted** |
+
+**The `SYMBOL_ABSENT` ground is enforced, not asserted in prose.** A test copies the real baseline
+and greps every `.java` file in it. Damage probe: renaming one case's `absent_symbol` to
+`CobolArithmetic` — a class that genuinely exists — fails **2 tests**, the absence check and the
+companion check that the body still references the symbol it names. That second test exists because
+a case whose body stopped mentioning its own symbol would pass the first by saying nothing.
+
+### The defect this found in its own harness
+
+The benchmark's summary block printed `usage.cost_usd` and `usage.calls_without_cost`. The real
+fields are `notional_cost_usd` and `calls_without_reported_cost`. **The entire suite passed** — the
+only module touching them is skipped unless `COBOL_MODERNIZER_RUN_LIVE_CLI_TESTS=1`, so the first
+person to see it would have been the one who had already been billed for eight calls.
+
+Three free tests now cover the billed module's plumbing: the attribute names against the real
+`UsageAccumulator`, that all eight cases reach the report (so *reported, not asserted* does not
+quietly become *not reported*), and that the benchmark carries the `live_claude_cli` marker at all.
+
+This is trap 10's neighbour and it sharpens the standing rule. *"Before paying for any live test,
+check it prints on success"* is not enough when the check is a **reading**. A free test that
+executes the billed module's reporting path is the version that works.
+
+### What running it will cost, and why the number is soft
+
+**~$0.55 at the default n=3** — 8 cases × 3 samples = 24 calls, priced at the routing layer's own
+`estimated_cost_usd` of $0.0230 per call.
+
+It is an **over-estimate**, and that is itself a finding. The price comes from this node's declared
+token profile of 8,000 input tokens, and its routing entry says outright what that number is:
+
+```
+rationale: pinned: Node not built (Milestone C4); profile is a placeholder, not a measurement.
+```
+
+Milestone C4 is complete — the node is built, so the pin rests on an expired reason. A real prompt
+here is a method body, a few imports and a handful of diagnostics, nothing like 8,000 tokens. **The
+run therefore produces two measurements this repo has never had**: whether the node discriminates,
+and what it actually costs per call.
+
+One more fact to have in hand before reading any result: this node is pinned to
+`claude-haiku-4-5-20251001`, the model **ADR-0049 struck from the judge candidates** — first ground,
+5 of 21 responses did not hold the response contract. The run will also be the first real exercise
+of ADR-0054's `parse_with_repair`, which now sits between that and a raised error.
