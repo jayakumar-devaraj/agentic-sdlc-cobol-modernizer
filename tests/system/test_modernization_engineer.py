@@ -15,6 +15,7 @@ import os
 from pathlib import Path
 
 import pytest
+from pydantic import ValidationError
 
 from cobol_modernizer.core.complexity import ComplexityTier
 from cobol_modernizer.core.contracts import (
@@ -28,6 +29,7 @@ from cobol_modernizer.nodes.modernization_engineer import (
     ModernizationEngineerParseError,
     build_engineer_prompt,
     generate_processor,
+    _to_pascal_case,
     processor_class_name,
     render_domain_facts,
     render_program_field_facts,
@@ -554,7 +556,6 @@ def test_no_notes_is_an_empty_string_not_a_missing_field(program_entry, entities
     ("step_name", "expected"),
     [
         ("computeMonthlyInterest", "ComputeMonthlyInterestProcessor"),
-        ("compute-monthly-interest", "ComputeMonthlyInterestProcessor"),
         ("computeInterestProcessor", "ComputeInterestProcessor"),
     ],
 )
@@ -565,35 +566,70 @@ def test_class_names_are_derived_mechanically(step_name, expected):
     assert processor_class_name(step) == expected
 
 
-def test_a_step_name_java_cannot_accept_fails_loudly_rather_than_being_mangled(
-    program_entry, entities
-):
-    # `BatchStepDesign.step_name` is LLM-authored and its contract does not require a legal Java
-    # identifier, so a model emitting a COBOL-style name (`1300-COMPUTE-INTEREST`) produces
-    # `1300ComputeInterestProcessor`, which starts with a digit. That is refused here rather than
-    # renamed -- but note *when* it is refused: at generate time, after a human already approved
-    # the design. Validating step_name where it is produced would move this failure before the
-    # gate instead of after it. Recorded as a real contract gap, not designed around.
-    step = BatchStepDesign(
-        step_name="1300-COMPUTE-INTEREST",
-        source_paragraphs=["1300-COMPUTE-INTEREST"],
-        input_type="TranCatBal",
-        output_type="TranCatBal",
-        role="processor",
-        description="d",
-        guard_condition=None)
-    with pytest.raises(UnrenderableJavaNameError, match="not a legal Java identifier"):
-        generate_processor(
-            FIXTURE_ROOT,
-            program_entry,
-            step,
-            entities,
-            package=PACKAGE,
-            input_type="A",
-            output_type="B",
-            tier=ComplexityTier.SIMPLE,
-            author=_good_author(),
-        )
+@pytest.mark.parametrize(
+    ("name", "expected"),
+    [
+        ("ACCOUNT-RECORD", "AccountRecord"),
+        ("compute-monthly-interest", "ComputeMonthlyInterest"),
+    ],
+)
+def test_pascal_case_still_splits_on_hyphens_where_hyphens_are_real(name, expected):
+    """The hyphen case used to be parametrised above, constructing a `BatchStepDesign` with
+
+    `compute-monthly-interest`. ADR-0059 made that unconstructible, and deleting the case would
+    have lost a live property: `_to_pascal_case` has three callers, and the other two take a COBOL
+    **record name** and a **copybook name**, where hyphens are the normal spelling. So the case
+    moves to where it is still reachable rather than out of the suite.
+    """
+    assert _to_pascal_case(name) == expected
+
+
+def test_a_step_name_java_cannot_accept_is_refused_by_the_contract_itself():
+    """Gap **G22, closed**. This test used to assert the failure happened *here*, in the renderer,
+
+    and recorded why that was wrong: it fires at generate time, **after** a human already approved
+    the design at the gate, so it spends a review and throws the result away.
+
+    The rule now lives on `BatchStepDesign` (ADR-0059), so the name is refused where it is
+    produced. What this test asserts is therefore no longer reachable through `generate_processor`
+    at all - a step carrying such a name cannot be constructed - which is the whole of the fix.
+    """
+    with pytest.raises(ValidationError, match="not a legal Java identifier"):
+        BatchStepDesign(
+            step_name="1300-COMPUTE-INTEREST",
+            source_paragraphs=["1300-COMPUTE-INTEREST"],
+            input_type="TranCatBal",
+            output_type="TranCatBal",
+            role="processor",
+            description="d",
+            guard_condition=None)
+
+
+def test_the_refusal_tells_a_model_what_to_write_instead():
+    """The message reaches a model as repair instructions through `parse_with_repair`, so it has
+
+    to name the fix rather than only the fault.
+    """
+    with pytest.raises(ValidationError) as caught:
+        BatchStepDesign(
+            step_name="1300-COMPUTE-INTEREST", source_paragraphs=[], input_type="A",
+            output_type="B", role="processor", description="d", guard_condition=None)
+
+    message = str(caught.value)
+    assert "computeMonthlyInterest" in message
+    assert "source_paragraphs" in message, "it must say where the COBOL name does belong"
+
+
+def test_a_reserved_word_is_refused_too():
+    """`class` is a perfectly good identifier *shape* and an illegal identifier. The contract and
+
+    the renderer now share one definition of that (`core/java_lexicon`), so neither can drift into
+    accepting what the other rejects.
+    """
+    with pytest.raises(ValidationError, match="reserved word"):
+        BatchStepDesign(
+            step_name="class", source_paragraphs=[], input_type="A", output_type="B",
+            role="processor", description="d", guard_condition=None)
 
 
 def test_a_pic_x_width_reaches_the_prompt_so_move_spaces_has_a_translation(entities):
