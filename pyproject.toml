@@ -56,6 +56,28 @@ cobol_modernizer = [
     "data/prompts/registry/**/*.md",
     "data/config/*.yaml",
     "data/templates/**/*",
+    # `**/*` does not descend into a dot-directory, so the line above misses the Maven wrapper's
+    # `.mvn/wrapper/maven-wrapper.properties` -- which `mvnw` reads to learn which Maven
+    # distribution to fetch. Every wheel this repo built before ADR-0058 was missing it, and
+    # `./mvnw` in an installed baseline exited 1 with "Cannot start maven from wrapper" before
+    # Maven ever started. `local_compiler` prefers `./mvnw` over `mvn`, so that is the build path.
+    "data/templates/**/.mvn/wrapper/*",
+]
+
+# `include_package_data` collects what is on disk and `.gitignore` has no say in it: a developer
+# who has run the Java baseline's build once has 26 files of `target/` output -- compiled
+# `.class` files, a `.jar`, `maven-status/*.lst` -- sitting inside the package data directory,
+# every one of them eligible to be shipped as a baseline source.
+#
+# **This exclusion only works together with a regenerated `src/*.egg-info`**, and that pairing was
+# established by running the 2x2 rather than by reading the docs. With a stale `SOURCES.txt` the
+# manifest path reintroduces all 26 files and this table has no effect; with a fresh one and this
+# table removed, all 26 come back. Both levers are required, so the wheel fixture in
+# `tests/system/test_packaging.py` clears egg-info and
+# `test_the_wheel_carries_nothing_the_repository_does_not` guards the result. See ADR-0058.
+[tool.setuptools.exclude-package-data]
+cobol_modernizer = [
+    "data/templates/**/target/**",
 ]
 
 [tool.ruff]

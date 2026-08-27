@@ -71,6 +71,24 @@ def wheel(tmp_path_factory) -> Path:
     if stale.exists():
         shutil.rmtree(stale)
 
+    # `build/` was the precaution this fixture documented, and it is not the directory that
+    # carried stale state. `src/*.egg-info/SOURCES.txt` is: a manifest left from an earlier build
+    # reintroduces **26 files of `target/` output** -- compiled `.class` files, a `.jar`,
+    # `maven-status/*.lst` -- none of them tracked by git, and it does so *past*
+    # `[tool.setuptools.exclude-package-data]`, which the manifest path does not consult.
+    #
+    # **Both levers are required, and that came from running the 2x2 rather than reasoning about
+    # it.** The first attempt at this comment asserted the opposite on a control that varied the
+    # wrong variable:
+    #
+    #   exclusion + stale egg-info -> 26   |   exclusion + fresh egg-info -> 0
+    #   no exclusion + fresh egg-info -> 26
+    #
+    # A `MANIFEST.in prune` was the third candidate and is genuinely redundant once the other two
+    # hold, so it is not in this repository. See ADR-0058.
+    for egg_info in (REPO_ROOT / "src").glob("*.egg-info"):
+        shutil.rmtree(egg_info)
+
     outdir = tmp_path_factory.mktemp("dist")
     result = _run(sys.executable, "-m", "build", "--wheel", "--outdir", str(outdir), cwd=REPO_ROOT)
     if result.returncode != 0:
@@ -154,3 +172,66 @@ def test_package_data_missing_names_the_install_not_the_file() -> None:
     message = str(caught.value)
     assert "installation of cobol-modernizer" in message
     assert "ADR-0055" in message
+
+
+def _tracked_data_files() -> set[str]:
+    """Every file under the package's data directory that git actually tracks, as wheel paths.
+
+    Deliberately not a hand-written list. `REQUIRED_DATA` above names four files, so the fifth one
+    to go missing passes green -- and one did: `.mvn/wrapper/maven-wrapper.properties` was tracked,
+    was absent from every wheel this repo has ever built, and both existing checks passed anyway
+    because one lists four paths and the other counts only `.java`. Deriving the expectation from
+    git is what makes the *next* omission loud instead of the next-but-one.
+    """
+    result = _run("git", "-C", str(REPO_ROOT), "ls-files", "-z", "src/cobol_modernizer/data")
+    assert result.returncode == 0, (
+        "cannot derive the expected data set: `git ls-files` failed in "
+        f"{REPO_ROOT}. This check compares the built wheel against what the repository "
+        f"tracks, so it needs a checkout rather than an unpacked sdist. {result.stderr[-300:]}"
+    )
+    tracked = {path.removeprefix("src/") for path in result.stdout.split("\0") if path}
+    assert tracked, "git tracks no files under src/cobol_modernizer/data -- that cannot be right"
+    return tracked
+
+
+def _wheel_data_files(wheel: Path) -> set[str]:
+    return {
+        name
+        for name in zipfile.ZipFile(wheel).namelist()
+        if name.startswith("cobol_modernizer/data/") and not name.endswith("/")
+    }
+
+
+def test_the_wheel_carries_every_data_file_the_repository_tracks(wheel: Path) -> None:
+    """The general form of ADR-0055's defect, which its own fix did not fully close.
+
+    A tracked file can be absent from the wheel because `[tool.setuptools.package-data]`'s globs
+    do not reach it -- `**/*` does not descend into a dot-directory, which is how the Maven
+    wrapper's `.mvn/wrapper/` went missing. The consequence was not cosmetic: `local_compiler`
+    prefers `./mvnw`, and an installed baseline without that file exits 1 with
+    "Cannot start maven from wrapper" before Maven ever starts.
+    """
+    missing = sorted(_tracked_data_files() - _wheel_data_files(wheel))
+    assert not missing, (
+        f"the wheel is missing {len(missing)} file(s) the repository tracks: {missing}. "
+        "Check [tool.setuptools.package-data] in pyproject.toml -- note that `**/*` does not "
+        "match inside dot-directories. See ADR-0055 and ADR-0058."
+    )
+
+
+def test_the_wheel_carries_nothing_the_repository_does_not(wheel: Path) -> None:
+    """The other direction, which matters because a release can be cut from a working tree.
+
+    `include_package_data` collects what is *on disk*, not what is committed, so a developer who
+    has ever run the Java baseline's build has 26 files of `target/` output -- compiled `.class`
+    files and a `.jar` -- sitting inside the package data directory. Nothing stopped those from
+    being packaged into a wheel and shipped to every consumer as if they were baseline sources.
+    `.gitignore` does not protect against this; `[tool.setuptools.exclude-package-data]` does.
+    """
+    extra = sorted(_wheel_data_files(wheel) - _tracked_data_files())
+    assert not extra, (
+        f"the wheel carries {len(extra)} file(s) the repository does not track, so this build is "
+        f"not reproducible from a clean checkout: {extra[:10]}"
+        + (" ..." if len(extra) > 10 else "")
+        + ". Check [tool.setuptools.exclude-package-data] in pyproject.toml -- see ADR-0058."
+    )
