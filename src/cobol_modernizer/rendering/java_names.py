@@ -8,11 +8,7 @@ drifts apart silently.
 
 from __future__ import annotations
 
-from cobol_modernizer.core.java_lexicon import (
-    JAVA_IDENTIFIER,
-    JAVA_RESERVED,
-    why_java_rejects,
-)
+from cobol_modernizer.core.java_lexicon import why_java_rejects
 
 #: Every Java reserved word, plus the three literals that are not technically keywords but are
 #: equally illegal as identifiers. A COBOL name is transformed mechanically into a Java one, and

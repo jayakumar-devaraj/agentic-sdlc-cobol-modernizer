@@ -27,9 +27,9 @@ from cobol_modernizer.core.contracts import (
 from cobol_modernizer.nodes.modernization_engineer import (
     GeneratedProcessor,
     ModernizationEngineerParseError,
+    _to_pascal_case,
     build_engineer_prompt,
     generate_processor,
-    _to_pascal_case,
     processor_class_name,
     render_domain_facts,
     render_program_field_facts,
@@ -37,7 +37,6 @@ from cobol_modernizer.nodes.modernization_engineer import (
 from cobol_modernizer.nodes.solution_architect import build_domain_entities
 from cobol_modernizer.nodes.spec_critic import critique_spec
 from cobol_modernizer.nodes.spec_extractor import extract_spec
-from cobol_modernizer.rendering.java_names import UnrenderableJavaNameError
 from cobol_modernizer.rendering.java_processor import (
     BEGIN_MARKER,
     END_MARKER,
