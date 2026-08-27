@@ -29,8 +29,9 @@ from collections.abc import Sequence
 from datetime import UTC, datetime
 from typing import Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
+from cobol_modernizer.core.java_lexicon import JAVA_IDENTIFIER, why_java_rejects
 from cobol_modernizer.nodes.spec_critic import SpecCritiqueResult
 from cobol_modernizer.nodes.spec_extractor import SpecExtractionResult
 
@@ -111,7 +112,33 @@ class BatchStepDesign(BaseModel):
     source-label tracing (ADR-0006), now into the batch design itself.
     """
 
-    step_name: str
+    #: **Must be a legal Java identifier, and it is checked here** (gap G22). Three renderers derive
+    #: a class name from it, and the simplest of them just capitalises the first character
+    #: (`postAccountInterest` -> `PostAccountInterestItemReader`), so anything Java would reject as
+    #: an identifier is rejected as a step name too. A COBOL-style `1300-COMPUTE-INTEREST` yields a
+    #: class starting with a digit.
+    #:
+    #: **Checked on the contract rather than in the renderer, because of *when* the two fail.** The
+    #: renderer's own guard fires at `generate` time - *after* a human approved the design at the
+    #: gate - so it spends a review and then throws the result away. This is the same principle
+    #: ADR-0020 decision 5 already applies to `input_type`/`output_type`: a design that cannot be
+    #: generated from should fail before a human approves it, not three layers down afterwards.
+    #: `step_name` was simply missed when that rule was written.
+    #: `json_schema_extra` rather than `Field(pattern=...)`: a pattern would be enforced by pydantic
+    #: *before* the validator below and would report itself as "String should match pattern
+    #: '^[A-Za-z_$]...'", which reaches a model as repair instructions and tells it nothing about
+    #: what to write. This documents the rule for anyone reading the published schema while leaving
+    #: the message that has to be actionable where it can say something useful. The schema cannot
+    #: express the reserved-word half at all, so `description` states it in words.
+    step_name: str = Field(
+        json_schema_extra={
+            "pattern": JAVA_IDENTIFIER.pattern,
+            "description": (
+                "A camelCase Java identifier, e.g. 'computeMonthlyInterest'. A class name is "
+                "derived from this directly, so it must also not be a Java reserved word."
+            ),
+        }
+    )
     source_paragraphs: list[str]
     role: BatchStepRole
     description: str
@@ -182,6 +209,24 @@ class BatchStepDesign(BaseModel):
     #: instead. Empty by default, which keeps every existing step refusing exactly as it does now.
     optional_lookups: list[str] = []
 
+
+    @field_validator("step_name")
+    @classmethod
+    def _step_name_must_be_renderable(cls, value: str) -> str:
+        """Reject a name Java cannot take, where the name is produced.
+
+        Reached through `parse_with_repair` on the architect's response, so a model that emits a
+        COBOL-style name gets one repair attempt with this message rather than a run that dies in
+        `generate` an approval later.
+        """
+        reason = why_java_rejects(value)
+        if reason is not None:
+            raise ValueError(
+                f"step_name {value!r} {reason}, and a class name is derived from it directly. Use "
+                f"a camelCase name such as 'computeMonthlyInterest' - the COBOL paragraph it comes "
+                f"from belongs in source_paragraphs, not here."
+            )
+        return value
 
 class ControlBreakDesign(BaseModel):
     """What a step groups by and what it accumulates -- the fact a control break hides in an idiom.

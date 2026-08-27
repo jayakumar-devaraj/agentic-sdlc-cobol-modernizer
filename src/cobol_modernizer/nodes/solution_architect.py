@@ -94,6 +94,13 @@ logger = logging.getLogger(__name__)
 
 _NODE_NAME = "solution_architect"
 
+#: v1_1_0 states what `step_name` has to look like (gap G22). v1_0_0 asked for a `step_name` and
+#: never said its shape, while three renderers derive a class name from it - so a model emitting a
+#: COBOL-style `1300-COMPUTE-INTEREST` was following the prompt it was given, and failing at
+#: `generate` time an approval later. Enforcing the rule without stating it would have been the
+#: worse half of the fix on its own.
+PROMPT_VERSION = "v1_1_0"
+
 #: Rank for picking the highest tier across a run's programs. `ComplexityTier` is a `str` Enum, so
 #: it sorts alphabetically by default -- which would put "complex" below "moderate" and silently
 #: choose the wrong end. Explicit ordering rather than relying on the enum's incidental sort.
@@ -805,7 +812,7 @@ def _default_architect(routing: RoutingDecision, system_prompt: str, user_conten
 
 
 def _load_system_prompt() -> str:
-    return read_prompt(_NODE_NAME)
+    return read_prompt(_NODE_NAME, PROMPT_VERSION)
 
 
 def design_solution(

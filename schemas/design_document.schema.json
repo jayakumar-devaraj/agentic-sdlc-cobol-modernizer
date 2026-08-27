@@ -119,6 +119,8 @@
           "type": "array"
         },
         "step_name": {
+          "description": "A camelCase Java identifier, e.g. 'computeMonthlyInterest'. A class name is derived from this directly, so it must also not be a Java reserved word.",
+          "pattern": "^[A-Za-z_$][A-Za-z0-9_$]*$",
           "title": "Step Name",
           "type": "string"
         }
