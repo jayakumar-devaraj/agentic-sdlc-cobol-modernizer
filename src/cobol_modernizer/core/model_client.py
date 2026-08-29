@@ -54,6 +54,9 @@ from typing import Literal
 
 import anthropic
 
+from cobol_modernizer.telemetry import tracing
+from cobol_modernizer.telemetry.logging_config import current_run_id
+
 logger = logging.getLogger(__name__)
 
 Backend = Literal["claude_cli", "anthropic_sdk"]
@@ -557,52 +560,95 @@ def call_model(
     _require_within_prompt_budget(node, model, system_prompt, user_content, max_prompt_chars)
     chosen = resolve_backend(backend)
 
-    for attempt in range(1, MAX_TRANSPORT_ATTEMPTS + 1):
-        retryable_status: int | None = None
-        try:
-            if chosen == "claude_cli":
-                envelope, retryable_status = _call_claude_cli(
-                    model, system_prompt, user_content, effort
-                )
-                if retryable_status is None:
-                    return _finish(node, _result_from_cli_envelope(envelope, model, attempt))
-            else:
-                result = _call_anthropic_sdk(
-                    model, system_prompt, user_content, effort, max_output_tokens
-                )
-                return _finish(node, ModelCallResult(**{**result.__dict__, "attempts": attempt}))
-        except subprocess.TimeoutExpired:
-            retryable_status = 504
-        except ModelCallError:
-            raise
-        except Exception as exc:
-            retryable_status = _sdk_retryable_status(exc)
-            if retryable_status is None:
-                raise ModelCallError(chosen, attempt, f"{type(exc).__name__}: {exc}") from exc
-
-        if attempt == MAX_TRANSPORT_ATTEMPTS:
-            raise ModelCallError(
-                chosen, attempt, f"still failing with status {retryable_status} after retries"
-            )
-        delay = _sleep_for_attempt(attempt)
-        logger.warning(
-            "model call retry node=%s backend=%s status=%s attempt=%d/%d backoff=%.1fs",
-            node, chosen, retryable_status, attempt, MAX_TRANSPORT_ATTEMPTS, delay,
+    # ADR-0046's instrumentation point. Around the whole retry loop rather than around each
+    # attempt, because one span per logical call is what a reader wants - the attempt count
+    # reaches the span as an attribute, so a call that succeeded on its third try is still
+    # visible as one that struggled. The prompt is attached before the first attempt so that a
+    # call which never returns still shows what was asked.
+    with tracing.span(
+        f"call_model.{node}",
+        tracing.generation_attributes(
+            model=model,
+            backend=chosen,
+            prompt=[
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": user_content},
+            ],
         )
+        | {"cobol_modernizer.node": node, "cobol_modernizer.run_id": current_run_id()},
+    ) as span:
+        for attempt in range(1, MAX_TRANSPORT_ATTEMPTS + 1):
+            retryable_status: int | None = None
+            try:
+                if chosen == "claude_cli":
+                    envelope, retryable_status = _call_claude_cli(
+                        model, system_prompt, user_content, effort
+                    )
+                    if retryable_status is None:
+                        return _finish(
+                            node, _result_from_cli_envelope(envelope, model, attempt), span
+                        )
+                else:
+                    result = _call_anthropic_sdk(
+                        model, system_prompt, user_content, effort, max_output_tokens
+                    )
+                    return _finish(
+                        node, ModelCallResult(**{**result.__dict__, "attempts": attempt}), span
+                    )
+            except subprocess.TimeoutExpired:
+                retryable_status = 504
+            except ModelCallError:
+                raise
+            except Exception as exc:
+                retryable_status = _sdk_retryable_status(exc)
+                if retryable_status is None:
+                    raise ModelCallError(chosen, attempt, f"{type(exc).__name__}: {exc}") from exc
+
+            if attempt == MAX_TRANSPORT_ATTEMPTS:
+                raise ModelCallError(
+                    chosen, attempt, f"still failing with status {retryable_status} after retries"
+                )
+            delay = _sleep_for_attempt(attempt)
+            logger.warning(
+                "model call retry node=%s backend=%s status=%s attempt=%d/%d backoff=%.1fs",
+                node, chosen, retryable_status, attempt, MAX_TRANSPORT_ATTEMPTS, delay,
+            )
 
     raise AssertionError("unreachable: the loop either returns or raises")
 
 
-def _finish(node: str, result: ModelCallResult) -> ModelCallResult:
-    """Log the call and record its usage -- the single exit both backends share.
+def _finish(node: str, result: ModelCallResult, span=None) -> ModelCallResult:
+    """Log the call, record its usage, and describe it -- the single exit both backends share.
 
-    One helper rather than two lines repeated at each `return`, so a future third backend cannot
-    log without accounting (or vice versa) by forgetting one of them.
+    One helper rather than three lines repeated at each `return`, so a future third backend cannot
+    log without accounting, or account without tracing, by forgetting one of them. That was
+    already this function's stated reason for existing; the span is the third thing it now cannot
+    be skipped for.
+
+    `span` defaults to None so the existing callers in tests keep working unchanged, and because
+    a call outside a span is a real case rather than a mistake: tracing is off unless a collector
+    is configured.
     """
     _log_success(node, result)
     accumulator = _usage_accumulator.get()
     if accumulator is not None:
         accumulator.record(result)
+    if span is not None:
+        span.set(
+            tracing.generation_attributes(
+                model=result.model,
+                backend=result.backend,
+                attempts=result.attempts,
+                duration_ms=result.duration_ms,
+                session_id=result.session_id,
+                input_tokens=result.input_tokens,
+                output_tokens=result.output_tokens,
+                cache_read_input_tokens=result.cache_read_input_tokens,
+                cache_creation_input_tokens=result.cache_creation_input_tokens,
+                notional_cost_usd=result.notional_cost_usd,
+                completion=result.text,
+            )
+        )
     return result
 
 
