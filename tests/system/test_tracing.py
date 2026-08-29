@@ -122,9 +122,8 @@ def test_nothing_is_written_to_stdout(traced: InMemorySpanExporter, capsys: pyte
 
 
 def test_an_exception_propagates_unchanged_and_is_recorded(traced: InMemorySpanExporter):
-    with pytest.raises(ValueError, match="boom"):
-        with tracing.span("unit.failing"):
-            raise ValueError("boom")
+    with pytest.raises(ValueError, match="boom"), tracing.span("unit.failing"):
+        raise ValueError("boom")
 
     span = traced.get_finished_spans()[0]
     assert span.status.status_code.name == "ERROR"
@@ -135,9 +134,8 @@ def test_an_exception_propagates_unchanged_when_tracing_is_off(monkeypatch: pyte
     monkeypatch.delenv("OTEL_EXPORTER_OTLP_ENDPOINT", raising=False)
     monkeypatch.delenv("OTEL_EXPORTER_OTLP_TRACES_ENDPOINT", raising=False)
 
-    with pytest.raises(ValueError, match="boom"):
-        with tracing.span("unit.failing"):
-            raise ValueError("boom")
+    with pytest.raises(ValueError, match="boom"), tracing.span("unit.failing"):
+        raise ValueError("boom")
 
 
 def test_shutdown_is_idempotent_and_never_raises():
@@ -195,20 +193,20 @@ def test_without_a_traceparent_the_cli_span_is_a_root(
 
 
 def _attributes(**overrides):
-    base = dict(
-        model="claude-opus-5",
-        backend="claude_cli",
-        attempts=2,
-        duration_ms=135_000,
-        session_id="abc-123",
-        input_tokens=36_320,
-        output_tokens=4_096,
-        cache_read_input_tokens=32_014,
-        cache_creation_input_tokens=11_667,
-        notional_cost_usd=0.054,
-        prompt=[{"role": "system", "content": "sys"}, {"role": "user", "content": "usr"}],
-        completion="the answer",
-    )
+    base = {
+        "model": "claude-opus-5",
+        "backend": "claude_cli",
+        "attempts": 2,
+        "duration_ms": 135_000,
+        "session_id": "abc-123",
+        "input_tokens": 36_320,
+        "output_tokens": 4_096,
+        "cache_read_input_tokens": 32_014,
+        "cache_creation_input_tokens": 11_667,
+        "notional_cost_usd": 0.054,
+        "prompt": [{"role": "system", "content": "sys"}, {"role": "user", "content": "usr"}],
+        "completion": "the answer",
+    }
     base.update(overrides)
     return tracing.generation_attributes(**base)
 
