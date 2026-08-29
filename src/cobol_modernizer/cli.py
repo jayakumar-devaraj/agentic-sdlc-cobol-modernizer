@@ -31,7 +31,12 @@ from cobol_modernizer.core.contracts import DesignCliResult, GenerateCliResult
 from cobol_modernizer.core.design_outputs import write_design_outputs
 from cobol_modernizer.graph.design_graph import run_design
 from cobol_modernizer.graph.generate_pipeline import run_generate
-from cobol_modernizer.telemetry.logging_config import bind_run_id, configure_logging
+from cobol_modernizer.telemetry import tracing
+from cobol_modernizer.telemetry.logging_config import (
+    bind_run_id,
+    configure_logging,
+    current_run_id,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -216,16 +221,34 @@ def main(argv: list[str] | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
 
-    if args.command == "design":
-        result, exit_code = _run_design_command(args)
-    else:
-        result, exit_code = _run_generate_command(args)
+    # After parsing, so `--help` and a usage error cost nothing, and before the command, so every
+    # model call inside it nests under one span. Returns False and logs when no collector is
+    # configured, which is the ordinary case (ADR-0046).
+    tracing.configure_tracing()
+    try:
+        # `root=True` joins a TRACEPARENT if control-plane handed one in; without one this is the
+        # trace's root, which is the right shape for a direct invocation.
+        with tracing.span(f"cobol-modernizer.{args.command}", root=True) as span:
+            if args.command == "design":
+                result, exit_code = _run_design_command(args)
+            else:
+                result, exit_code = _run_generate_command(args)
+            # Read back rather than passed in: the subcommands generate the id when `--run-id` is
+            # absent, and `bind_run_id` is the one place it is known for certain.
+            span.set(
+                {"cobol_modernizer.run_id": current_run_id(), "cobol_modernizer.exit_code": exit_code}
+            )
 
-    if args.json:
-        print(result.model_dump_json())
-    else:
-        print(result.detail)
-    return exit_code
+        if args.json:
+            print(result.model_dump_json())
+        else:
+            print(result.detail)
+        return exit_code
+    finally:
+        # This process is a subprocess that exits; spans still batched when it does have, from the
+        # collector's side, never happened. A `finally` rather than a trailing call so a failing
+        # run - the one most worth having a trace of - still flushes.
+        tracing.shutdown_tracing()
 
 
 if __name__ == "__main__":

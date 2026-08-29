@@ -10,6 +10,15 @@ dependencies = [
     "psycopg[binary]>=3.2.3",
     "pgvector>=0.3.6",
     "pyyaml>=6.0.2",
+    # ADR-0046's tracing. Runtime dependencies rather than an extra, deliberately: this repo is
+    # installed by control-plane as a pinned requirement string (its `config/
+    # scenario_specialists.yaml`), which names no extras, so an extra would mean the deployment
+    # that most needs tracing is the one guaranteed not to have it. The cost against ADR-0001's
+    # bounded-subprocess premise is bounded in turn - `telemetry/tracing.py` imports them lazily
+    # and constructs nothing unless an OTEL endpoint is configured.
+    "opentelemetry-api>=1.42.1",
+    "opentelemetry-sdk>=1.42.1",
+    "opentelemetry-exporter-otlp-proto-http>=1.42.1",
 ]
 
 [project.scripts]
