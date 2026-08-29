@@ -308,8 +308,22 @@ def generation_attributes(
         "gen_ai.response.model": model,
         "langfuse.observation.type": "generation",
     }
+    # **The two conventions are inverted, and getting this wrong is silent.** Anthropic's
+    # `input_tokens` EXCLUDES cache reads and cache creations; OpenTelemetry's
+    # `gen_ai.usage.input_tokens` is the whole prompt, and a collector derives the uncached part by
+    # subtracting the cache counters from it. Passing Anthropic's number straight through therefore
+    # under-reports input by exactly the cached total - and on a subscription run, where cache reads
+    # are most of the prompt, the subtraction goes negative and lands at zero.
+    #
+    # Measured, not deduced. A probe sending input=1111 with cache_read=333 and creation=444 was
+    # stored as input=334, which is 1111-333-444; sending 1888 stored input=1111 and a total of
+    # 2110. The first real span emitted from this module reported 36,320 input tokens as 0.
+    prompt_tokens = input_tokens
+    if prompt_tokens is not None:
+        prompt_tokens += (cache_read_input_tokens or 0) + (cache_creation_input_tokens or 0)
+
     numeric = {
-        "gen_ai.usage.input_tokens": input_tokens,
+        "gen_ai.usage.input_tokens": prompt_tokens,
         "gen_ai.usage.output_tokens": output_tokens,
         "gen_ai.usage.cache_read_input_tokens": cache_read_input_tokens,
         "gen_ai.usage.cache_creation_input_tokens": cache_creation_input_tokens,

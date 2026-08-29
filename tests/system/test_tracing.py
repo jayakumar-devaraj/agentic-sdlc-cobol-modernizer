@@ -215,10 +215,34 @@ def test_every_token_field_reaches_the_span():
     """All four, not just input and output. The cache fields are most of a subscription run."""
     attributes = _attributes()
 
-    assert attributes["gen_ai.usage.input_tokens"] == 36_320
     assert attributes["gen_ai.usage.output_tokens"] == 4_096
     assert attributes["gen_ai.usage.cache_read_input_tokens"] == 32_014
     assert attributes["gen_ai.usage.cache_creation_input_tokens"] == 11_667
+
+
+def test_input_tokens_are_converted_to_the_whole_prompt():
+    """The two conventions are inverted, and the mismatch is silent.
+
+    Anthropic's `input_tokens` excludes cache; OpenTelemetry's is the whole prompt, from which a
+    collector subtracts the cache counters to recover the uncached part. Measured against a real
+    collector: 1111 sent with cache 333/444 was stored as 334. The first real span this module
+    emitted reported 36,320 input tokens as 0, which is the same subtraction going negative.
+    """
+    attributes = _attributes()
+
+    assert attributes["gen_ai.usage.input_tokens"] == 36_320 + 32_014 + 11_667
+
+
+def test_input_tokens_are_unchanged_when_nothing_was_cached():
+    attributes = _attributes(cache_read_input_tokens=0, cache_creation_input_tokens=0)
+
+    assert attributes["gen_ai.usage.input_tokens"] == 36_320
+
+
+def test_absent_cache_counts_do_not_break_the_conversion():
+    attributes = tracing.generation_attributes(model="m", input_tokens=500)
+
+    assert attributes["gen_ai.usage.input_tokens"] == 500
 
 
 def test_the_call_context_reaches_the_span():
@@ -248,7 +272,7 @@ def test_content_capture_can_be_turned_off_without_losing_the_rest(
 
     assert "langfuse.observation.input" not in attributes
     assert "langfuse.observation.output" not in attributes
-    assert attributes["gen_ai.usage.input_tokens"] == 36_320
+    assert attributes["gen_ai.usage.input_tokens"] == 36_320 + 32_014 + 11_667
     assert attributes["gen_ai.request.model"] == "claude-opus-5"
 
 
@@ -275,7 +299,7 @@ def test_attributes_are_all_types_the_sdk_accepts(traced: InMemorySpanExporter):
 
     recorded = traced.get_finished_spans()[0].attributes
     assert set(attributes) == set(recorded)
-    assert recorded["gen_ai.usage.input_tokens"] == 36_320
+    assert recorded["gen_ai.usage.input_tokens"] == 36_320 + 32_014 + 11_667
 
 
 def test_stdout_is_untouched_by_a_full_generation_span(
