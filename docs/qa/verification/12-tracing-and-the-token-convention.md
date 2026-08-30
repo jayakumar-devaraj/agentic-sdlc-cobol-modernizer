@@ -110,15 +110,46 @@ Read timed out. (read timeout=10.0)
 The probe still ran to completion and exited normally. That is ADR-0046's second constraint
 holding outside a test — telemetry that can abort a migration is worse than no telemetry.
 
+## The containerised run — a real `design`, traced end to end
+
+Released as `v0.1.2`, pinned by control-plane's `config/scenario_specialists.yaml`, installed into
+its specialist image, and driven by a real Kafka drift event against the tenant repository. The
+`design` phase ran for 432.3s and parked at its review gate. Spans read back from ClickHouse:
+
+```
+┌─name──────────────────────────┬─type───────┬─provided_model_name───────┬─tok_in─┬─tok_out─┬─cache_read─┬─cache_new─┬──secs─┐
+│ cobol-modernizer.design       │ SPAN       │                           │      0 │       0 │          0 │         0 │ 428.6 │
+│ call_model.spec_extractor     │ GENERATION │ claude-opus-5             │      2 │   12526 │          0 │     30673 │ 130.8 │
+│ call_model.spec_critic        │ GENERATION │ claude-haiku-4-5-20251001 │     10 │   22472 │          0 │     32195 │ 236.9 │
+│ call_model.solution_architect │ GENERATION │ claude-opus-5             │      2 │    5801 │       4418 │     18754 │  60.7 │
+└───────────────────────────────┴────────────┴───────────────────────────┴────────┴─────────┴────────────┴───────────┴───────┘
+```
+
+All three nodes, one trace, correctly nested — every generation's `parent_span_id` is the design
+span's `span_id` (`88be9cb7204ad5dd`), and the three durations sum to 428.4s against the root's
+428.6s. Model routing is visible in the trace rather than only in a log line: `spec_critic` ran on
+Haiku while the other two ran on Opus.
+
+**`stdout` stayed clean, proven by the caller rather than by inspection.** Control-plane parsed the
+`--json` contract and reported *"Design complete for 1 program(s); 11 gate item(s) for review."* A
+single stray byte on stdout would have failed that parse. This is ADR-0046's first constraint,
+verified under the condition it was written for.
+
+**One deployment finding, not a code one.** Exporting to the collector through Docker Desktop's
+published port from inside a container fails: TCP connects and the server closes without a
+response (`RemoteDisconnected`), while the same host gateway carries Kafka on another port
+perfectly. Container-to-container on the collector's own network answers 200 every time. The run
+above exports over that path. Nothing in this repo changed for it — the endpoint is a variable —
+but an operator who points a container at `host.docker.internal` and sees silence should look here
+first. The run itself was unaffected while the export was failing, which is the second constraint
+holding outside a test.
+
 ## Not yet verified
 
-- **The containerised run.** The specialist image installs this repo from a pinned git tag
-  (control-plane's `config/scenario_specialists.yaml`), so tracing reaches a container only via a
-  release. Until then, verification here is the local CLI and the probes above.
 - **`TRACEPARENT`'s other end.** The root span joins a parent trace when the environment carries
   one, and every test covers that half. Nothing sets it yet: control-plane's specialist invocation
-  does not export it, so a specialist run currently appears as its own trace rather than as part
-  of the caller's. Stated in ADR-0060 § 3 rather than left to be discovered.
+  does not export it, so the trace above is the specialist's own rather than part of the caller's.
+  Stated in ADR-0060 § 3 rather than left to be discovered.
 - **`generate`.** Every model call in both halves goes through `call_model`, so the instrumentation
   covers it by construction — but no traced `generate` run has been executed. Per this repo's own
   rule, that is *"covered for `design`"*, not *"covered"*.
