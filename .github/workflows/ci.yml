@@ -1,10 +1,35 @@
 name: ci
 
+# WHY THERE IS NO `push: branches: [main]` TRIGGER.
+#
+# There was, and it doubled this repository's bill for nothing. This is the expensive repository -
+# a full run is 10-12 minutes against control-plane's 4 - and every `pull_request` run was followed
+# by a `push main` run of the same length, because merging is what produced the push. GitHub runs
+# pull-request checks against the MERGE RESULT rather than the branch tip, so the tree that lands
+# on `main` is the tree the PR just tested. Re-testing it is paying twice for one answer.
+#
+# **The gap that leaves, stated rather than hidden:** the merge result is only the merged tree if
+# `main` has not moved between the check and the merge. Enable branch protection's *"Require
+# branches to be up to date before merging"* to close it. This repository merges one PR at a time
+# (CLAUDE.md's branching workflow), so the window is already narrow, but a settings toggle is a
+# better guarantee than a habit.
+#
+# `workflow_dispatch` is the escape hatch: run this on `main` by hand when that is actually wanted,
+# instead of on every merge forever.
 on:
-  push:
-    branches: [main]
   pull_request:
     branches: [main]
+  workflow_dispatch:
+
+# One run per pull request. A second push to the same branch cancels the run the first one started
+# rather than paying for both - `fix/corpus-reachability` ran three full 12-minute builds this way,
+# two of which nobody was ever going to read.
+#
+# The key falls back to `run_id` off a pull request, which is unique per run, so a manual
+# `workflow_dispatch` is never cancelled by the next one.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.head_ref || github.run_id }}
+  cancel-in-progress: true
 
 jobs:
   test:
@@ -36,6 +61,10 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
+          # Every run installed langgraph, anthropic, psycopg, pgvector and the OpenTelemetry
+          # packages cold. Maven is already cached below; this is the same argument for Python.
+          cache: pip
+          cache-dependency-path: pyproject.toml
 
       # `tools/local_compiler.py` drives a real Maven build, and its tests run one. Giving this job
       # a JDK is what keeps them from skipping here forever -- the same reasoning `template-build`
@@ -97,6 +126,12 @@ jobs:
   template-build:
     runs-on: ubuntu-latest
     timeout-minutes: 20
+    # Serialised behind `test` purely to stop paying for it when `test` has already failed. It
+    # costs the same minutes on a green run - the two jobs' times simply add either way - and saves
+    # all of them on a red one, which is the common case while a branch is being iterated. The
+    # price is wall-clock: a passing run now takes test-then-build rather than both at once.
+    # control-plane's workflow already gates its two downstream jobs this way.
+    needs: test
     steps:
       - uses: actions/checkout@v4
 
