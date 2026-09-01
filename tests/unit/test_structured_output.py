@@ -4,7 +4,7 @@ The malformed shape used throughout is the one that was **measured**, not invent
 sampled 21 judge calls per candidate over the same corpus: `claude-opus-5` held the response
 contract 21 of 21, `claude-haiku-4-5-20251001` 16 of 21, and all five failures were a prose
 preamble ahead of otherwise-valid JSON, against a prompt saying "Respond with a JSON array and
-nothing else." `tests/evaluations/judge.py` records those excerpts.
+nothing else." `tests/evaluation/judge.py` records those excerpts.
 
 That is why `PROSE_PREAMBLE` below reads the way it does. A synthetic `"not json at all"` would
 exercise the same branch and prove less: the question this loop answers is whether a model that

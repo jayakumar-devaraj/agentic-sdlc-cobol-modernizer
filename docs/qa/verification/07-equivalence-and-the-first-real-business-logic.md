@@ -146,7 +146,7 @@ Three of these describe work no step currently owns. They are the natural input 
 "6 of 6 / 0.00" was one sample of it.**
 
 ```
-COBOL_MODERNIZER_RUN_LIVE_CLI_TESTS=1 pytest tests/evaluations/test_judge_benchmark.py -q -s
+COBOL_MODERNIZER_RUN_LIVE_CLI_TESTS=1 pytest tests/evaluation/test_judge_benchmark.py -q -s
 1 failed, 3 passed, 4 errors in 245.84s
 ```
 
@@ -221,7 +221,7 @@ re-ordering rather than a re-implementation, and it is why (d) beat a stateful w
 rather than on convenience.
 
 ```
-JAVA_HOME=... pytest tests/system/test_account_break_posting.py -q
+JAVA_HOME=... pytest tests/integration/test_account_break_posting.py -q
 4 passed in 46.99s
 ```
 
@@ -289,7 +289,7 @@ per written transaction. `TRAN-ID` is `STRING PARM-DATE, WS-TRANID-SUFFIX` — 1
 #### The `@StepScope` package was verified by javac, not by memory
 
 ```
-pytest tests/system/test_build_validator.py -k job_parameters_actually_compiles
+pytest tests/integration/test_build_validator.py -k job_parameters_actually_compiles
 1 passed in 10.55s
 ```
 
@@ -301,7 +301,7 @@ import, and only compiling one showed it. A rendered package name is a claim abo
 #### The claim G29 exists for, run rather than argued
 
 ```
-pytest tests/system/test_job_parameter_determinism.py -q
+pytest tests/integration/test_job_parameter_determinism.py -q
 2 passed in 47.12s          # `mvn verify` — compiles the processor and runs 3 JUnit cases
 ```
 
@@ -379,7 +379,7 @@ available and refused on the record: it would hand a model errors in genuinely r
 in order to fix a case where that refusal was merely misapplied.
 
 ```
-JAVA_HOME=... pytest tests/system/test_generate_pipeline.py -q
+JAVA_HOME=... pytest tests/integration/test_generate_pipeline.py -q
 20 passed in 329.25s (0:05:29)
 ```
 
@@ -395,7 +395,7 @@ would pass it — so `test_the_blocked_message_no_longer_blames_the_renderer_for
 asserts the reason on its own.
 
 ```
-pytest tests/system/test_java_processor.py tests/system/test_build_validator.py -q
+pytest tests/unit/test_java_processor.py tests/integration/test_build_validator.py -q
 61 passed in 16.62s
 ```
 

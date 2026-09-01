@@ -68,7 +68,7 @@ import {DEFAULT_DOMAIN_PACKAGE}.Tran;
 import java.math.BigDecimal;
 import org.junit.jupiter.api.Test;
 
-/** Rendered by tests/system/test_account_break_posting.py -- see that module for why. */
+/** Rendered by tests/integration/test_account_break_posting.py -- see that module for why. */
 class PostAccountInterestTest {{
 
     private static Account account(String balance, String cycCredit, String cycDebit) {{

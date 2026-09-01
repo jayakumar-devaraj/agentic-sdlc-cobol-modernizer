@@ -14,7 +14,7 @@ and `CVTRA02Y.cpy` copybooks (fetched live from `carddemo-tenant-service`, not t
 memory) to the expected `BigDecimal` precision/scale — including `ACCT-CURR-BAL`'s `PIC S9(10)V99`
 → precision 12, scale 2.
 
-**Command**: `pytest tests/system/test_pic_mapper.py -v`
+**Command**: `pytest tests/unit/test_pic_mapper.py -v`
 **Result**: 19/19 passed.
 
 ### `parsing/cobol_parser.py` — structural parsing against real `CBACT04C.cbl` / `CVACT01Y.cpy`
@@ -27,7 +27,7 @@ round-trip of every `CVACT01Y.cpy` field through `pic_mapper.map_pic_clause()`. 
 `WORKING-STORAGE`, on a group header rather than either child field's own line) is still caught via
 sibling-text detection.
 
-**Command**: `pytest tests/system/test_cobol_parser.py -v`
+**Command**: `pytest tests/unit/test_cobol_parser.py -v`
 **Result**: 28/28 passed.
 
 ### `tools/tenant_repo.py` — real filesystem reads, real casing inconsistency
@@ -40,7 +40,7 @@ verification, not after: probing `Path.is_file()` directly is case-insensitive f
 filename on Windows NTFS, silently defeating the case-sensitive program-name-matching requirement
 on this exact development machine — fixed, with a regression test that failed before the fix.
 
-**Command**: `pytest tests/system/test_tenant_repo.py -v`
+**Command**: `pytest tests/unit/test_tenant_repo.py -v`
 **Result**: 15/15 passed.
 
 ### `core/guardrails.py` — real COBOL source, adversarial synthetic cases
@@ -53,7 +53,7 @@ caught during this verification: `"IGNORE ALL PREVIOUS INSTRUCTIONS"` — the ca
 phrasing of this attack — didn't match a regex that only allowed one qualifier word between
 "ignore" and "instructions"; fixed to treat each qualifier as independently optional.
 
-**Command**: `pytest tests/system/test_guardrails.py -v`
+**Command**: `pytest tests/contract/test_guardrails.py -v`
 **Result**: 18/18 passed.
 
 ### `tools/knowledge_store.py` — real Postgres+pgvector, both locally and in CI
@@ -70,7 +70,7 @@ there forever (the tests skip gracefully without a reachable database, so this h
 not assumed):
 
 **Command**: `gh run view <run-id> --log | grep -iE "test_knowledge_store|skipped|passed"`
-**Result**: `tests/system/test_knowledge_store.py ...........` (11 dots — 11 tests ran, zero
+**Result**: `tests/integration/test_knowledge_store.py ...........` (11 dots — 11 tests ran, zero
 skipped), `98 passed`, confirmed against the CI run for PR #4
 (https://github.com/jayakumar-devaraj/agentic-sdlc-cobol-modernizer/pull/4).
 
@@ -106,7 +106,7 @@ which rebuilds that exact situation (drops the table, recreates it at
 `EMBEDDING_DIMENSIONS + 512`, asserts the raise and both dimensions in the message, then restores
 the table in a `finally`). The stale table was then dropped and the suite re-run green.
 
-**Command**: `pytest tests/system/test_knowledge_store.py -v`
+**Command**: `pytest tests/integration/test_knowledge_store.py -v`
 **Result**: 12/12 passed (11 pre-existing + 1 new regression test).
 
 ### `core/model_routing.py` — real config/model_routing.yaml, ADR-0004's actual mechanism
@@ -119,5 +119,5 @@ confirms it maps all five known node types to non-empty model identifiers, and t
 against fixture configs only, never the real one, so a bad fixture can never be mistaken for a
 real-config regression.
 
-**Command**: `pytest tests/system/test_model_routing.py -v`
+**Command**: `pytest tests/unit/test_model_routing.py -v`
 **Result**: 10/10 passed.

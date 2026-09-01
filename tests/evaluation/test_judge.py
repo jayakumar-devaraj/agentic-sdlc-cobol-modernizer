@@ -11,12 +11,13 @@ from __future__ import annotations
 
 import json
 import os
+import pathlib
 from pathlib import Path
 
 import pytest
 
 from cobol_modernizer.tools.tenant_repo import resolve_program
-from tests.evaluations.corpus import (
+from tests.evaluation.corpus import (
     CASES,
     CASES_BY_NAME,
     CRITERIA,
@@ -25,7 +26,7 @@ from tests.evaluations.corpus import (
     Ground,
     Verdict,
 )
-from tests.evaluations.judge import (
+from tests.evaluation.judge import (
     SYSTEM_PROMPT,
     BenchmarkSummary,
     JudgeResponseParseError,
@@ -390,11 +391,18 @@ def test_the_rendered_table_names_every_case_and_its_verdict():
 
 
 class _FakeItem:
-    """The two methods `pytest_collection_modifyitems` uses, and nothing else."""
+    """The two methods and one attribute `pytest_collection_modifyitems` uses, and nothing else.
+
+    `path` is this module's own, so the hook's tier derivation resolves it to `evaluation` -- a
+    real tier -- rather than raising. It was added when that derivation was: the hook grew a third
+    thing it reads off an item, and a fake modelling only two started failing with
+    `AttributeError` instead of exercising the skip logic these tests are about.
+    """
 
     def __init__(self, live: bool) -> None:
         self._live = live
         self.markers: list = []
+        self.path = pathlib.Path(__file__)
 
     def get_closest_marker(self, name: str):
         return pytest.mark.live_claude_cli if (self._live and name == "live_claude_cli") else None
@@ -437,7 +445,12 @@ def test_the_live_opt_in_guard_skips_and_unskips_correctly(
     item = _FakeItem(live=live)
     pytest_collection_modifyitems(config=None, items=[item])
 
-    assert bool(item.markers) is expect_skipped
+    # The *skip* marker specifically, not "any marker was added". That looser proxy held only while
+    # skipping was the one thing this hook did; it now also stamps every item with its tier marker,
+    # so `bool(item.markers)` became permanently true and the un-skip direction stopped being
+    # checked -- while still passing for the skip direction, which is the half that had evidence.
+    skipped = any(getattr(marker, "name", None) == "skip" for marker in item.markers)
+    assert skipped is expect_skipped
 
 
 def test_judge_case_uses_the_injected_adjudicator(cobol_source):

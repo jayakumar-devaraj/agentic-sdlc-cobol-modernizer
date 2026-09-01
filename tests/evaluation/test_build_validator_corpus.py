@@ -21,14 +21,14 @@ from pathlib import Path
 import pytest
 
 from cobol_modernizer.core.package_data import TEMPLATES_ROOT
-from tests.evaluations.build_validator_corpus import (
+from tests.evaluation.build_validator_corpus import (
     CASES,
     GRADED,
     Ground,
     Verdict,
     case_by_name,
 )
-from tests.system.test_generate_pipeline import _INJECTED_ERRORS
+from tests.integration.test_generate_pipeline import _INJECTED_ERRORS
 
 TEMPLATE = TEMPLATES_ROOT / "target-spring-boot-baseline"
 
@@ -183,7 +183,7 @@ def test_the_benchmark_reports_every_case_including_the_ungraded_one():
     A summary that silently dropped the `REPO_HISTORY` case would make "reported, not asserted"
     mean "not reported", which is the whole value of keeping it in the corpus.
     """
-    from tests.evaluations import test_build_validator_benchmark as bench
+    from tests.evaluation import test_build_validator_benchmark as bench
 
     assert len(bench.CASES) == len(CASES)
     graded_names = {c.name for c in GRADED}
@@ -194,7 +194,7 @@ def test_the_benchmark_reports_every_case_including_the_ungraded_one():
 def test_the_benchmark_is_opt_in_behind_the_live_marker():
     """Nothing here may spend money on an ordinary run. Asserted against the marker rather than
     trusted to the docstring."""
-    from tests.evaluations import test_build_validator_benchmark as bench
+    from tests.evaluation import test_build_validator_benchmark as bench
 
     marks = getattr(bench.test_build_validator_discriminates_repairable_from_blocked, "pytestmark", [])
     assert any(mark.name == "live_claude_cli" for mark in marks), (
@@ -216,7 +216,7 @@ def test_no_case_body_is_refused_by_the_renderer_before_it_can_be_judged():
     case be found by a run someone paid for.
     """
     from cobol_modernizer.rendering.java_processor import render_processor
-    from tests.system.test_generate_pipeline import PACKAGE, STEP
+    from tests.integration.test_generate_pipeline import PACKAGE, STEP
 
     for case in CASES:
         render_processor(

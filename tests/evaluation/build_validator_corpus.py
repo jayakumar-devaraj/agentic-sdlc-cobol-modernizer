@@ -12,7 +12,7 @@ called repairable when it is not spends every attempt rewriting statements that 
 problem, and hands a human three worse versions of the same code. The other direction stops a
 fixable build early, which is cheaper -- a person gets a legible problem.
 
-**Nothing here is graded against my reading of anything.** `tests/evaluations/corpus.py` had to
+**Nothing here is graded against my reading of anything.** `tests/evaluation/corpus.py` had to
 report its source-grounded cases rather than assert on them, because turning a reading of COBOL into
 a pass/fail bar promotes an interpretation to ground truth. This corpus does not have that problem,
 and the reason is worth stating: **both of its verdicts are mechanically checkable.**
@@ -37,7 +37,7 @@ from enum import Enum
 # The injected error classes, imported rather than restated -- the same rule `corpus.py` follows for
 # its bodies. These four are the ones step 43's harness drives through a real Maven build, so a copy
 # that drifted would leave `COMPILER_PROVEN` claiming something no compiler ever saw.
-from tests.system.test_generate_pipeline import _INJECTED_ERRORS
+from tests.integration.test_generate_pipeline import _INJECTED_ERRORS
 
 
 class Verdict(str, Enum):

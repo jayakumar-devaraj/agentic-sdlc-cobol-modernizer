@@ -12,12 +12,12 @@
 **Stated first, because it is the thing most likely to be over-read.** This entry reports a
 **harness**, not a measurement of judge quality. No real judge call has been made. What follows is
 verified; *"a real model scores generated Java at N%"* is not claimed anywhere, and
-`tests/evaluations/test_judge_benchmark.py`'s own docstring says so.
+`tests/evaluation/test_judge_benchmark.py`'s own docstring says so.
 
 **What the gap was.** Every claim this repo makes about model-authored Java is spot-measured — the
 interest body at 10 of 10, `spec_critic` at 3 of 3, the write body compiling on attempt 1. Real
 evidence, none of it re-running, while the previous session changed generator prompts five times.
-`tests/evaluations/` had been a 0-byte `__init__.py` for 47 PRs (G9).
+`tests/evaluation/` had been a 0-byte `__init__.py` for 47 PRs (G9).
 
 **Why a judge rather than more oracles.** ADR-0021 wrote down its own ceiling: a hand-computed table
 tests *"arithmetic someone already understood"*, over one paragraph. There is no such table for the
@@ -26,7 +26,7 @@ calibrate it exactly where the oracle already answers, because that is the one p
 falsifiable.
 
 ```
-./.venv/Scripts/python -m pytest tests/evaluations -q
+./.venv/Scripts/python -m pytest tests/evaluation -q
 65 passed, 4 skipped in 0.14s
 ```
 
@@ -36,7 +36,7 @@ which is the expected reading rather than a lucky one: step 44 adds no `src/` co
 non-test file it touches is `tests/conftest.py`.
 
 **The corpus is graded by a JVM where it can be.** Three of six cases are the exact body strings
-`tests/system/test_interest_equivalence.py` compiles and runs through real Maven against ADR-0021's
+`tests/integration/test_interest_equivalence.py` compiles and runs through real Maven against ADR-0021's
 literals — `interest_rounds` fails rows R1/R2/R5–R8, `interest_unguarded` fails R10,
 `interest_faithful` passes all ten. They are **imported** from that module, not copied, and a test
 asserts the cited test functions still exist so the citation cannot go stale. The other three are
@@ -72,7 +72,7 @@ and the source restored:
 The benchmark put its six judge calls in a **module-scoped** fixture. `tests/conftest.py` guards
 live tests in a **function-scoped autouse** fixture — and pytest sets higher-scoped fixtures up
 first, so the calls happened before the guard could skip anything. Measured, not theorised:
-`pytest tests/evaluations` took **67.56s** and ended in `ModelCallError`, with
+`pytest tests/evaluation` took **67.56s** and ended in `ModelCallError`, with
 `COBOL_MODERNIZER_RUN_LIVE_CLI_TESTS` unset.
 
 That is precisely the accident `conftest.py`'s own docstring exists for — *"a test that quietly
@@ -110,7 +110,7 @@ judge call, so: no detection rate, no false-positive rate…"** That was true wh
 longer. Kept rather than deleted, per this file's convention.)*
 
 ```
-COBOL_MODERNIZER_RUN_LIVE_CLI_TESTS=1 pytest tests/evaluations/test_judge_benchmark.py -q -s
+COBOL_MODERNIZER_RUN_LIVE_CLI_TESTS=1 pytest tests/evaluation/test_judge_benchmark.py -q -s
 ```
 
 **Run 2 (final): 4 passed in 89.24s.** `claude-opus-5`, 6 calls.
@@ -235,7 +235,7 @@ architecture, not by convenience:
 | Side | Where | What it settles |
 |---|---|---|
 | Receiving | control-plane [PR #9](https://github.com/jayakumar-devaraj/agentic-sdlc-control-plane/pull/9) | An opaque artifact survives the allowlisted serde, a real durable pause and resume, and reaches a gate as *facts* |
-| Producing | `tests/system/test_handoff_contract.py` | A **real** `design.json` meets every requirement that spike established |
+| Producing | `tests/contract/test_handoff_contract.py` | A **real** `design.json` meets every requirement that spike established |
 
 **What the receiving-side spike found by running.** `build_serde` restricts msgpack to
 control-plane's own state models, so an artifact needing a registered type would have required a
@@ -273,7 +273,7 @@ records what running it found.
 corpus reached nine with ADR-0050):
 
 ```
-$ COBOL_MODERNIZER_RUN_LIVE_CLI_TESTS=1 pytest tests/evaluations/test_judge_benchmark.py -q -s
+$ COBOL_MODERNIZER_RUN_LIVE_CLI_TESTS=1 pytest tests/evaluation/test_judge_benchmark.py -q -s
 ```
 
 **`claude-opus-5` — real output:**
@@ -358,7 +358,7 @@ have been read off the COBOL and labelled; instead:
 - `posting_unguarded` is that body **minus one `if`**. Command and real output:
 
 ```
-$ pytest tests/system/test_cbtrn02c_round_trip.py -q -s -k "dropped_guard or unguarded"
+$ pytest tests/integration/test_cbtrn02c_round_trip.py -q -s -k "dropped_guard or unguarded"
 unguarded CBTRN02C: 300 records against the oracle's 262
 2 passed in 56.34s
 ```
@@ -421,14 +421,14 @@ it at the node is a separate, priced decision.
 **Command** (free — the whole corpus module calls no model):
 
 ```
-.venv/Scripts/python.exe -m pytest tests/evaluations/test_build_validator_corpus.py -q
+.venv/Scripts/python.exe -m pytest tests/evaluation/test_build_validator_corpus.py -q
 ```
 
 **Result: 15 passed.**
 
 ### What makes the cases evidence rather than opinion
 
-`tests/evaluations/corpus.py` must report its source-grounded cases rather than assert on them,
+`tests/evaluation/corpus.py` must report its source-grounded cases rather than assert on them,
 because grading a reading of COBOL promotes an interpretation to ground truth. Seven of these eight
 cases avoid that, because both verdicts are checkable by machine:
 
@@ -489,7 +489,7 @@ of ADR-0054's `parse_with_repair`, which now sits between that and a raised erro
 
 ```
 COBOL_MODERNIZER_RUN_LIVE_CLI_TESTS=1 COBOL_MODERNIZER_VALIDATOR_SAMPLES=2 \
-  ./.venv/Scripts/python -m pytest tests/evaluations/test_build_validator_benchmark.py -q -s
+  ./.venv/Scripts/python -m pytest tests/evaluation/test_build_validator_benchmark.py -q -s
 ```
 
 | | |

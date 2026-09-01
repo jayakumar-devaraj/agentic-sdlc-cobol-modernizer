@@ -17,7 +17,7 @@ measured budget and a documented behaviour when it is exceeded*.
 the same `author` seam every other test uses, so this costs nothing and can run in CI:
 
 ```
-JAVA_HOME=... pytest tests/system/test_context_budget.py -q -s
+JAVA_HOME=... pytest tests/integration/test_context_budget.py -q -s
 generate prompts (chars): [85215, 84928, 84938]; ceiling 600,000
 6 passed
 ```
@@ -104,7 +104,7 @@ a pre-3.2.0 design still validates, and a design carrying none reports nothing r
 everything: no information is not the same as no access, and a check is least trustworthy exactly
 where it knows least. Pinned by a test, alongside a case proving it is not silent in general.
 
-**Verification**: `pytest tests/system/test_file_control.py tests/system/test_file_access_paths.py -q`
+**Verification**: `pytest tests/unit/test_file_control.py tests/unit/test_file_access_paths.py -q`
 → **44 passed**, `parsing/file_control.py` at **100%** including every refusal path.
 
 **Limits, stated rather than implied.** Only `READ ... INTO` is parsed, so a file the program writes
@@ -139,7 +139,7 @@ every following field -- no record in this corpus has one, which is why the refu
 and any record containing a field `pic_mapper` rejects. **Refused whole, never partial**: a layout
 missing one width is not incomplete, it is wrong for every field that follows.
 
-**Verification**: `pytest tests/system/test_record_layout.py -q` -> **16 passed**,
+**Verification**: `pytest tests/unit/test_record_layout.py -q` -> **16 passed**,
 `parsing/record_layout.py` at **100%**.
 
 **One test corrected in passing.** Stage 2's `test_the_schema_version_records_the_addition` pinned
@@ -156,7 +156,7 @@ same numbers -- and the hand-written reader has been deleted rather than kept be
 readers would mean the result no longer says which one was measured.
 
 ```
-JAVA_HOME=... pytest tests/system/test_hand_written_round_trip.py -q -s
+JAVA_HOME=... pytest tests/integration/test_hand_written_round_trip.py -q -s
 round trip: 500 of 500 fields matched; 3 excluded by decision; reader rendered from design.json,
   job and step wiring hand-written (ADR-0030), bodies scripted rather than model-authored
 account half: 598 of 600 fields matched; 0 excluded by decision
@@ -201,7 +201,7 @@ line-terminated text, so the harness converts them -- exactly as the oracle pipe
 does before either program sees them. Teaching the renderer to guess framing per file would have
 baked a property of one distribution into every generated project.
 
-**Verification**: `pytest tests/system/test_java_reader.py -q` -> **19 passed**, renderer at 98%
+**Verification**: `pytest tests/unit/test_java_reader.py -q` -> **19 passed**, renderer at 98%
 (the two uncovered lines are refusals for states the earlier contract checks already make
 unreachable). The end-to-end proof is the round trip above.
 
@@ -245,7 +245,7 @@ needs to match. That reasoning does not apply here and the difference is worth s
 is the *program's output*, not the test's. A batch program that cannot write its file is not
 finished.
 
-**Verification**: `pytest tests/system/test_java_writer.py -q` -> **13 passed**, renderer at 100%;
+**Verification**: `pytest tests/unit/test_java_writer.py -q` -> **13 passed**, renderer at 100%;
 `parsing/file_control.py` back to 100% with the write side covered; the template's `CobolRecordTest`
 at 15 tests. The end-to-end proof is the round trip.
 
@@ -293,7 +293,7 @@ copy of the "what is rendered" sentence, and only one was updated when the reade
 rendered -- so the live run had been reporting a qualifier two stages out of date. There is now one
 `WIRING_QUALIFIER` and both read it.
 
-**Verification**: `pytest tests/system/test_java_job.py -q` -> **13 passed**, renderer at 100%.
+**Verification**: `pytest tests/unit/test_java_job.py -q` -> **13 passed**, renderer at 100%.
 
 **What remains of G31**: the account-posting step and the paths. The first needs the design to be
 able to express a control break, which is a `solution_architect` contract question rather than a
@@ -351,7 +351,7 @@ its description text. The hand-written aggregating reader actually consumes the 
 output, which carries an `Account`. So the design's declared order and the working implementation
 disagree about what this step reads, and nothing had said so before.
 
-**Verification**: `pytest tests/system/test_control_break.py -q` -> **18 passed**, parser at 100%
+**Verification**: `pytest tests/unit/test_control_break.py -q` -> **18 passed**, parser at 100%
 including the period-terminated form (`END-IF` is optional in COBOL, and the older style is more
 common in real estates).
 
@@ -391,7 +391,7 @@ build an accessor string, one to find the owning entity -- and the second had a 
 reach, because callers always asked the first. Merged into one `_locate`, which made the branch both
 reachable and tested.
 
-**Verification**: `pytest tests/system/test_java_aggregation.py -q` -> **14 passed**, renderer at
+**Verification**: `pytest tests/unit/test_java_aggregation.py -q` -> **14 passed**, renderer at
 100%. The Maven-backed suites (`test_hand_written_round_trip`, `test_interest_equivalence`,
 `test_account_break_posting`) -> **30 passed, 1 skipped**, which matters here because widening the
 composite changed what every `computeInterest` body has to construct.

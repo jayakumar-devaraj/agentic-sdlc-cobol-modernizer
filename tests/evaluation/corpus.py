@@ -7,7 +7,7 @@ compile errors were built with, applied to semantics instead of syntax: a corpus
 mistakes nobody has made would measure the judge against this session's imagination.
 
 **The bodies are imported, not copied.** `interest_faithful`, `interest_rounds` and
-`interest_unguarded` are the exact strings `tests/system/test_interest_equivalence.py` compiles and
+`interest_unguarded` are the exact strings `tests/integration/test_interest_equivalence.py` compiles and
 runs through Maven. Re-typing them here would let the two drift, and the moment they drift the
 `ORACLE` ground below becomes a claim about a body no JVM ever saw.
 """
@@ -18,6 +18,14 @@ from dataclasses import dataclass
 from enum import Enum
 
 from cobol_modernizer.core.contracts import BatchStepDesign
+
+# `CBTRN02C`'s bodies and its step, imported for the same reason: `_POSTING_BODY` is the exact string
+# `test_cbtrn02c_round_trip` builds and runs under real Maven, and `_POSTING_UNGUARDED` is that body
+# minus one `if`. Re-typing either here would let the corpus drift from the run that grounds it.
+from tests.integration.test_cbtrn02c_round_trip import _BODY as _POSTING_BODY
+from tests.integration.test_cbtrn02c_round_trip import _IMPORTS as _POSTING_IMPORTS
+from tests.integration.test_cbtrn02c_round_trip import _UNGUARDED_BODY as _POSTING_UNGUARDED
+from tests.integration.test_cbtrn02c_round_trip import STEP as POSTING_STEP
 
 # The real bodies, and the real steps they implement. See the module docstring on why these are
 # imported rather than restated.
@@ -30,14 +38,6 @@ from tests.support.interest_design import (
     COMPLETE_STEP,
     STEP,
 )
-
-# `CBTRN02C`'s bodies and its step, imported for the same reason: `_POSTING_BODY` is the exact string
-# `test_cbtrn02c_round_trip` builds and runs under real Maven, and `_POSTING_UNGUARDED` is that body
-# minus one `if`. Re-typing either here would let the corpus drift from the run that grounds it.
-from tests.system.test_cbtrn02c_round_trip import _BODY as _POSTING_BODY
-from tests.system.test_cbtrn02c_round_trip import _IMPORTS as _POSTING_IMPORTS
-from tests.system.test_cbtrn02c_round_trip import _UNGUARDED_BODY as _POSTING_UNGUARDED
-from tests.system.test_cbtrn02c_round_trip import STEP as POSTING_STEP
 
 #: The program the original seven cases were built from, and the default for an `EvalCase`.
 #:

@@ -361,7 +361,7 @@ COBOL produced; Python only sums exact two-decimal values. Recomputing
 not do it.
 
 **Shown to fail first.** Restoring the old fixture and running
-`pytest tests/system/test_cobol_oracle_comparison.py -k credited_exactly`:
+`pytest tests/unit/test_cobol_oracle_comparison.py -k credited_exactly`:
 
 ```
 AssertionError: 00000000001: balance moved 14.55, transactions total 900014.55
@@ -384,11 +384,11 @@ working tree (`core.autocrlf=true`), so the container failed at `set -eu` with
 stage-2 account unload had no count assertion; it has one now, for the reason the 94-row finding
 already established.
 
-**Suite after the change**: `pytest tests/system/test_cobol_oracle_comparison.py -q` → **21 passed**.
+**Suite after the change**: `pytest tests/unit/test_cobol_oracle_comparison.py -q` → **21 passed**.
 
 ### The round trip, run — generated logic inside hand-written wiring
 
-**What ran.** `tests/system/test_hand_written_round_trip.py` generates `CBACT04C`'s two processors
+**What ran.** `tests/integration/test_hand_written_round_trip.py` generates `CBACT04C`'s two processors
 through `run_generate`, copies the hand-written wiring from `tests/fixtures/handwritten/CBACT04C/`
 into the generated project, and builds and runs it with real Maven over the oracle's own inputs
 (`tcatbal-posted.dat`, `acctdata-stage1.dat`, plus the corpus's untouched `discgrp.txt` and
@@ -396,7 +396,7 @@ into the generated project, and builds and runs it with real Maven over the orac
 (`docs/adr/0029`) compares it field-for-field against `transact.dat`.
 
 ```
-JAVA_HOME=... pytest tests/system/test_hand_written_round_trip.py -q
+JAVA_HOME=... pytest tests/integration/test_hand_written_round_trip.py -q
 3 passed in 69.58s
 ```
 
@@ -462,7 +462,7 @@ than edited, because what it recorded was true when it was written.)*
 
 ```
 COBOL_MODERNIZER_RUN_LIVE_CLI_TESTS=1 JAVA_HOME=... \
-  pytest tests/system/test_hand_written_round_trip.py -q -s -k live
+  pytest tests/integration/test_hand_written_round_trip.py -q -s -k live
 1 passed in 164.37s
 ```
 
@@ -551,7 +551,7 @@ second diverging account, a different field, or a different amount all fail.
 **Both halves, with model-authored bodies:**
 
 ```
-COBOL_MODERNIZER_RUN_LIVE_CLI_TESTS=1 JAVA_HOME=...   pytest tests/system/test_hand_written_round_trip.py -q -s -k live
+COBOL_MODERNIZER_RUN_LIVE_CLI_TESTS=1 JAVA_HOME=...   pytest tests/integration/test_hand_written_round_trip.py -q -s -k live
 
 live round trip: 500 of 500 fields matched; 3 excluded by decision;
   wiring hand-written (ADR-0030), bodies model-authored
@@ -622,7 +622,7 @@ or a new provenance with an old `transact.dat` — would leave a directory whose
 two different runs and whose own record said otherwise. The regenerated provenance carries the three
 unchanged hashes verbatim, which is itself the byte-identity claim in the artifact.
 
-**Verification**: `pytest tests/system/test_cbtrn02c_oracle.py -q` → **4 passed**; the existing
+**Verification**: `pytest tests/unit/test_cbtrn02c_oracle.py -q` → **4 passed**; the existing
 oracle suites (`test_cobol_oracle_comparison`, `test_cobol_oracle_check`, `test_interest_oracle`) →
 **36 passed** against the regenerated fixture.
 
@@ -676,7 +676,7 @@ gained a case where the two disagree in both directions and this entry understat
 **What it rules out** is not a particular decomposition but every order-independent one: aggregation
 computes sums over a transaction set whose *membership* is what the ordering decides.
 
-**Verification**: `pytest tests/system/test_cbtrn02c_order_dependence.py -q` → **4 passed**,
+**Verification**: `pytest tests/unit/test_cbtrn02c_order_dependence.py -q` → **4 passed**,
 including a discrimination case — an acceptance check that accepted everything would satisfy the two
 central assertions without meaning anything, so the standalone check is shown to reject an
 impossible amount and accept an impossibly negative one.
@@ -695,7 +695,7 @@ reader, the writer, the working set, the step and the job were rendered from `de
 a plain `AnnotationConfigApplicationContext` ran the job to `COMPLETED`.
 
 ```
-pytest tests/system/test_cbtrn02c_round_trip.py -q   ->  4 passed (mvn verify inside)
+pytest tests/integration/test_cbtrn02c_round_trip.py -q   ->  4 passed (mvn verify inside)
 ```
 
 **This is what lifted ADR-0040's refusal.** That refusal existed because nothing could run such a
@@ -772,7 +772,7 @@ GnuCOBOL 3.1.2 reads the overpunch byte as digit `0` and drops the sign, `-std=i
 the carried digit is itself zero the magnitude survives, which is exactly why `CBACT04C` -- whose
 signed inputs all end in `{` or carry no overpunch -- is untouched.
 
-**Verification**: `pytest tests/system/test_overpunch_derivation.py -q` -> **23 passed** (twenty
+**Verification**: `pytest tests/unit/test_overpunch_derivation.py -q` -> **23 passed** (twenty
 hand-derived literals plus three structural checks). `./mvnw test -Dtest=CobolRecordTest` ->
 **16 passed**, the same twenty literals against the decoder that ships *inside every generated
 project*, which is what a migrated program reads its own input with.
@@ -895,7 +895,7 @@ ABORT: SB_SHAPE is [XXX], expected ACC, TCB or TRN
 **`CBACT04C` was re-verified first**, which was the condition on taking this at all:
 
 ```
-$ pytest tests/system/test_hand_written_round_trip.py -q -s
+$ pytest tests/integration/test_hand_written_round_trip.py -q -s
 round trip: 500 of 500 fields matched; 3 excluded by decision
 account half: 597 of 600 fields matched; 0 excluded by decision
 8 passed, 1 skipped in 57.42s
@@ -912,7 +912,7 @@ balance differing by exactly the uncredited interest.
 **`CBTRN02C` now agrees exactly:**
 
 ```
-$ pytest tests/system/test_cbtrn02c_round_trip.py -q
+$ pytest tests/integration/test_cbtrn02c_round_trip.py -q
 6 passed in 41.09s
 ```
 
@@ -962,7 +962,7 @@ transcription, which measures the wiring rather than the generated logic the cou
 **Command and real output** (scripted bodies, the half CI runs):
 
 ```
-$ pytest tests/system/test_cbtrn02c_round_trip.py -q -s
+$ pytest tests/integration/test_cbtrn02c_round_trip.py -q -s
 CBTRN02C transactions: 3144 of 3144 fields matched; 1 excluded by decision
 CBTRN02C accounts:     600 of 600 fields matched; 0 excluded by decision
 CBTRN02C balances:     400 of 400 fields matched; 0 excluded by decision

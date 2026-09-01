@@ -31,7 +31,7 @@ from cobol_modernizer.core.guardrails import wrap_untrusted_cobol
 from cobol_modernizer.core.model_client import call_model
 from cobol_modernizer.core.structured_output import strip_code_fence
 from cobol_modernizer.rendering.java_processor import render_processor
-from tests.evaluations.corpus import (
+from tests.evaluation.corpus import (
     CRITERIA,
     CRITERIA_BY_ID,
     DOWNSTREAM_BY_STEP,

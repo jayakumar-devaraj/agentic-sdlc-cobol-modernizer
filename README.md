@@ -163,7 +163,7 @@ signed amounts, and the zeros are the state before posting has run.
 tested pgvector storage layer with no production caller, because embeddings need a second vendor
 this environment has no credential for — and because nobody has shown retrieval would help a
 four-program corpus (`docs/adr/0016` decides both halves of that). And **output quality is evaluated by an
-instrument that is not yet reliable**: `tests/evaluations/` scores model-authored bodies against a
+instrument that is not yet reliable**: `tests/evaluation/` scores model-authored bodies against a
 committed corpus (`docs/adr/0024`), and across three billed runs `claude-opus-5` has never missed a
 defect a real JVM catches — but its false-positive rate is *not stable*, scoring 0.00 on one run and
 0.50 on another over identical input. Twice its disagreements turned out to be correct about the
@@ -301,7 +301,7 @@ What this repo *does* own is making sure that gate has something real to review:
 
 `design.json`'s full shape (and the CLI's own summary-only stdout contract, `DesignCliResult`) is
 formally schema'd — `schemas/design_document.schema.json`, generated from the Pydantic models and
-checked for drift in CI (`tests/system/test_schemas.py`), so an external consumer never has to
+checked for drift in CI (`tests/contract/test_schemas.py`), so an external consumer never has to
 trust a hand-written copy of the contract.
 
 ### What this design deliberately doesn't buy
@@ -389,7 +389,7 @@ re-run. CI is unaffected; its Postgres service container is fresh every run.
 
 ### The evaluation harness
 
-`tests/evaluations/` scores model-authored method bodies against a committed corpus, so translation
+`tests/evaluation/` scores model-authored method bodies against a committed corpus, so translation
 quality is a number that can be recomputed after a prompt edit rather than a measurement with a date
 on it (`docs/adr/0024`). It runs in the ordinary suite at no cost — the judge's model call sits
 behind an injectable seam, and the tests above exercise the prompt, the response contract and the
@@ -449,7 +449,7 @@ The benchmark is opt-in because it spends real subscription quota — **one call
 27 at the default `n=3` over nine cases: $2.40 measured**:
 
 ```bash
-COBOL_MODERNIZER_RUN_LIVE_CLI_TESTS=1 ./.venv/Scripts/python -m pytest tests/evaluations/test_judge_benchmark.py -q -s
+COBOL_MODERNIZER_RUN_LIVE_CLI_TESTS=1 ./.venv/Scripts/python -m pytest tests/evaluation/test_judge_benchmark.py -q -s
 ```
 
 Every other test in the repo is free.

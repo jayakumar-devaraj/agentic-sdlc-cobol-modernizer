@@ -35,8 +35,8 @@ from cobol_modernizer.graph.generate_pipeline import run_generate
 from cobol_modernizer.nodes.solution_architect import build_domain_entities
 from cobol_modernizer.nodes.spec_critic import critique_spec
 from cobol_modernizer.nodes.spec_extractor import extract_spec
+from tests.integration.test_hand_written_round_trip import _design_json, _scripted_author
 from tests.support.interest_design import FIXTURE_ROOT, PROGRAM
-from tests.system.test_hand_written_round_trip import _design_json, _scripted_author
 
 #: The largest `generate` prompt measured for `CBACT04C` on 2026-08-19, in characters. Recorded so
 #: the ceiling's derivation is checkable, and pinned with tolerance below rather than left as prose.

@@ -48,7 +48,7 @@ Closed by adding the **Maven Wrapper**, pinned to 3.9.16, with CI switched to `.
   an opaque binary in source control that nobody reviews and every scanner flags.
 - Verified: `./mvnw -B -ntp -version` resolves `Apache Maven 3.9.16` from
   `~/.m2/wrapper/dists`, downloading it on first use.
-- Three new invariants in `tests/system/test_target_template.py` — the version is an exact pin, no
+- Three new invariants in `tests/integration/test_target_template.py` — the version is an exact pin, no
   jar is committed, and **CI actually calls the wrapper rather than a bare `mvn`**, because pinning
   a version is pointless if the pipeline still runs whatever is on `PATH`.
 
@@ -289,7 +289,7 @@ independent recompute, and the teeth check — which noticed that R2's *rejected
 its expected one, i.e. that the row had stopped discriminating. Command:
 
 ```
-python -m pytest tests/system/test_interest_oracle.py -q
+python -m pytest tests/unit/test_interest_oracle.py -q
 → 3 failed, 9 passed   (with R2 mutated)
 → 12 passed            (restored)
 ```

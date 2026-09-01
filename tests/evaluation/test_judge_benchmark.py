@@ -56,8 +56,8 @@ import pytest
 
 from cobol_modernizer.core.model_client import collect_usage
 from cobol_modernizer.tools.tenant_repo import resolve_program
-from tests.evaluations.corpus import CASES, Ground
-from tests.evaluations.judge import (
+from tests.evaluation.corpus import CASES, Ground
+from tests.evaluation.judge import (
     CANDIDATE_JUDGES,
     DEFAULT_SAMPLES,
     BenchmarkSummary,

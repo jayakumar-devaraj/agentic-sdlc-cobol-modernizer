@@ -34,7 +34,7 @@ generated program and where its files happen to live.
 ## The three bounds ADR-0030 put on it
 
 1. **It never enters `templates/target-spring-boot-baseline/`.** It lives here, under
-   `tests/fixtures/`, and `tests/system/test_hand_written_round_trip.py` copies it into a throwaway
+   `tests/fixtures/`, and `tests/integration/test_hand_written_round_trip.py` copies it into a throwaway
    project. In the template it would silently join every generated project and make every future
    round-trip claim ambiguous.
 2. **Every result measured through it carries two qualifiers.** `describe_result` in that test

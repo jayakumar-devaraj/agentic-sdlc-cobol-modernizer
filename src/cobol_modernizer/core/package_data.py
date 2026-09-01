@@ -11,7 +11,7 @@ the package is still in the source tree and `parents[3]` still lands on the repo
 passed against a layout no consumer would ever have.
 
 `schemas/` deliberately stays at the repository root and is **not** package data. Its only readers
-are `scripts/generate_schemas.py` and `tests/system/test_schemas.py`; nothing in the CLI's runtime
+are `scripts/generate_schemas.py` and `tests/contract/test_schemas.py`; nothing in the CLI's runtime
 path opens it. Moving it would have been motion rather than a fix.
 """
 

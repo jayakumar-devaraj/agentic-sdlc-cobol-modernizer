@@ -35,7 +35,7 @@ dev = [
     # catalog as `Any`, which silently disables checking across the routing path -- the two
     # modules where a wrong type would pick the wrong model.
     "types-PyYAML>=6.0.12",
-    # Required by tests/system/test_packaging.py, which builds a real wheel. Listed here rather
+    # Required by tests/integration/test_packaging.py, which builds a real wheel. Listed here rather
     # than left to chance: that test skips when `build` is absent, and a guard that silently skips
     # is the decorative-check failure Open Issue 3 already cost this repo once.
     "build>=1.2.0",
@@ -61,11 +61,11 @@ where = ["src"]
 # should not silently produce an empty wheel again.
 #
 # One consequence worth knowing before "simplifying" this: a damage probe that deletes a line here
-# cannot fail. `tests/system/test_packaging.py` still guards the property that matters -- the files
+# cannot fail. `tests/integration/test_packaging.py` still guards the property that matters -- the files
 # are in the wheel and an installed copy can read them -- by inspecting the built artifact.
 #
 # `schemas/` is deliberately absent: nothing in the runtime path reads it -- only
-# `scripts/generate_schemas.py` and `tests/system/test_schemas.py` do.
+# `scripts/generate_schemas.py` and `tests/contract/test_schemas.py` do.
 [tool.setuptools.package-data]
 cobol_modernizer = [
     # PEP 561 marker. Without it a consumer's type checker ignores every annotation in this package
@@ -94,7 +94,7 @@ cobol_modernizer = [
 # established by running the 2x2 rather than by reading the docs. With a stale `SOURCES.txt` the
 # manifest path reintroduces all 26 files and this table has no effect; with a fresh one and this
 # table removed, all 26 come back. Both levers are required, so the wheel fixture in
-# `tests/system/test_packaging.py` clears egg-info and
+# `tests/integration/test_packaging.py` clears egg-info and
 # `test_the_wheel_carries_nothing_the_repository_does_not` guards the result. See ADR-0058.
 [tool.setuptools.exclude-package-data]
 cobol_modernizer = [

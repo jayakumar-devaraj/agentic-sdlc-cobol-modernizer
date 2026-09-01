@@ -7,7 +7,7 @@ rules sections were written and verified by hand, paragraph by paragraph, agains
 `CBACT04C.cbl` source (`tests/fixtures/tenant_repo_sample/app/cbl/CBACT04C.cbl`) and its five real
 copybooks. The Field reference and Flagged for human review sections are generated verbatim by
 `render_known_facts` against that same real fixture, not retyped by hand — see
-`tests/system/test_golden_fixture.py`, which asserts this file is fidelity-clean
+`tests/unit/test_golden_fixture.py`, which asserts this file is fidelity-clean
 (`compute_fidelity_issues(...) == []`) against a live `extract_field_mappings`/`extract_paragraphs`
 run every time the test suite runs, so this fixture cannot silently drift from the real pipeline's
 own deterministic output.

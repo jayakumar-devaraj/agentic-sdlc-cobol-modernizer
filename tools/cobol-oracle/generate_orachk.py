@@ -6,7 +6,7 @@ the program are maintained separately, a corrected row leaves ORACHK asserting v
 exist -- and it would still report agreement, which is worse than not checking at all.
 
 So the table is the single source and the program is derived from it, with
-`tests/system/test_cobol_oracle_check.py` asserting the committed file is exactly what this script
+`tests/unit/test_cobol_oracle_check.py` asserting the committed file is exactly what this script
 produces. That is the same drift-check idiom the repo already applies to its JSON schemas.
 
 Run: python tools/cobol-oracle/generate_orachk.py

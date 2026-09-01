@@ -43,7 +43,7 @@
   <properties>
     <!--
       Java 25 (ADR-0034). maven.compiler.release is set explicitly as well as
-      java.version so the pin is greppable and so tests/system/test_target_template.py can assert
+      java.version so the pin is greppable and so tests/integration/test_target_template.py can assert
       it without knowing how the Spring Boot parent wires its own property through.
 
       The `enable-preview` compiler flag stays OFF, permanently, and is deliberately absent rather

@@ -144,7 +144,7 @@ jobs:
         # never happen instead is COBOL source text being read as instructions rather than
         # data — see .claude/agents/development.md.
         #
-        # This step used to check only that tests/system/test_guardrails.py *existed* if
+        # This step used to check only that tests/contract/test_guardrails.py *existed* if
         # spec_extractor.py did, and its comment still said no node read COBOL source. Four do.
         # It now runs the boundary section of that module, which asserts the real property
         # against the prompt each node actually sends — captured through the node's own injected
@@ -157,7 +157,7 @@ jobs:
         #
         # Deliberately run again after the full suite above: a boundary regression should be a
         # distinctly named red, not one line among eleven hundred. It costs under a second.
-        run: pytest tests/system/test_guardrails.py -q
+        run: pytest tests/contract/test_guardrails.py -q
 
   # Compiles and tests src/cobol_modernizer/data/templates/target-spring-boot-baseline on the exact JDK it pins.
   # ADR-0034 makes this a gate rather than an intention: the Java 25 risk is not the language but

@@ -140,23 +140,23 @@ running one**; the two estimates made so far were wrong by 38% and by the wrong 
 
 ```bash
 # The judge benchmark: one call per case per run. Nine cases, so 27 at the default n=3 (~$2.40).
-COBOL_MODERNIZER_RUN_LIVE_CLI_TESTS=1 ./.venv/Scripts/python -m pytest tests/evaluations/test_judge_benchmark.py -q -s
+COBOL_MODERNIZER_RUN_LIVE_CLI_TESTS=1 ./.venv/Scripts/python -m pytest tests/evaluation/test_judge_benchmark.py -q -s
 
 # Cheaper confirmation: n=2, 18 calls (~$1.80). Never below 2 -- one sample is the defect ADR-0045 fixed.
-COBOL_MODERNIZER_RUN_LIVE_CLI_TESTS=1 COBOL_MODERNIZER_JUDGE_SAMPLES=2 ./.venv/Scripts/python -m pytest tests/evaluations/test_judge_benchmark.py -q -s
+COBOL_MODERNIZER_RUN_LIVE_CLI_TESTS=1 COBOL_MODERNIZER_JUDGE_SAMPLES=2 ./.venv/Scripts/python -m pytest tests/evaluation/test_judge_benchmark.py -q -s
 
 # build_validator's discrimination benchmark (ADR-0057). Eight cases, so 24 calls at n=3.
 # **~$0.55, and that is an over-estimate**: it is priced from the node's declared token profile,
 # which its own routing entry calls "a placeholder, not a measurement". Measuring that profile is
 # one of the things the run produces. Compiles each case with real Maven first -- free, but it
 # makes the run several minutes longer than the call count suggests.
-COBOL_MODERNIZER_RUN_LIVE_CLI_TESTS=1 ./.venv/Scripts/python -m pytest tests/evaluations/test_build_validator_benchmark.py -q -s
+COBOL_MODERNIZER_RUN_LIVE_CLI_TESTS=1 ./.venv/Scripts/python -m pytest tests/evaluation/test_build_validator_benchmark.py -q -s
 
 # Cheaper: n=2, 16 calls (~$0.37). Same floor as above -- never 1.
-COBOL_MODERNIZER_RUN_LIVE_CLI_TESTS=1 COBOL_MODERNIZER_VALIDATOR_SAMPLES=2 ./.venv/Scripts/python -m pytest tests/evaluations/test_build_validator_benchmark.py -q -s
+COBOL_MODERNIZER_RUN_LIVE_CLI_TESTS=1 COBOL_MODERNIZER_VALIDATOR_SAMPLES=2 ./.venv/Scripts/python -m pytest tests/evaluation/test_build_validator_benchmark.py -q -s
 
 # A model-authored round trip: one processor step plus heal attempts (~$0.35 measured for CBTRN02C).
-COBOL_MODERNIZER_RUN_LIVE_CLI_TESTS=1 ./.venv/Scripts/python -m pytest tests/system/test_cbtrn02c_round_trip.py -q -s
+COBOL_MODERNIZER_RUN_LIVE_CLI_TESTS=1 ./.venv/Scripts/python -m pytest tests/integration/test_cbtrn02c_round_trip.py -q -s
 ```
 
 Regenerating the oracle costs nothing but needs Docker:
