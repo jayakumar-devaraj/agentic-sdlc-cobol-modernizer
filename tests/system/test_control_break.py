@@ -34,14 +34,14 @@ from cobol_modernizer.nodes.spec_critic import critique_spec
 from cobol_modernizer.nodes.spec_extractor import extract_spec
 from cobol_modernizer.parsing.control_break import extract_control_breaks, landing_field
 from cobol_modernizer.rendering.java_job import aggregation_blockers, plan_steps
-from tests.system.test_account_break_posting import POSTING
-from tests.system.test_account_break_posting import STEP as POSTING_STEP
-from tests.system.test_interest_equivalence import (
+from tests.support.interest_design import (
     COMPLETE_STEP,
     COMPOSITE,
     OUTPUT_COMPOSITE,
     STEP,
 )
+from tests.system.test_account_break_posting import POSTING
+from tests.system.test_account_break_posting import STEP as POSTING_STEP
 
 FIXTURE_ROOT = Path(__file__).resolve().parents[1] / "fixtures" / "tenant_repo_sample"
 CBL = FIXTURE_ROOT / "app" / "cbl"

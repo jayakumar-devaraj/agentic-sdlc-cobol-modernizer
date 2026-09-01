@@ -39,14 +39,14 @@ from cobol_modernizer.rendering.java_aggregation import (
 )
 from cobol_modernizer.rendering.java_job import aggregating_reader_class_name as job_side_name
 from cobol_modernizer.rendering.java_job import aggregation_source
-from tests.system.test_account_break_posting import POSTING
-from tests.system.test_account_break_posting import STEP as POSTING_STEP
-from tests.system.test_interest_equivalence import (
+from tests.support.interest_design import (
     COMPLETE_STEP,
     COMPOSITE,
     OUTPUT_COMPOSITE,
     STEP,
 )
+from tests.system.test_account_break_posting import POSTING
+from tests.system.test_account_break_posting import STEP as POSTING_STEP
 
 FIXTURE_ROOT = Path(__file__).resolve().parents[1] / "fixtures" / "tenant_repo_sample"
 READERS = "com.modernized.batch.reader"

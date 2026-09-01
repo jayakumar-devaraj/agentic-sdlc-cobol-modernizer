@@ -68,6 +68,17 @@ from cobol_modernizer.rendering.java_job import (
 from cobol_modernizer.rendering.java_reader import reader_class_name, render_item_reader
 from cobol_modernizer.rendering.java_writer import render_item_writer, writer_class_name
 from cobol_modernizer.tools.local_compiler import compile_project
+from tests.support.interest_design import (
+    _COMPLETE_BODY,
+    _CORRECT_BODY,
+    _IMPORTS,
+    COMPLETE_STEP,
+    COMPOSITE,
+    FIXTURE_ROOT,
+    OUTPUT_COMPOSITE,
+    PROGRAM,
+    STEP,
+)
 from tests.system.test_account_break_posting import _FAITHFUL as _POSTING_BODY
 from tests.system.test_account_break_posting import _IMPORTS as _POSTING_IMPORTS
 from tests.system.test_account_break_posting import POSTING
@@ -81,17 +92,6 @@ from tests.system.test_cobol_oracle_comparison import (
     load_account_oracle,
     load_oracle,
     parse_fixed_records,
-)
-from tests.system.test_interest_equivalence import (
-    _COMPLETE_BODY,
-    _CORRECT_BODY,
-    _IMPORTS,
-    COMPLETE_STEP,
-    COMPOSITE,
-    FIXTURE_ROOT,
-    OUTPUT_COMPOSITE,
-    PROGRAM,
-    STEP,
 )
 
 HANDWRITTEN = Path(__file__).resolve().parents[1] / "fixtures" / "handwritten" / "CBACT04C"
