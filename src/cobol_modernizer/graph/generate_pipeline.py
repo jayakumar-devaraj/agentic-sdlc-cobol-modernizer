@@ -32,6 +32,7 @@ import logging
 import shutil
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import Any
 
 from cobol_modernizer.core.complexity import ComplexityTier
 from cobol_modernizer.core.contracts import (
@@ -274,8 +275,11 @@ def heal_step(
     """
     # `None` means "use the node's own default", so this module never reaches into another
     # module's privates to name a live model call it does not own.
-    author_kwargs = {"author": author} if author is not None else {}
-    advise_kwargs = {"advise": advise} if advise is not None else {}
+    # `dict[str, Any]`, not the inferred value type: a `**` splat of a narrowly-typed dict is checked
+    # against *every* parameter it could name, so the inferred `dict[str, Callable[...]]` was
+    # reported against `tier`, `project_dir` and the rest rather than against `author`/`advise`.
+    author_kwargs: dict[str, Any] = {"author": author} if author is not None else {}
+    advise_kwargs: dict[str, Any] = {"advise": advise} if advise is not None else {}
 
     class_name = ""
     relative_path = ""

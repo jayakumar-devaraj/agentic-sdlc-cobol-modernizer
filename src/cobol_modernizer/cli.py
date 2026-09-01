@@ -229,6 +229,10 @@ def main(argv: list[str] | None = None) -> int:
         # `root=True` joins a TRACEPARENT if control-plane handed one in; without one this is the
         # trace's root, which is the right shape for a direct invocation.
         with tracing.span(f"cobol-modernizer.{args.command}", root=True) as span:
+            # Annotated rather than inferred: without this the `design` branch fixes the type and
+            # the `generate` branch reads as an error, even though the only thing done with either
+            # below is `.model_dump_json()`.
+            result: DesignCliResult | GenerateCliResult
             if args.command == "design":
                 result, exit_code = _run_design_command(args)
             else:
