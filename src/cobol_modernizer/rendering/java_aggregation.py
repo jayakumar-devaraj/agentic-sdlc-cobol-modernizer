@@ -205,11 +205,11 @@ import org.springframework.batch.infrastructure.item.ItemReader;
 /**
  * {class_name} -- one item per control-break group, for step "{step.step_name}".
  *
- * <p>Rendered from the control break {step.control_break.performed_paragraph} runs at
- * ({step.control_break.break_key_field}, line {step.control_break.test_line}). The COBOL accumulates
- * {step.control_break.accumulated_from_field} into {step.control_break.accumulator_field} and moves
- * every one of them into {step.control_break.landing_field}, so the sum of a group's
- * {step.control_break.landing_field} is that accumulator at the break -- which is what makes this a
+ * <p>Rendered from the control break {control.performed_paragraph} runs at
+ * ({control.break_key_field}, line {control.test_line}). The COBOL accumulates
+ * {control.accumulated_from_field} into {control.accumulator_field} and moves
+ * every one of them into {control.landing_field}, so the sum of a group's
+ * {control.landing_field} is that accumulator at the break -- which is what makes this a
  * re-ordering of the original rather than a re-implementation (ADR-0027).
  *
  * <p>Groups arrive in key order, matching a program that reads its driving file by key.

@@ -102,7 +102,7 @@ def extract_control_breaks(source_text: str) -> list[ControlBreak]:
     the conjunction is the safety.
     """
     lines = _iter_code_lines(source_text)
-    adds = {}
+    adds: dict[str, tuple[str, int]] = {}
     for line_no, text in lines:
         match = _ADD_RE.match(text.strip())
         if match:

@@ -82,6 +82,20 @@ jobs:
       - name: Lint
         run: ruff check src/ tests/
 
+      # A step in `test`, deliberately, rather than a job of its own. The branch ruleset requires
+      # exactly one context -- `test` -- so a separate `types` job would report green and gate
+      # nothing until the ruleset was edited too, and a job rename is what leaves protection
+      # waiting on a context nothing reports.
+      #
+      # Bare `mypy`: the files to check are `[tool.mypy] files` in pyproject.toml, so the command
+      # and a local run cannot disagree about scope.
+      #
+      # This gate is what `src/cobol_modernizer/py.typed` claims. The marker tells a consumer's
+      # type checker that these annotations are meaningful; without something enforcing that on
+      # every PR the claim decays on the first unchecked merge. See ADR-0061.
+      - name: Type-check
+        run: mypy
+
       - name: Run tests with coverage
         # Floor matches agentic-sdlc-control-plane's convention: set at what a real run
         # produces, so it can only ratchet up, never silently regress.
