@@ -51,6 +51,32 @@ changed behaviour twice.)*
   **15 hours** and reported a failure that passed in 43 seconds when run alone. **CI is the authority
   on a PR** — its test job takes 7–9 minutes.
 
+### Every environment variable this repo reads
+
+**Nothing loads a `.env` file** — there is no `python-dotenv` dependency, so these are exported in
+the shell or set by the invoking process. That is also why there is no `.env.example`: it would be a
+template for a mechanism that does not exist, and `.gitignore`'s `.env.*` rule would need a negation
+to let it exist at all. Every variable is optional and has the default shown.
+
+| Variable | Default | What it does |
+|---|---|---|
+| `COBOL_MODERNIZER_MODEL_BACKEND` | `claude_cli` | `claude_cli` or `anthropic_sdk`. Any other value is rejected, not silently defaulted. |
+| `ANTHROPIC_API_KEY` | — | Only read by the `anthropic_sdk` backend. The default backend needs no key (ADR-0013). |
+| `COBOL_MODERNIZER_LLM_TIMEOUT` | `300` | Per-request timeout, seconds. |
+| `COBOL_MODERNIZER_LLM_MAX_ATTEMPTS` | `5` | Transport retries. **Not** the heal cap — `MAX_HEAL_ATTEMPTS` is 3 and bounds something unrelated; ADR-0013 records the failure from confusing the two. |
+| `COBOL_MODERNIZER_MAX_MODEL_CALLS` | `32` | Per-run call ceiling. Derived: 28 is the worst legitimate four-program `generate` run, 32 leaves margin. Re-derive after a real one. |
+| `COBOL_MODERNIZER_MAX_TOTAL_TOKENS` | `1000000` | Per-run token ceiling. Its own source comment calls it **a placeholder derived from placeholder inputs** — roughly 1.7× the larger estimated run. |
+| `COBOL_MODERNIZER_MAX_CONCURRENCY` | `4` | Concurrent program branches in the `design` graph. |
+| `OTEL_EXPORTER_OTLP_TRACES_ENDPOINT` | — | **Tracing is off unless one of the two endpoint variables is set** (ADR-0060). Checked first. |
+| `OTEL_EXPORTER_OTLP_ENDPOINT` | — | Fallback endpoint, used when the traces-specific one is unset. |
+| `OTEL_SERVICE_NAME` | `cobol-modernizer` | Service name on emitted spans. |
+| `OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGE_CONTENT` | true | Set falsey to keep prompt/response bodies off spans. **Tenant COBOL reaches a collector otherwise.** |
+| `TRACEPARENT` / `TRACESTATE` | — | Injected by the caller to join control-plane's trace. Set by the invoking process, not by hand. |
+| `COBOL_MODERNIZER_RUN_LIVE_CLI_TESTS` | unset | `1` lets `live_claude_cli` tests actually run. **Spends real money** — see "Running the things that cost money". |
+
+`JAVA_HOME` is above rather than in this table: it is not read by this repo's Python at all, it is
+required by the Maven builds the compile loop drives.
+
 ## Traps
 
 Ordered by how often they bite, not by severity.
