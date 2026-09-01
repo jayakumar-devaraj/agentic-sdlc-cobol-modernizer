@@ -95,7 +95,7 @@ DEFAULT_MAX_OUTPUT_TOKENS = 32_000
 #: and available on both backends.
 #:
 #: **Where the number comes from.** Measured, not guessed. The largest real `generate` prompt is
-#: **85,215 characters** for `CBACT04C` (`tests/system/test_context_budget.py` re-measures it on
+#: **85,215 characters** for `CBACT04C` (`tests/integration/test_context_budget.py` re-measures it on
 #: every run, so this comment cannot quietly go stale), and the `design` side measured 81,975 at
 #: step 37g. The ceiling is ~7x that: enough headroom for a Track B program several times larger
 #: than anything in Track C, and low enough that unbounded growth -- an accumulating repair prompt,

@@ -4,7 +4,7 @@ Run this after any change to core/contracts.py's models:
 
     ./.venv/Scripts/python scripts/generate_schemas.py
 
-tests/system/test_schemas.py asserts the committed files match what this produces, so CI fails
+tests/contract/test_schemas.py asserts the committed files match what this produces, so CI fails
 if a model changes without a matching regeneration -- see core/schema_export.py for the shared
 filename-to-model mapping this script and that test both use.
 """

@@ -142,7 +142,7 @@ def check_unsupported_constructs_carried_forward(
     includes every sibling field's own raw declaration line (`cobol_parser`'s `sibling_text`), so
     one flagged field's name can coincidentally appear inside *another* flagged field's own reason
     text even if the narration never mentions it directly. Accepted as a known limitation of a
-    cheap, real check, not silently assumed away -- see `tests/system/test_spec_critic.py`.
+    cheap, real check, not silently assumed away -- see `tests/unit/test_spec_critic.py`.
     """
     missing = []
     for field in unsupported_fields:

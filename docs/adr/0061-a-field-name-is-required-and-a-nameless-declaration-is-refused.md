@@ -21,7 +21,7 @@ than assumed:
 `data_loader` called `.upper()` on it and passed it to `_column_name`, and `solution_architect`
 passed it into `_to_camel_case` and into a `str` parameter of `DomainField`. The optional type
 described a state the code had no branch for, so the declaration and the program disagreed and
-nothing said so. `tests/system/test_numeric_field_coverage.py` had already written
+nothing said so. `tests/unit/test_numeric_field_coverage.py` had already written
 `assert mapping.field_name is not None` — the invariant was believed and asserted, just not
 expressible.
 
@@ -71,7 +71,7 @@ were the same defect; the checker found it before a user did.
 `PicMapping` is reachable from the design document, so `schemas/design_document.schema.json` moved
 with it: `field_name` goes from `anyOf: [string, null]` with `default: null` to a plain `string`,
 and joins `required`. CI caught this, not the local run — the modules edited were not the modules
-affected, and `tests/system/test_schemas.py`'s drift check (ADR-0008) is the only thing that
+affected, and `tests/contract/test_schemas.py`'s drift check (ADR-0008) is the only thing that
 compares the committed schema against the live models. That check earned its place here. No
 committed artifact carried a null `field_name`, and no producer ever emitted one, so nothing
 downstream has to be migrated; a consumer validating against the new schema is strictly stricter

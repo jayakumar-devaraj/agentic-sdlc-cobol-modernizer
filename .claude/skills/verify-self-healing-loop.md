@@ -3,7 +3,7 @@ name: verify-self-healing-loop
 description: Run the real functional verification for the self-healing compile loop — real injected errors against a real Maven build, not mocked — and record it in the verification report's compile-loop spoke.
 ---
 
-Run `tests/system/test_generate_pipeline.py` against a real Maven build (not a mocked `mvn` call —
+Run `tests/integration/test_generate_pipeline.py` against a real Maven build (not a mocked `mvn` call —
 see `.claude/agents/qa.md` on why a mock doesn't prove this). **Export `JAVA_HOME` first**: without
 it the build fails as *"build failed, zero diagnostics"*, which arrives downstream looking like a
 loop defect rather than a missing toolchain — see `docs/development-environment.md`.

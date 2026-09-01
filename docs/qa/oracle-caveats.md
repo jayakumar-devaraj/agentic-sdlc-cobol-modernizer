@@ -8,7 +8,7 @@ wrote under GnuCOBOL 3.1.2 (ADR-0028). GnuCOBOL is not the tenant's compiler, so
 representation — sat in prose for four revisions while every downstream document treated the oracle
 as ground truth, and it came due as seven wrong decisions in `CBTRN02C`'s round trip (ADR-0043,
 audit G33). This file exists so that cannot happen quietly again: every caveat the provenance names
-has a row here, and `tests/system/test_oracle_caveats.py` fails if one does not.
+has a row here, and `tests/unit/test_oracle_caveats.py` fails if one does not.
 
 Each row is one of two things, and says which:
 

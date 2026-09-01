@@ -1,7 +1,7 @@
 # Real COBOL/copybook source fetched verbatim from carddemo-tenant-service must stay byte-exact
 # on every machine, regardless of that machine's own core.autocrlf setting -- these fixtures are
 # verified byte-for-byte against the real repo's git blob SHAs (see
-# tests/system/test_tenant_repo.py's module docstring), and that verification is meaningless if
+# tests/unit/test_tenant_repo.py's module docstring), and that verification is meaningless if
 # git silently normalizes line endings on checkout/commit. `-text` disables any line-ending
 # conversion entirely: some real upstream files are LF-only, at least one (CODATECN.cpy) is
 # genuinely CRLF -- both must round-trip through git unchanged.

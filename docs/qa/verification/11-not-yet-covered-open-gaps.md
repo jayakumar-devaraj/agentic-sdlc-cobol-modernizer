@@ -27,7 +27,7 @@
   consumer sits behind those gates (ADR-0005's amendment note).
 - *(narrowed 2026-08-11, deliberately not closed — step 44 / ADR-0024)* The entry above ends **"the
   LLM-as-judge harness that would close this is Milestone C4."** That harness now exists
-  (`tests/evaluations/`, G9 closed) and **it has never been run against a real model**, so the gap it
+  (`tests/evaluation/`, G9 closed) and **it has never been run against a real model**, so the gap it
   was written for is smaller and still open. What changed: there is now a committed corpus, a rubric
   of four criteria each traceable to a real defect, and scoring shown to discriminate — a scripted
   judge that passes everything scores 0.00 detection, one that fails everything scores 1.00 false

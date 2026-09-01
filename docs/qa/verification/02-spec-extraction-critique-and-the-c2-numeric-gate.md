@@ -37,7 +37,7 @@ are already verified against, not a synthetic stand-in:
   `config/model_routing.yaml` and loads the real (non-stub) system prompt content, confirmed via a
   fake `narrate` callable that captures what it was called with.
 
-**Command**: `pytest tests/system/test_spec_extractor.py -v`
+**Command**: `pytest tests/unit/test_spec_extractor.py -v`
 **Result**: 9/9 passed.
 
 ### `nodes/spec_critic.py` — real spec_extractor output for CBACT04C, faithful and corrupted
@@ -76,7 +76,7 @@ negative test proves exactly one failure mode:
   real (non-stub) system prompt content, confirmed via a fake `critique` callable that captures
   what it was called with.
 
-**Command**: `pytest tests/system/test_spec_critic.py -v`
+**Command**: `pytest tests/unit/test_spec_critic.py -v`
 **Result**: 21/21 passed.
 
 ### `core/source_units.py` — real CBACT04C source-unit ordering
@@ -87,7 +87,7 @@ text — extracted from `nodes/spec_extractor.py`'s own private helper once `nod
 needed the identical behavior (no behavior change; `spec_extractor`'s own tests still pass
 unmodified after the extraction).
 
-**Command**: `pytest tests/system/test_source_units.py -v`
+**Command**: `pytest tests/unit/test_source_units.py -v`
 **Result**: 2/2 passed.
 
 ### `tests/fixtures/golden/CBACT04C/spec.md` — hand-verified golden fixture (plan step 32)
@@ -116,7 +116,7 @@ live model output to regress against yet (see "Not yet covered" below). The gate
 clause is met for all four programs by the exhaustive cross-check entry below; this entry closes
 its "golden fixture matches exactly" clause for `CBACT04C` specifically.
 
-**Command**: `pytest tests/system/test_golden_fixture.py -v`
+**Command**: `pytest tests/unit/test_golden_fixture.py -v`
 **Result**: 7/7 passed.
 
 ### `core/contracts.py` — `gate_items` against real CBACT04C spec + critique output
@@ -144,7 +144,7 @@ established pattern):
   separately, so the two can't go stale relative to each other), and `DesignDocument` round-trips
   losslessly through `model_dump_json()`/`model_validate_json()`.
 
-**Command**: `pytest tests/system/test_contracts.py -v`
+**Command**: `pytest tests/unit/test_contracts.py -v`
 **Result**: 12/12 passed.
 
 ### `schemas/*.schema.json` — generated from the live Pydantic models, drift-checked
@@ -157,7 +157,7 @@ real mismatch, not just tautologically pass: `schemas/design_cli_result.schema.j
 to `{"tampered": true}`, the test was re-run and failed with a clear message naming the stale file,
 then the real file was regenerated via `scripts/generate_schemas.py` and the test passed again.
 
-**Command**: `pytest tests/system/test_schemas.py -v`
+**Command**: `pytest tests/contract/test_schemas.py -v`
 **Result**: 3/3 passed.
 
 ### Real tenant-repo fixtures for the other three Track C programs, and a real corruption caught
@@ -189,7 +189,7 @@ none silently mapped). `CBTRN02C` (26 paragraphs, 5 copybooks — the largest Tr
 `CBCUS01C` (5 paragraphs — the smallest) both parse and map cleanly, with real field-level spot
 checks (`CUST-ID`, `DALYTRAN-AMT`, etc.) matching their real `PIC` clauses.
 
-**Command**: `pytest tests/system/test_tenant_repo.py tests/system/test_spec_extractor_track_c_programs.py -v`
+**Command**: `pytest tests/unit/test_tenant_repo.py tests/unit/test_spec_extractor_track_c_programs.py -v`
 **Result**: 28/28 passed.
 
 ### `spec_critic` against the other three real Track C programs
@@ -212,7 +212,7 @@ fully absent from a faithful narration to test against directly). A corrupted fi
 (`CUST-ID` in `CBCUS01C`, `ACCT-CURR-BAL` in `CBACT01C`, `DALYTRAN-AMT` in `CBTRN02C`) is correctly
 detected for each program.
 
-**Command**: `pytest tests/system/test_spec_critic_track_c_programs.py -v`
+**Command**: `pytest tests/unit/test_spec_critic_track_c_programs.py -v`
 **Result**: 12/12 passed.
 
 ### Milestone C2's numeric-field gate, exhaustively, for all four Track C programs
@@ -266,7 +266,7 @@ the parser was extended — which is what happened; ADR-0011 closed it and the t
 **Milestone C2's numeric-field gate is now met for all four programs across every section they
 declare fields in.**
 
-**Command**: `pytest tests/system/test_numeric_field_coverage.py -v`
+**Command**: `pytest tests/unit/test_numeric_field_coverage.py -v`
 **Result**: 16/16 passed.
 
 ---
@@ -276,7 +276,7 @@ declare fields in.**
 Twenty tests covered `core/guardrails.py` as a unit — wrap, raise on delimiter forgery, flag
 injection phrasings without flagging ordinary comments — and none covered the property the
 repository depends on: that no tenant text reaches a model **outside** the block the model is told
-is inert data. What stood in for it was a CI step asserting `tests/system/test_guardrails.py`
+is inert data. What stood in for it was a CI step asserting `tests/contract/test_guardrails.py`
 existed as a file.
 
 Each of the four prompt-building nodes is now run through its real entrypoint with only the model
@@ -310,7 +310,7 @@ that same artifact. Pinned by a test recording the current state rather than des
 fix edits a live prompt, and a prompt edit wants a billed critic run to say the node still
 discriminates. ADR-0052 states what would be wrong if it is never fixed.
 
-**Command**: `pytest tests/system/test_guardrails.py -q`
+**Command**: `pytest tests/contract/test_guardrails.py -q`
 **Result**: 27 passed in 0.34s. CI runs that exact command as a named step, replacing the
 file-existence check.
 
@@ -323,7 +323,7 @@ judges under `<PROGRAM>-spec`, and `prompts/registry/spec_critic/v1_1_0.md` — 
 in this registry** — says so to the model. The question that gated the change was whether the node
 still catches a wrong narration once the text it judges arrives delimited.
 
-**Command**: `COBOL_MODERNIZER_RUN_LIVE_CLI_TESTS=1 pytest tests/system/test_critic_discrimination.py -q -s`
+**Command**: `COBOL_MODERNIZER_RUN_LIVE_CLI_TESTS=1 pytest tests/unit/test_critic_discrimination.py -q -s`
 **Result**: **7 passed in 556.93s (9m16s)** — four free, three billed, four model calls, ~$0.56 at
 the per-call costs measured on 2026-08-08.
 
@@ -346,7 +346,7 @@ looked like a real result.
 **What this run did not leave, and the harness defect that explains it.** The confidence scores
 themselves were not recorded. This module printed them only inside an assertion message, which does
 not render when the assertion holds, so a passing run left nothing behind.
-`tests/evaluations/test_judge_benchmark.py` has carried the rule in its own comment since it was
+`tests/evaluation/test_judge_benchmark.py` has carried the rule in its own comment since it was
 written — *printed so a real run leaves the artifact the verification report needs, whether or not
 the assertions below pass* — and this module never adopted it. It does now: `_parsed_and_printed`
 prints the score distribution, token counts and notional cost on every call, plus the rationale of
@@ -371,9 +371,9 @@ invisible to a green suite.
 **Command**, run on the branch before the ADR was written:
 
 ```
-.venv/Scripts/python.exe -m pytest tests/system/test_structured_output.py \
-    tests/system/test_spec_critic.py tests/system/test_solution_architect.py \
-    tests/system/test_modernization_engineer.py tests/system/test_build_validator.py -q
+.venv/Scripts/python.exe -m pytest tests/unit/test_structured_output.py \
+    tests/unit/test_spec_critic.py tests/unit/test_solution_architect.py \
+    tests/unit/test_modernization_engineer.py tests/integration/test_build_validator.py -q
 ```
 
 ### Probe 1 — the boundary property, which failed on the first real node
@@ -440,7 +440,7 @@ untrusted text reaches a model only inside the block it is told is inert data �
 **Command:**
 
 ```
-.venv/Scripts/python.exe -m pytest tests/system/test_guardrails.py -q
+.venv/Scripts/python.exe -m pytest tests/contract/test_guardrails.py -q
 ```
 
 **Result: 30 passed** (was 27). The boundary section now covers **six prompts**, not four:

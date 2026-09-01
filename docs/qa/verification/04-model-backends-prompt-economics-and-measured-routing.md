@@ -46,7 +46,7 @@ otherwise regress silently: one asserts `Known Facts < source < narration` and t
 is the tail, the other asserts the critic prompt literally `startswith` the extractor's captured
 real prompt and that the shared span exceeds half the total.
 
-**Command**: `pytest tests/system/test_spec_critic.py -v`
+**Command**: `pytest tests/unit/test_spec_critic.py -v`
 **Result**: 23/23 passed (21 pre-existing + 2 new ordering tests).
 
 **Open, deliberately not claimed**: the reorder itself is unbenchmarked against a live model. The
@@ -113,7 +113,7 @@ stops at `MAX_TRANSPORT_ATTEMPTS` rather than running forever. Backoff is confir
 actually jittered (30 samples, all distinct values, each equal to what was really slept).
 
 **A real accident, recorded rather than quietly fixed.** Changing the default backend to
-`claude_cli` did **not** fail `tests/system/test_cli_design.py`. Those tests fake
+`claude_cli` did **not** fail `tests/unit/test_cli_design.py`. Those tests fake
 `anthropic.Anthropic`, which is no longer the default path, so they silently began spawning real
 `claude` subprocesses against a live subscription and the suite hung. A test that quietly costs
 money and calls a live model is worse than one that fails. `tests/conftest.py` now pins the backend
@@ -125,7 +125,7 @@ the old default becomes a silent pass-through**, and a green suite will not say 
 100% module coverage for the first time. Their `_default_*` bodies used to be the untested live-API
 calls; they are now one-liners delegating to `call_model`, which the SDK-backend tests exercise.
 
-**Command**: `pytest tests/system/test_model_client.py -v`
+**Command**: `pytest tests/integration/test_model_client.py -v`
 **Result**: 25 passed, 1 skipped (the live test, unless opted in); with the opt-in, 26 passed.
 
 ### Bounded fan-out — the concurrency cap (plan pillar 25)
@@ -136,7 +136,7 @@ cap that is defined but never passed to `invoke()` would still satisfy a constan
 being the exact bug worth catching. Confirmed falsifiable: removing the `config={"max_concurrency":
 ...}` argument makes all 8 branches run at once and the test fails naming that count.
 
-**Command**: `pytest tests/system/test_design_graph.py -v`
+**Command**: `pytest tests/unit/test_design_graph.py -v`
 **Result**: 12/12 passed.
 
 ### Complexity-based routing — measured, not assumed (ADR-0014)
@@ -179,7 +179,7 @@ Per-tier ceilings now sit above observed output, and
 `test_real_config_ceilings_clear_every_observed_output_length` asserts that against the measured
 figures.
 
-**Command**: `pytest tests/system/test_complexity.py tests/system/test_model_routing.py tests/system/test_cli_design.py -v`
+**Command**: `pytest tests/unit/test_complexity.py tests/unit/test_model_routing.py tests/unit/test_cli_design.py -v`
 **Result**: 71/71 passed.
 
 ### `spec_critic` — does it actually catch a wrong narration, and is the cheap model enough?
@@ -242,7 +242,7 @@ model output, valuable because it is what the pipeline really produces.
   thinking, not answer.** The planned "tighten the critic prompt" work was cancelled as addressing
   the wrong 10%.
 
-**Command**: `pytest tests/system/test_critic_discrimination.py -v` (add
+**Command**: `pytest tests/unit/test_critic_discrimination.py -v` (add
 `COBOL_MODERNIZER_RUN_LIVE_CLI_TESTS=1` for the billed half)
 **Result**: 4 passed, 3 skipped without the opt-in; 7 passed with it.
 
@@ -284,7 +284,7 @@ scored 4/6 when it was. With `verified_for` enforced, **every `spec_extractor` t
 Opus 5** and `CBCUS01C` costs more than before. Restoring the saving is a benchmark on a *simple*
 program, not a code change.
 
-**Command**: `pytest tests/system/test_model_catalog.py tests/system/test_model_routing.py -v`
+**Command**: `pytest tests/unit/test_model_catalog.py tests/unit/test_model_routing.py -v`
 **Result**: 73/73 passed.
 
 ### CI itself — verified on GitHub, not just locally

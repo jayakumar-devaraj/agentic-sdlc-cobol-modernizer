@@ -18,7 +18,7 @@ claude-haiku-4-5-20251001:
   output_usd_per_mtok: 5.00
   capability_rank: 1
   price_note: "Anthropic first-party list price, checked 2026-08-08."
-  # Benchmarked 2026-08-08 (tests/system/test_critic_discrimination.py): caught all three planted
+  # Benchmarked 2026-08-08 (tests/unit/test_critic_discrimination.py): caught all three planted
   # factual errors in a corrupted CBCUS01C narration (0.00/0.20/0.40), matching Opus 5's detection
   # at 2.3x lower cost and scoring the APPL-EOF error more decisively. NOT verified for
   # spec_extractor -- see the Sonnet entries for why that bar is high.
@@ -68,7 +68,7 @@ claude-opus-5:
   # spec_critic: matched Haiku's detection (3/3) but at 2.3x the cost, so it is eligible and simply
   # never selected for that node -- which is the selection function working, not a wasted entry.
   #
-  # eval_judge: benchmarked 2026-08-11 (tests/evaluations/, ADR-0024) -- scored 6 of 6 on the
+  # eval_judge: benchmarked 2026-08-11 (tests/evaluation/, ADR-0024) -- scored 6 of 6 on the
   # committed corpus, detection 1.00 on both grounds and a 0.00 false-positive rate, catching both
   # defects a real JVM catches via ADR-0021's oracle. **eval_judge is not a routed node**: the harness
   # pins its model deliberately, because a yardstick that follows the routing config changes length

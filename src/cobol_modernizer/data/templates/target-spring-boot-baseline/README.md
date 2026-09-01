@@ -7,7 +7,7 @@ and its stack is decided by
 [ADR-0036](../../docs/adr/0036-the-generated-jobs-persist-to-postgresql-loaded-once-from-carddemo-ascii-files.md).
 
 **Domain-agnostic on purpose**: nothing tenant-specific belongs here, only what any modernized
-batch program needs regardless of which one it is. `tests/system/test_target_template.py` enforces
+batch program needs regardless of which one it is. `tests/integration/test_target_template.py` enforces
 that as a real check rather than an intention — it fails if a program name or copybook name appears
 anywhere under this directory.
 

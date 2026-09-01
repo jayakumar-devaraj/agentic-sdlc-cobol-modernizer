@@ -10,7 +10,7 @@ Covers `telemetry/tracing.py` and its wiring into `core/model_client.call_model`
 ## Unit tests — the three properties ADR-0046 calls non-negotiable
 
 ```
-.venv/Scripts/python.exe -m pytest tests/system/test_tracing.py -q
+.venv/Scripts/python.exe -m pytest tests/integration/test_tracing.py -q
 ```
 
 ```

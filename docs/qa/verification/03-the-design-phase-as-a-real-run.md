@@ -43,7 +43,7 @@
   documented branch uncovered — caught by reading the coverage report, and closed with a fragment
   test rather than left to rot.
 
-**Command**: `pytest tests/system/test_cobol_parser.py tests/system/test_pic_mapper.py tests/system/test_numeric_field_coverage.py -v`
+**Command**: `pytest tests/unit/test_cobol_parser.py tests/unit/test_pic_mapper.py tests/unit/test_numeric_field_coverage.py -v`
 **Result**: 68/68 passed.
 
 ### `nodes/solution_architect.py` — cross-program domain-entity unification, against real data for all four programs
@@ -72,7 +72,7 @@ this repo to look across every program together, not one at a time:
   only some of the four real programs) is exercised directly against real Known Facts data, not
   synthetic placeholders.
 
-**Command**: `pytest tests/system/test_solution_architect.py -v`
+**Command**: `pytest tests/unit/test_solution_architect.py -v`
 **Result**: 22/22 passed.
 
 ### The `design` subcommand end-to-end — a real LangGraph run, as a real process (ADR-0012)
@@ -121,7 +121,7 @@ contract with control-plane and `capsys` is an in-process approximation of it.
   `design.json`** — asserted directly, since a document silently covering three of four requested
   programs is indistinguishable at a review gate from a complete one.
 
-**Command**: `pytest tests/system/test_design_graph.py tests/system/test_cli_design.py tests/system/test_cli_contract.py -v`
+**Command**: `pytest tests/unit/test_design_graph.py tests/unit/test_cli_design.py tests/contract/test_cli_contract.py -v`
 **Result**: 30/30 passed.
 
 ### `run_id` correlation and `RunCost`, verified under real concurrency (ADR-0018)
@@ -155,7 +155,7 @@ rather than by weakening the assertion.
 **A coverage blind spot worth recording.** `telemetry/logging_config.py` reported **100% coverage
 with zero tests** — every line executed because `cli.main()` calls `configure_logging` during the
 CLI tests, so coverage confirmed the module ran while nothing asserted what the logging did.
-`tests/system/test_logging_config.py` now exists. Coverage measures execution, not verification.
+`tests/unit/test_logging_config.py` now exists. Coverage measures execution, not verification.
 
 **A code-review pass found the cost summary was unreachable on the failure path**, and it is fixed
 here. Both the log line and the `RunCost` construction sat *after* `app.invoke` returned, so a run
@@ -166,5 +166,5 @@ that causes a real failure (one valid program, one missing) and asserts the line
 `model_calls=1`. **Confirmed falsifiable**: restoring the original shape makes exactly that test
 fail, and nothing else.
 
-**Command**: `pytest tests/system/test_design_graph.py tests/system/test_logging_config.py -v`
+**Command**: `pytest tests/unit/test_design_graph.py tests/unit/test_logging_config.py -v`
 **Result**: 20/20 passed (12 pre-existing + 8 new).

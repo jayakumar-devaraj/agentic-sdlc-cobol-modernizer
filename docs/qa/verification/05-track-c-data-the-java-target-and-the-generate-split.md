@@ -130,7 +130,7 @@ where an intermediate-precision implementation gives `1.01`); and `requireFits` 
 `10000000000.00` against `PIC S9(10)V99` instead of losing the high-order digit in silence.
 
 **The template's textual invariants are pinned from this repo's own suite**
-(`tests/system/test_target_template.py`, 6 tests, 0.02s, no JDK) because compiling proves the
+(`tests/integration/test_target_template.py`, 6 tests, 0.02s, no JDK) because compiling proves the
 ecosystem supports the pin but not that the pin still says 25, that no preview flag appeared, or
 that the scaffold stayed free of this tenant's vocabulary. **Writing them found a real defect
 immediately**: XML forbids a double hyphen inside a comment, so the pom comment explaining that the
@@ -142,7 +142,7 @@ time*, nothing else would have caught it before CI. (A JDK and Maven were instal
 asserted to have applied before the result was believed.
 
 **Command**: `mvn -B -ntp verify` (CI job `template-build`, `temurin` 25) and
-`pytest tests/system/test_target_template.py -v`
+`pytest tests/integration/test_target_template.py -v`
 **Result**: `Tests run: 13, Failures: 0, Errors: 0, Skipped: 0` / `BUILD SUCCESS`; 6/6 passed.
 
 ### `nodes/modernization_engineer.py` + `rendering/` — the generate split, against real Track C data (step 39)
@@ -153,7 +153,7 @@ real four-program corpus with the model call injected. **The live call has not r
 has yet written a line of this Java, and nothing below claims otherwise.
 
 ```
-.venv/Scripts/python.exe -m pytest tests/ -q --ignore=tests/system/test_knowledge_store.py \
+.venv/Scripts/python.exe -m pytest tests/ -q --ignore=tests/integration/test_knowledge_store.py \
   --cov=cobol_modernizer --cov-report=term
 ```
 
@@ -470,7 +470,7 @@ docstring: **a probe of a fixed path is not the same command as a probe of a bro
 
 ### The standing check
 
-`tests/system/test_packaging.py` — four tests, ~100 seconds. It builds a real wheel, asserts every
+`tests/integration/test_packaging.py` — four tests, ~100 seconds. It builds a real wheel, asserts every
 runtime data file is inside it, asserts the Java baseline arrived whole (9 of 9 `.java` files, not
 just the `pom.xml`), installs it into a throwaway virtualenv and asks that installation for its own
 data. `build` is a declared dev dependency rather than an assumed one, because the fixture skips

@@ -68,7 +68,7 @@ def redact_response(message: str, raw_response: str) -> str:
     messages for a human reading a log and exactly the wrong thing to paste into the next prompt.
     Writing `render_repair_instruction` to "carry the error and nothing else" was therefore not
     sufficient on its own: the error was not free of model output, and the boundary test in
-    `tests/system/test_spec_critic.py` caught it (ADR-0054).
+    `tests/unit/test_spec_critic.py` caught it (ADR-0054).
 
     The redaction is exact rather than heuristic: the caller knows precisely what the model
     returned, so both the plain text and its `repr()` form -- the one an f-string's `!r` produces
