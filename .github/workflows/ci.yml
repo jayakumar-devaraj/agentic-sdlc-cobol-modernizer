@@ -76,6 +76,22 @@ jobs:
           java-version: "25"
           cache: maven
 
+      # `uv lock --check` asserts the lockfile would not change if regenerated here. That is a
+      # stronger statement than "the file exists": this repository's lock is generated on Windows,
+      # and a lock that resolved to one platform's packages would fail on this Linux runner --
+      # `colorama` and `tzdata` are in it carrying `sys_platform == 'win32'` markers, which is the
+      # shape that survives both. The same command has to produce the same bytes anywhere.
+      #
+      # `pip install uv` rather than `astral-sh/setup-uv`: every other action here is first-party
+      # `actions/*`, and a one-line check is not worth changing that posture for.
+      #
+      # This gate checks the lock against `pyproject.toml`. It does **not** yet govern what the
+      # next step installs -- see the note on that step.
+      - name: Assert the lockfile matches pyproject.toml
+        run: |
+          pip install uv
+          uv lock --check
+
       - name: Install dependencies
         run: pip install -e ".[dev]"
 
