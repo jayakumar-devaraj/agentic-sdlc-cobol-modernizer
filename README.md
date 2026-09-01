@@ -376,8 +376,27 @@ Milestone C4.
 ./.venv/Scripts/python -m pytest --cov=cobol_modernizer --cov-report=term-missing --cov-fail-under=90
 ```
 
-1169 tests passing (13 skipped — the opt-in live-CLI tests), 98.82% coverage — CI's own numbers from
-the run on this change, not a local approximation of them. The Postgres-backed
+1216 tests passing (13 skipped — the opt-in live-CLI tests), 98.37% coverage — CI's own numbers from
+the run on this change, not a local approximation of them.
+
+**Tests are split into four tiers by what they need in order to run**, and a test's tier marker is
+derived from the directory holding it, never written on the test:
+
+| Directory | Tests | Needs |
+|---|---|---|
+| `tests/unit/` | 755 | nothing — no I/O of any kind |
+| `tests/contract/` | 78 | nothing; these are the properties a consumer would notice breaking |
+| `tests/integration/` | 262 | a real dependency: Maven and a JDK, PostgreSQL, or a subprocess |
+| `tests/evaluation/` | 134 | the seam from the real calling position; may call a live model |
+
+`tests/support/` holds shared fixture modules and no tests. Run one tier with `-m unit` (or the
+directory), which is a ~20-second loop against the full suite's several minutes.
+
+A marker someone has to remember is a marker that gets forgotten, and an unmarked test is still
+collected and still counted in "passed" — so a marker-filtered command skips it while the run stays
+green. `tests/conftest.py` therefore derives the marker from the directory and raises
+`pytest.UsageError` for a test outside the four. `tests/contract/test_repository_structure.py`
+pins the layout itself, including that no tier imports one above it. The Postgres-backed
 `tools/knowledge_store.py` suite is included and skips nothing there, because CI provides a real
 service container. The target template's own 36 Java tests are not in that
 figure; CI runs them separately on JDK 25 (`mvn -B verify`, job `template-build`). Some tests (`tools/knowledge_store.py`'s) need the local
