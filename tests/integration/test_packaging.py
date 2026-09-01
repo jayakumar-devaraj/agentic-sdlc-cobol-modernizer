@@ -31,7 +31,7 @@ import pytest
 REPO_ROOT = Path(__file__).resolve().parents[2]
 
 #: Runtime data the CLI cannot start without. `schemas/` is deliberately absent -- its only readers
-#: are `scripts/generate_schemas.py` and `tests/system/test_schemas.py`, neither on the runtime path.
+#: are `scripts/generate_schemas.py` and `tests/contract/test_schemas.py`, neither on the runtime path.
 REQUIRED_DATA = (
     "cobol_modernizer/data/prompts/registry/spec_extractor/v1_0_0.md",
     "cobol_modernizer/data/config/model_routing.yaml",

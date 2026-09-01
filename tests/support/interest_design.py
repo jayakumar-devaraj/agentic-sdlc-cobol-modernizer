@@ -12,7 +12,7 @@ them back like everyone else. Nothing about their values changed -- this module 
 slice of the block that used to sit between that file's imports and its first fixture.
 
 `FIXTURE_ROOT` still resolves: `parents[1]` from `tests/support/` is `tests/`, the same directory
-it resolved to from `tests/system/`.
+it resolved to from `tests/unit/`.
 """
 
 from __future__ import annotations

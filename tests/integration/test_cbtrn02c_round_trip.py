@@ -64,7 +64,7 @@ from cobol_modernizer.rendering.java_working_set import (
 from cobol_modernizer.rendering.java_writer import render_item_writer, writer_class_name
 from cobol_modernizer.tools.data_loader import decode_zoned_decimal
 from cobol_modernizer.tools.local_compiler import compile_project
-from tests.system.test_cobol_oracle_comparison import (
+from tests.unit.test_cobol_oracle_comparison import (
     ACCOUNT_LAYOUT,
     TRAN_LAYOUT,
     FieldValue,
@@ -850,7 +850,7 @@ def test_a_model_authored_run_is_compared_against_the_same_oracle(tmp_path, desi
         assert result.passed, "\n".join(result.mismatches[:10])
 #: `_BODY` with `1500-B-LOOKUP-ACCT`'s credit-limit guard removed, and nothing else changed.
 #:
-#: **A corpus specimen, and the only honest way to build one.** `tests/evaluations/` grades a judge
+#: **A corpus specimen, and the only honest way to build one.** `tests/evaluation/` grades a judge
 #: against bodies whose expected verdict is *known*; the strongest form of knowing is that a real JVM
 #: already returned it. This body is derived from the faithful one by deleting one `if`, so a
 #: disagreement between the two runs is attributable to that guard and to nothing else -- the same

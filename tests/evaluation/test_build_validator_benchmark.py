@@ -6,7 +6,7 @@ Opt-in behind `live_claude_cli`. `tests/conftest.py` skips it unless
 **The diagnostics are compiled, not written.** Each case's body is rendered into a real processor and
 built by real Maven once, and the `CompileDiagnostic` objects that come back are what the model is
 shown. Inventing plausible javac output would measure the node against this session's idea of what a
-compiler says -- the failure `tests/evaluations/corpus.py` calls out in its own first paragraph. It
+compiler says -- the failure `tests/evaluation/corpus.py` calls out in its own first paragraph. It
 costs one Maven build per case and no money.
 
 **Two bars, applied per run rather than to the mean** -- ADR-0045's correction, which this module
@@ -49,8 +49,8 @@ from cobol_modernizer.nodes.build_validator import (
 )
 from cobol_modernizer.rendering.java_processor import render_processor
 from cobol_modernizer.tools.local_compiler import compile_project
-from tests.evaluations.build_validator_corpus import CASES, Ground, ValidatorCase, Verdict
-from tests.system.test_generate_pipeline import PACKAGE, STEP
+from tests.evaluation.build_validator_corpus import CASES, Ground, ValidatorCase, Verdict
+from tests.integration.test_generate_pipeline import PACKAGE, STEP
 
 TEMPLATE = TEMPLATES_ROOT / "target-spring-boot-baseline"
 

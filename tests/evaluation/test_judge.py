@@ -16,7 +16,7 @@ from pathlib import Path
 import pytest
 
 from cobol_modernizer.tools.tenant_repo import resolve_program
-from tests.evaluations.corpus import (
+from tests.evaluation.corpus import (
     CASES,
     CASES_BY_NAME,
     CRITERIA,
@@ -25,7 +25,7 @@ from tests.evaluations.corpus import (
     Ground,
     Verdict,
 )
-from tests.evaluations.judge import (
+from tests.evaluation.judge import (
     SYSTEM_PROMPT,
     BenchmarkSummary,
     JudgeResponseParseError,

@@ -83,7 +83,7 @@ from tests.support.posting_design import _FAITHFUL as _POSTING_BODY
 from tests.support.posting_design import _IMPORTS as _POSTING_IMPORTS
 from tests.support.posting_design import POSTING
 from tests.support.posting_design import STEP as POSTING_STEP
-from tests.system.test_cobol_oracle_comparison import (
+from tests.unit.test_cobol_oracle_comparison import (
     ACCOUNT_LAYOUT,
     EXCLUSIONS,
     TRAN_LAYOUT,

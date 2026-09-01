@@ -14,7 +14,7 @@ from cobol_modernizer.rendering.java_processor import (
     model_authored_line_range,
     render_processor,
 )
-from tests.evaluations.corpus import (
+from tests.evaluation.corpus import (
     _COMPLETE_BODY,
     CASES,
     CRITERIA,
@@ -75,7 +75,7 @@ def test_the_guards_the_corpus_sits_outside_of_are_actually_live():
     corpus is genuinely on the far side of it.
     """
     from cobol_modernizer.rendering.java_processor import NonDeterministicBodyError
-    from tests.evaluations.corpus import CASES_BY_NAME
+    from tests.evaluation.corpus import CASES_BY_NAME
 
     case = CASES_BY_NAME["completion_faithful"]
     with_clock = _mutate_for_test(case.body, "null,\n    null);", "LocalDateTime.now(),\n    null);")
@@ -117,7 +117,7 @@ def test_every_unfaithful_body_differs_from_the_faithful_one_it_came_from(case):
 def test_the_two_source_grounded_corruptions_really_changed_the_real_model_body():
     # Named separately from the test above because these two are derived from `_COMPLETE_BODY` by
     # string replacement, which is the mechanism that can no-op.
-    from tests.evaluations.corpus import _EMPTY_STRING_BODY, _INVENTED_ID_BODY
+    from tests.evaluation.corpus import _EMPTY_STRING_BODY, _INVENTED_ID_BODY
 
     assert _EMPTY_STRING_BODY != _COMPLETE_BODY
     assert _INVENTED_ID_BODY != _COMPLETE_BODY
@@ -136,7 +136,7 @@ def test_the_invented_identifier_is_the_right_width_so_only_one_criterion_fires(
     be wrong *twice* -- invented and under-width -- and a judge that flagged only the width would
     score as having caught it. Padding to 16 leaves the fabrication as the single defect.
     """
-    from tests.evaluations.corpus import _INVENTED_ID_BODY
+    from tests.evaluation.corpus import _INVENTED_ID_BODY
 
     assert 'CobolText.pad("INT0000000001", 16)' in _INVENTED_ID_BODY
     # The literal really is what PIC X(16) asks `CobolText.pad` to produce, so the padding call is
@@ -181,7 +181,7 @@ def test_every_step_in_the_corpus_says_what_becomes_of_its_output():
     step added without this entry would reintroduce that silently, and the symptom would look like
     the judge getting worse.
     """
-    from tests.evaluations.corpus import DOWNSTREAM_BY_STEP
+    from tests.evaluation.corpus import DOWNSTREAM_BY_STEP
 
     for case in CASES:
         assert case.step.step_name in DOWNSTREAM_BY_STEP, case.step.step_name
@@ -190,7 +190,7 @@ def test_every_step_in_the_corpus_says_what_becomes_of_its_output():
 def test_the_downstream_fact_is_keyed_by_step_so_it_cannot_leak_the_answer():
     # Keyed by step rather than by case, so two cases of one step get identical text by construction
     # rather than by anyone remembering to keep them in sync.
-    from tests.evaluations.corpus import DOWNSTREAM_BY_STEP
+    from tests.evaluation.corpus import DOWNSTREAM_BY_STEP
 
     for case in CASES:
         assert case.name not in DOWNSTREAM_BY_STEP[case.step.step_name]
@@ -212,7 +212,7 @@ def test_every_oracle_grounded_case_cites_a_test_that_still_exists():
     """
     import re
 
-    from tests.system import test_cbtrn02c_round_trip, test_interest_equivalence
+    from tests.integration import test_cbtrn02c_round_trip, test_interest_equivalence
 
     # Searched across the modules that own the runs rather than one of them: the corpus spans two
     # programs since ADR-0050, and a check hard-coded to the first program's module would have
@@ -285,7 +285,7 @@ def test_the_second_programs_bodies_are_the_ones_that_were_actually_run():
     The moment a corpus body diverges from the string a JVM compiled, its `ORACLE` ground becomes a
     claim about a body no JVM ever saw.
     """
-    from tests.system.test_cbtrn02c_round_trip import _BODY, _UNGUARDED_BODY
+    from tests.integration.test_cbtrn02c_round_trip import _BODY, _UNGUARDED_BODY
 
     by_name = {case.name: case for case in CASES}
     assert by_name["posting_faithful"].body is _BODY

@@ -60,7 +60,7 @@ import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import java.math.BigDecimal;
 import org.junit.jupiter.api.Test;
 
-/** Rendered by tests/system/test_job_parameter_determinism.py -- see that module for why. */
+/** Rendered by tests/integration/test_job_parameter_determinism.py -- see that module for why. */
 class StampTransactionDeterminismTest {{
 
     private static final BigDecimal ITEM = new BigDecimal("194.00");
