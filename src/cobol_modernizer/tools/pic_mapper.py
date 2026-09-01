@@ -86,7 +86,12 @@ class PicMapping(BaseModel):
     `"String"` -- callers must not treat an alphanumeric field as a `BigDecimal` candidate.
     """
 
-    field_name: str | None = None
+    #: Always present. `_extract_field_name` can fail to match, and this used to be
+    #: `str | None = None` to carry that -- but no caller ever handled the `None`: five call sites
+    #: across `data_loader` and `solution_architect` called `.upper()` on it or passed it straight
+    #: into a `str` parameter. `map_pic_clause` now refuses a declaration it cannot name, so the
+    #: state those five assumed is the only one that exists. See ADR-0061.
+    field_name: str
     raw_pic: str
     field_type: PicFieldType
     usage: UsageClause = UsageClause.DISPLAY
@@ -228,6 +233,11 @@ def map_pic_clause(declaration_text: str, *, adjacent_text: str = "") -> PicMapp
 
     usage = _detect_usage(declaration_text)
     field_name = _extract_field_name(declaration_text)
+    if field_name is None:
+        raise ValueError(
+            f"Field declaration has no parseable level and name, so the mapping would carry no "
+            f"field identity for any consumer to key on: {declaration_text!r}"
+        )
 
     if has_numeric:
         return PicMapping(
