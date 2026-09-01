@@ -29,6 +29,12 @@ dev = [
     "pytest>=8.3.4",
     "pytest-cov>=7.1.0",
     "ruff>=0.8.0",
+    "mypy>=1.14.0",
+    # `core/model_catalog.py` and `core/model_routing.py` both `import yaml`. Without the stubs
+    # mypy reports `import-untyped` on each and then treats every value read out of the model
+    # catalog as `Any`, which silently disables checking across the routing path -- the two
+    # modules where a wrong type would pick the wrong model.
+    "types-PyYAML>=6.0.12",
     # Required by tests/system/test_packaging.py, which builds a real wheel. Listed here rather
     # than left to chance: that test skips when `build` is absent, and a guard that silently skips
     # is the decorative-check failure Open Issue 3 already cost this repo once.
@@ -91,3 +97,42 @@ cobol_modernizer = [
 
 [tool.ruff]
 line-length = 100
+
+# Before this block pytest resolved a `rootdir` and reported **no `configfile` at all** -- every
+# setting was a default, and the only registered markers were the two `conftest.py` adds at runtime
+# via `addinivalue_line`. That registration stays where it is: it carries the reasoning for each
+# marker, which a bare list here could not.
+#
+# `--strict-markers` turns a *misspelled* marker into a collection error rather than a silently
+# unmarked test. It does not catch a *missing* marker -- a test with no marker at all is still
+# collected and still counted in "passed" -- which is why the tier split is a separate change with
+# a directory-derived marker hook, not something this line can substitute for.
+#
+# Both flags were verified to pass before being set here, rather than committed and left to CI:
+# `pytest --collect-only --strict-markers --strict-config` exits 0 over all 1208 tests.
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "--strict-markers --strict-config"
+
+# **Not wired into CI, deliberately, and this is the honest state rather than an aspiration.**
+# `mypy` over `src/` on default settings reports **18 errors in 6 of 53 modules**. Adding the tool
+# without the gate is what makes that number visible and falsifiable; adding the gate now would mean
+# either a red build or suppressions that hide what the tool just found.
+#
+# It was 20 in 8 before `types-PyYAML` was added above -- worth recording because the two that went
+# away were not fixed, they were *unmasked*: an untyped `import yaml` makes every value read from it
+# `Any`, and `Any` silences errors rather than reporting them. A stub package can just as easily
+# raise the count as lower it.
+#
+# `py.typed` is deliberately absent for the same reason. The marker is a claim to a consumer --
+# control-plane installs this wheel (ADR-0055) -- that these annotations are meaningful, and one of
+# the 20 is a real defect rather than a narrowing nuisance: `data_loader.py` calls
+# `.upper()` on `PicMapping.field_name` and compares it to the string `"FILLER"`, while
+# `record_layout.py` sets that same field to `None` for exactly the FILLER case. Shipping the marker
+# over that would be asserting something measured to be false.
+#
+# `strict = true` is not set: default settings found the 20 above, and the several hundred
+# `disallow_untyped_defs` reports it would add are noise stacked on top of real findings.
+[tool.mypy]
+python_version = "3.12"
+files = ["src/cobol_modernizer"]
