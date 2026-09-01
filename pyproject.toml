@@ -68,6 +68,12 @@ where = ["src"]
 # `scripts/generate_schemas.py` and `tests/system/test_schemas.py` do.
 [tool.setuptools.package-data]
 cobol_modernizer = [
+    # PEP 561 marker. Without it a consumer's type checker ignores every annotation in this package
+    # and silently infers `Any` -- control-plane installs this wheel (ADR-0055), so the annotations
+    # only reach anyone if this file ships. Listed for the same reason as everything else here:
+    # `include_package_data` would carry it anyway, and relying on an implicit default for the thing
+    # that makes an install work is how ADR-0055's defect happened.
+    "py.typed",
     "data/prompts/registry/**/*.md",
     "data/config/*.yaml",
     "data/templates/**/*",
@@ -114,25 +120,23 @@ line-length = 100
 testpaths = ["tests"]
 addopts = "--strict-markers --strict-config"
 
-# **Not wired into CI, deliberately, and this is the honest state rather than an aspiration.**
-# `mypy` over `src/` on default settings reports **18 errors in 6 of 53 modules**. Adding the tool
-# without the gate is what makes that number visible and falsifiable; adding the gate now would mean
-# either a red build or suppressions that hide what the tool just found.
+# Clean on default settings, and gated in CI. It did not start that way: the first run reported 20
+# errors in 8 of 53 modules, and clearing them is what earned the `py.typed` marker above -- the
+# marker is a claim to a consumer that these annotations are meaningful, so it could not ship over
+# a checker that rejected them.
 #
-# It was 20 in 8 before `types-PyYAML` was added above -- worth recording because the two that went
-# away were not fixed, they were *unmasked*: an untyped `import yaml` makes every value read from it
-# `Any`, and `Any` silences errors rather than reporting them. A stub package can just as easily
-# raise the count as lower it.
+# Two things that run found are worth keeping here, because both were nearly mis-recorded:
 #
-# `py.typed` is deliberately absent for the same reason. The marker is a claim to a consumer --
-# control-plane installs this wheel (ADR-0055) -- that these annotations are meaningful, and one of
-# the 20 is a real defect rather than a narrowing nuisance: `data_loader.py` calls
-# `.upper()` on `PicMapping.field_name` and compares it to the string `"FILLER"`, while
-# `record_layout.py` sets that same field to `None` for exactly the FILLER case. Shipping the marker
-# over that would be asserting something measured to be false.
+# 1. `types-PyYAML` took the count from 20 to 18, and those two were **unmasked, not fixed**. An
+#    untyped `import yaml` makes everything read from it `Any`, and `Any` silences errors rather
+#    than reporting them. A stub package can raise a count as easily as lower it.
+# 2. One report was a real correctness defect, not a narrowing nuisance -- a `for` loop variable
+#    reused for an optional lookup in `solution_architect.py`, where the leftover binding made a
+#    `None` guard read as truthy. See ADR-0061; the test that caught it asserts `read_line is None`.
 #
-# `strict = true` is not set: default settings found the 20 above, and the several hundred
-# `disallow_untyped_defs` reports it would add are noise stacked on top of real findings.
+# `strict = true` is not set, and "clean" means clean *at this setting*. The several hundred
+# `disallow_untyped_defs` reports it would add are noise stacked on real findings, and `tests/` is
+# not checked at all. Raising the setting is a separate decision with its own cost.
 [tool.mypy]
 python_version = "3.12"
 files = ["src/cobol_modernizer"]
