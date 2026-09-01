@@ -346,20 +346,22 @@ def build_file_access_paths(
             first_binding.setdefault(binding.file_name, binding)
 
         for declaration in declarations:
-            binding = first_binding.get(declaration.select_name.upper())
+            # Not `binding`: that name is already bound by the loop above as a non-optional
+            # `RecordBinding`, and reusing it here made a genuinely-optional lookup read as one.
+            matched = first_binding.get(declaration.select_name.upper())
             paths.append(
                 FileAccessPath(
                     program_name=entry.program_name,
                     entity_name=(
-                        entity_name_from_record(binding.record_name) if binding else ""
+                        entity_name_from_record(matched.record_name) if matched else ""
                     ),
-                    record_name=binding.record_name if binding else "",
+                    record_name=matched.record_name if matched else "",
                     select_name=declaration.select_name,
                     assign_to=declaration.assign_to,
                     organization=declaration.organization,
                     access_mode=declaration.access_mode,
                     effective_key=(
-                        (binding.read_key if binding and binding.read_key else None)
+                        (matched.read_key if matched and matched.read_key else None)
                         or (declaration.record_key if declaration.is_keyed_lookup else None)
                     ),
                     declared_record_key=declaration.record_key,
@@ -379,7 +381,7 @@ def build_file_access_paths(
                     key_parts=_key_parts_for(
                         key_components(
                             source_text,
-                            (binding.read_key if binding and binding.read_key else None)
+                            (matched.read_key if matched and matched.read_key else None)
                             or declaration.record_key
                             or "",
                         )
@@ -390,7 +392,7 @@ def build_file_access_paths(
                     ),
                     is_keyed_lookup=declaration.is_keyed_lookup,
                     select_line=declaration.source_line,
-                    read_line=binding.source_line if binding else None,
+                    read_line=matched.source_line if matched else None,
                 )
             )
     return paths
