@@ -33,9 +33,6 @@ import pytest
 
 from cobol_modernizer.core.contracts import (
     BatchJobDesign,
-    BatchStepDesign,
-    CompositeComponent,
-    CompositeType,
     ProgramDesignEntry,
     UnifiedDesign,
     build_design_document,
@@ -49,70 +46,16 @@ from cobol_modernizer.nodes.solution_architect import build_domain_entities
 from cobol_modernizer.nodes.spec_critic import critique_spec
 from cobol_modernizer.nodes.spec_extractor import extract_spec
 from cobol_modernizer.tools.local_compiler import compile_project
-
-FIXTURE_ROOT = Path(__file__).resolve().parents[1] / "fixtures" / "tenant_repo_sample"
-PROGRAM = "CBACT04C"
-
-#: The pre-aggregated item. A composite carries **existing entities only** (ADR-0020), so the summed
-#: interest travels inside a `Tran` -- the same accommodation `TranWithContext` makes for the same
-#: reason, and the same one option (b) of ADR-0027 would remove if arrays were ever supported.
-POSTING = CompositeType(
-    name="AccountInterestPosting",
-    components=[
-        CompositeComponent(field_name="account", entity_name="Account"),
-        CompositeComponent(field_name="interest", entity_name="Tran"),
-    ],
+from tests.support.posting_design import (
+    _FAITHFUL,
+    _FORGETS_CYCLE_RESET,
+    _IMPORTS,
+    _REPLACES_BALANCE,
+    FIXTURE_ROOT,
+    POSTING,
+    PROGRAM,
+    STEP,
 )
-
-#: A **processor**, which is the whole point of ADR-0027. Under ADR-0023 this step had to carry a
-#: non-processor role and `generate` reported it `not_generated`; with the item pre-aggregated it is
-#: an ordinary per-item transform and the pipeline renders it like any other.
-STEP = BatchStepDesign(
-    step_name="postAccountInterest",
-    source_paragraphs=["1050-UPDATE-ACCOUNT"],
-    role="processor",
-    description="Posts an account's accumulated interest and clears the cycle totals.",
-    input_type="AccountInterestPosting",
-    output_type="Account",
-    guard_condition=None,
-    job_parameters=[],
-)
-
-#: `ADD WS-TOTAL-INT TO ACCT-CURR-BAL` plus `MOVE 0 TO` the two cycle fields, and nothing else --
-#: the `REWRITE` is persistence and stays wiring.
-_FAITHFUL = """\
-com.modernized.batch.domain.Account a = item.account();
-return new Account(
-    a.acctId(),
-    a.acctActiveStatus(),
-    a.acctCurrBal().add(item.interest().tranAmt()),
-    a.acctCreditLimit(),
-    a.acctCashCreditLimit(),
-    a.acctOpenDate(),
-    a.acctExpiraionDate(),
-    a.acctReissueDate(),
-    java.math.BigDecimal.ZERO,
-    java.math.BigDecimal.ZERO,
-    a.acctAddrZip(),
-    a.acctGroupId());"""
-
-#: Posts correctly and leaves the cycle totals alone. Compiles; wrong by two fields.
-_FORGETS_CYCLE_RESET = _FAITHFUL.replace(
-    "    java.math.BigDecimal.ZERO,\n    java.math.BigDecimal.ZERO,",
-    "    a.acctCurrCycCredit(),\n    a.acctCurrCycDebit(),",
-)
-
-#: `MOVE` where COBOL says `ADD`. The single most plausible mistranslation of this paragraph.
-_REPLACES_BALANCE = _FAITHFUL.replace(
-    "a.acctCurrBal().add(item.interest().tranAmt())", "item.interest().tranAmt()"
-)
-
-_IMPORTS = [
-    "java.math.BigDecimal",
-    f"{DEFAULT_DOMAIN_PACKAGE}.Account",
-    f"{DEFAULT_DOMAIN_PACKAGE}.AccountInterestPosting",
-    f"{DEFAULT_DOMAIN_PACKAGE}.Tran",
-]
 
 POSTING_TEST = f"""\
 package {DEFAULT_PACKAGE};

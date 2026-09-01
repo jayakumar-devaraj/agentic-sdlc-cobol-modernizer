@@ -79,10 +79,10 @@ from tests.support.interest_design import (
     PROGRAM,
     STEP,
 )
-from tests.system.test_account_break_posting import _FAITHFUL as _POSTING_BODY
-from tests.system.test_account_break_posting import _IMPORTS as _POSTING_IMPORTS
-from tests.system.test_account_break_posting import POSTING
-from tests.system.test_account_break_posting import STEP as POSTING_STEP
+from tests.support.posting_design import _FAITHFUL as _POSTING_BODY
+from tests.support.posting_design import _IMPORTS as _POSTING_IMPORTS
+from tests.support.posting_design import POSTING
+from tests.support.posting_design import STEP as POSTING_STEP
 from tests.system.test_cobol_oracle_comparison import (
     ACCOUNT_LAYOUT,
     EXCLUSIONS,

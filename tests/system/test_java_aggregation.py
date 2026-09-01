@@ -45,8 +45,8 @@ from tests.support.interest_design import (
     OUTPUT_COMPOSITE,
     STEP,
 )
-from tests.system.test_account_break_posting import POSTING
-from tests.system.test_account_break_posting import STEP as POSTING_STEP
+from tests.support.posting_design import POSTING
+from tests.support.posting_design import STEP as POSTING_STEP
 
 FIXTURE_ROOT = Path(__file__).resolve().parents[1] / "fixtures" / "tenant_repo_sample"
 READERS = "com.modernized.batch.reader"
