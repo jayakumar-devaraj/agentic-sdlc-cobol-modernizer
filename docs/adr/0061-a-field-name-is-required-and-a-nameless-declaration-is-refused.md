@@ -67,6 +67,16 @@ shadowing always permitted, because Python leaves a loop variable bound after th
 rename reads a stale non-`None` value rather than failing. The type error and the correctness hazard
 were the same defect; the checker found it before a user did.
 
+**It changes the published contract, which was not anticipated locally.**
+`PicMapping` is reachable from the design document, so `schemas/design_document.schema.json` moved
+with it: `field_name` goes from `anyOf: [string, null]` with `default: null` to a plain `string`,
+and joins `required`. CI caught this, not the local run — the modules edited were not the modules
+affected, and `tests/system/test_schemas.py`'s drift check (ADR-0008) is the only thing that
+compares the committed schema against the live models. That check earned its place here. No
+committed artifact carried a null `field_name`, and no producer ever emitted one, so nothing
+downstream has to be migrated; a consumer validating against the new schema is strictly stricter
+than one validating against the old.
+
 **What this does not establish.** `mypy` runs clean on default settings only. `strict = true` is
 still off, several hundred `disallow_untyped_defs` reports are unaddressed, and nothing yet checks
 `tests/`. Clean here means "no error at this setting", not "fully typed".

@@ -679,16 +679,8 @@
       "description": "Deterministic result of mapping one COBOL field declaration's PIC clause.\n\nFor `field_type == ALPHANUMERIC`, `precision`/`scale` are `None` and `java_type` is\n`\"String\"` -- callers must not treat an alphanumeric field as a `BigDecimal` candidate.",
       "properties": {
         "field_name": {
-          "anyOf": [
-            {
-              "type": "string"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "default": null,
-          "title": "Field Name"
+          "title": "Field Name",
+          "type": "string"
         },
         "field_type": {
           "$ref": "#/$defs/PicFieldType"
@@ -752,6 +744,7 @@
         }
       },
       "required": [
+        "field_name",
         "raw_pic",
         "field_type",
         "java_type",
