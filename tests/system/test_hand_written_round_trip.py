@@ -68,21 +68,7 @@ from cobol_modernizer.rendering.java_job import (
 from cobol_modernizer.rendering.java_reader import reader_class_name, render_item_reader
 from cobol_modernizer.rendering.java_writer import render_item_writer, writer_class_name
 from cobol_modernizer.tools.local_compiler import compile_project
-from tests.system.test_account_break_posting import _FAITHFUL as _POSTING_BODY
-from tests.system.test_account_break_posting import _IMPORTS as _POSTING_IMPORTS
-from tests.system.test_account_break_posting import POSTING
-from tests.system.test_account_break_posting import STEP as POSTING_STEP
-from tests.system.test_cobol_oracle_comparison import (
-    ACCOUNT_LAYOUT,
-    EXCLUSIONS,
-    TRAN_LAYOUT,
-    ComparisonResult,
-    compare,
-    load_account_oracle,
-    load_oracle,
-    parse_fixed_records,
-)
-from tests.system.test_interest_equivalence import (
+from tests.support.interest_design import (
     _COMPLETE_BODY,
     _CORRECT_BODY,
     _IMPORTS,
@@ -92,6 +78,20 @@ from tests.system.test_interest_equivalence import (
     OUTPUT_COMPOSITE,
     PROGRAM,
     STEP,
+)
+from tests.support.posting_design import _FAITHFUL as _POSTING_BODY
+from tests.support.posting_design import _IMPORTS as _POSTING_IMPORTS
+from tests.support.posting_design import POSTING
+from tests.support.posting_design import STEP as POSTING_STEP
+from tests.system.test_cobol_oracle_comparison import (
+    ACCOUNT_LAYOUT,
+    EXCLUSIONS,
+    TRAN_LAYOUT,
+    ComparisonResult,
+    compare,
+    load_account_oracle,
+    load_oracle,
+    parse_fixed_records,
 )
 
 HANDWRITTEN = Path(__file__).resolve().parents[1] / "fixtures" / "handwritten" / "CBACT04C"

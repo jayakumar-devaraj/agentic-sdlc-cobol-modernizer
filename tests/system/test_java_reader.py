@@ -37,7 +37,7 @@ from cobol_modernizer.rendering.java_reader import (
     reader_class_name,
     render_item_reader,
 )
-from tests.system.test_interest_equivalence import (
+from tests.support.interest_design import (
     COMPLETE_STEP,
     COMPOSITE,
     OUTPUT_COMPOSITE,
