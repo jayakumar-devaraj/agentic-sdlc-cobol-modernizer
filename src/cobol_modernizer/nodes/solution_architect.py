@@ -613,7 +613,10 @@ def unobtainable_inputs(
     )
 
 def undeliverable_computed_values(
-    job: BatchJobDesign, step: BatchStepDesign, design: UnifiedDesign
+    job: BatchJobDesign,
+    step: BatchStepDesign,
+    design: UnifiedDesign,
+    accumulator_paragraphs: dict[str, str] | None = None,
 ) -> list[str]:
     """Values this step computes that its output type has nowhere to put (ADR-0062).
 
@@ -672,7 +675,7 @@ def undeliverable_computed_values(
     # escapes to `1050-UPDATE-ACCOUNT`, and lands in no record, so every clause below demands the
     # producing step carry it, and the only way to satisfy that at row grain is to fabricate a
     # total. A live run did exactly that: `BigDecimal totalInterest = monthlyInterest;`.
-    accumulators = set(design.accumulator_owners(job.program_name))
+    accumulators = set(design.accumulator_owners(job.program_name, accumulator_paragraphs))
 
     undelivered: list[str] = []
     for value in design.computed_values:
@@ -694,7 +697,11 @@ def undeliverable_computed_values(
     return sorted(undelivered)
 
 
-def misplaced_accumulators(job: BatchJobDesign, design: UnifiedDesign) -> list[tuple[str, str, str]]:
+def misplaced_accumulators(
+    job: BatchJobDesign,
+    design: UnifiedDesign,
+    accumulator_paragraphs: dict[str, str] | None = None,
+) -> list[tuple[str, str, str]]:
     """Accumulators carried by an item that is not at the group's grain (ADR-0063).
 
     The other half of excusing the producing step. Excusing it alone would leave the wrong design
@@ -710,7 +717,7 @@ def misplaced_accumulators(job: BatchJobDesign, design: UnifiedDesign) -> list[t
     Returns `(composite_name, cobol_field_name, owning_step_name)` triples, sorted, so a refusal
     message can name where the value does belong rather than only where it does not.
     """
-    owners = design.accumulator_owners(job.program_name)
+    owners = design.accumulator_owners(job.program_name, accumulator_paragraphs)
     if not owners:
         return []
 
@@ -897,6 +904,7 @@ def _parse_unified_design_response(
     domain_entities: list[DomainEntity],
     programs: list[ProgramDesignEntry],
     computed_values: list[ComputedValue] | None = None,
+    accumulator_paragraphs: dict[str, str] | None = None,
 ) -> tuple[list[BatchJobDesign], list[RestEndpointDesign], list[CompositeType]]:
     """Parse and validate the architect model's JSON response against the real Known Facts.
 
@@ -1069,7 +1077,7 @@ def _parse_unified_design_response(
         )
 
     _refuse_undeliverable_computed_values(
-        batch_jobs, composite_types, domain_entities, computed_values or []
+        batch_jobs, composite_types, domain_entities, computed_values or [], accumulator_paragraphs
     )
 
     return batch_jobs, rest_endpoints, composite_types
@@ -1080,6 +1088,7 @@ def _refuse_undeliverable_computed_values(
     composite_types: list[CompositeType],
     domain_entities: list[DomainEntity],
     computed_values: list[ComputedValue],
+    accumulator_paragraphs: dict[str, str] | None = None,
 ) -> None:
     """Refuse a design whose processor computes a value it cannot return (ADR-0062).
 
@@ -1105,7 +1114,9 @@ def _refuse_undeliverable_computed_values(
         # ADR-0063, checked before the per-step rule below: an accumulator on a row-grain item is a
         # wrong *home* for a value, and reporting it as "nowhere to put it" would send a model
         # looking for another row-grain home. The message names the step that should carry it.
-        for composite_name, field, owning_step in misplaced_accumulators(job, design):
+        for composite_name, field, owning_step in misplaced_accumulators(
+            job, design, accumulator_paragraphs
+        ):
             raise SolutionArchitectParseError(
                 f"solution_architect composite {composite_name!r} carries computed field "
                 f"{field!r}, which is the accumulator of a control break owned by step "
@@ -1118,7 +1129,9 @@ def _refuse_undeliverable_computed_values(
             )
 
         for step in job.steps:
-            undelivered = undeliverable_computed_values(job, step, design)
+            undelivered = undeliverable_computed_values(
+                job, step, design, accumulator_paragraphs
+            )
             if not undelivered:
                 continue
             names = ", ".join(undelivered)
@@ -1213,7 +1226,7 @@ def design_solution(
         _NODE_NAME,
         raw_response,
         lambda text: _parse_unified_design_response(
-            text, domain_entities, programs, computed_values
+            text, domain_entities, programs, computed_values, accumulators
         ),
         lambda instruction: architect(routing, system_prompt, f"{user_content}\n\n{instruction}"),
         on=SolutionArchitectParseError,

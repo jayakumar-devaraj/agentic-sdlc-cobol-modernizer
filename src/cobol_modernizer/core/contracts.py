@@ -590,7 +590,9 @@ class UnifiedDesign(BaseModel):
         missing.extend(self.unresolvable_computed_field_names())
         return missing
 
-    def accumulator_owners(self, program_name: str) -> dict[str, str]:
+    def accumulator_owners(
+        self, program_name: str, accumulator_paragraphs: dict[str, str] | None = None
+    ) -> dict[str, str]:
         """`{COBOL accumulator field: the step that owns its control break}` for one program.
 
         **Grain, derived rather than declared** (ADR-0063). A control break's `accumulator_field` is
@@ -608,6 +610,21 @@ class UnifiedDesign(BaseModel):
         for job in self.batch_jobs:
             if job.program_name != program_name:
                 continue
+
+            # **Resolved from `source_paragraphs`, not from an attached `ControlBreakDesign`**, and
+            # the difference is not cosmetic. `attach_control_breaks` runs *after*
+            # `parse_with_repair`, so at the moment the design is validated no step carries a break
+            # yet and reading `step.control_break` returns nothing for every step. A first version
+            # did read it; its unit tests passed because they built designs with the break already
+            # attached -- the post-attachment state -- and the defect surfaced only when a live run
+            # was refused for the value the rule is supposed to excuse.
+            for field, paragraph in (accumulator_paragraphs or {}).items():
+                for step in job.steps:
+                    if paragraph.upper() in {name.upper() for name in step.source_paragraphs}:
+                        owners[field.upper()] = step.step_name
+                        break
+
+            # Post-attachment the break itself is authoritative, and agrees.
             for step in job.steps:
                 if step.control_break is not None:
                     owners[step.control_break.accumulator_field.upper()] = step.step_name
