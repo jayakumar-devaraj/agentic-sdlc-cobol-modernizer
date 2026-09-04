@@ -376,7 +376,7 @@ Milestone C4.
 ./.venv/Scripts/python -m pytest --cov=cobol_modernizer --cov-report=term-missing --cov-fail-under=90
 ```
 
-1245 tests passing (13 skipped — the opt-in live-CLI tests), 98.40% coverage — CI's own numbers from
+1251 tests passing (13 skipped — the opt-in live-CLI tests), 98.37% coverage — CI's own numbers from
 the run on this change, not a local approximation of them.
 
 **Tests are split into four tiers by what they need in order to run**, and a test's tier marker is
