@@ -43,6 +43,7 @@ from cobol_modernizer.core.complexity import ComplexityTier
 from cobol_modernizer.core.contracts import (
     BatchStepDesign,
     CompositeType,
+    ComputedValue,
     DomainEntity,
     JobParameter,
     ProgramDesignEntry,
@@ -135,7 +136,9 @@ def processor_class_name(step: BatchStepDesign) -> str:
 
 
 def render_domain_facts(
-    entities: list[DomainEntity], composites: list[CompositeType] | None = None
+    entities: list[DomainEntity],
+    composites: list[CompositeType] | None = None,
+    computed_values: list[ComputedValue] | None = None,
 ) -> str:
     """The domain records and composites -- identical for every step of a run, so this heads the prompt.
 
@@ -179,6 +182,7 @@ def render_domain_facts(
             "accessor.** There are no JavaBean getters on any generated type.",
             "",
         ]
+        by_cobol_name = {value.cobol_field_name.upper(): value for value in computed_values or []}
         for composite in composites:
             lines.append(f"#### {composite.name}")
             for component in composite.components:
@@ -186,6 +190,21 @@ def render_domain_facts(
                     f"- {component.entity_name} {component.field_name}()"
                     f"  // e.g. item.{component.field_name}().someField()"
                 )
+            # A computed component is a value no record holds, so it has no `item.x().y()` shape
+            # to reach it by -- it is a component of this record itself, and a step whose output
+            # type declares one must construct it. Listing components without these would show a
+            # model a record it cannot build: the constructor takes them, and gap G24's lesson is
+            # that a shape the generator writes against and was never shown gets guessed.
+            for computed in composite.computed_fields:
+                value = by_cobol_name.get(computed.cobol_field_name.upper())
+                shape = f"- {value.java_type if value else 'BigDecimal'} {computed.field_name}()"
+                if value is not None and value.precision is not None:
+                    sign = "signed" if value.signed else "unsigned"
+                    shape += (
+                        f"  // {value.cobol_field_name}: precision {value.precision}, "
+                        f"scale {value.scale}, {sign} -- this step computes it"
+                    )
+                lines.append(shape)
             lines.append("")
     return "\n".join(lines)
 
@@ -391,6 +410,7 @@ def build_engineer_prompt(
     input_type: str,
     output_type: str,
     composites: list[CompositeType] | None = None,
+    computed_values: list[ComputedValue] | None = None,
     job_parameters: list[JobParameter] | None = None,
     repair: RepairContext | None = None,
 ) -> str:
@@ -414,7 +434,7 @@ def build_engineer_prompt(
     # reached for `CobolArithmetic` without having been told what was in it, and run 2 wrote a
     # second-choice implementation it had itself named as second-choice for exactly that reason.
     target_api = render_target_api_facts()
-    domain_facts = render_domain_facts(entities, composites)
+    domain_facts = render_domain_facts(entities, composites, computed_values)
     narration = wrap_untrusted_cobol(
         program_entry.spec_extraction.spec_markdown,
         source_label=f"{program_entry.program_name}-spec",
@@ -491,6 +511,7 @@ def generate_processor(
     *,
     package: str,
     composites: list[CompositeType] | None = None,
+    computed_values: list[ComputedValue] | None = None,
     job_parameters: list[JobParameter] | None = None,
     input_type: str,
     output_type: str,
@@ -536,6 +557,7 @@ def generate_processor(
         input_type=input_type,
         output_type=output_type,
         composites=composites,
+        computed_values=computed_values,
         job_parameters=job_parameters,
         repair=repair,
     )

@@ -39,6 +39,7 @@ from cobol_modernizer.core.contracts import (
     BatchJobDesign,
     BatchStepDesign,
     CompositeType,
+    ComputedValue,
     DesignDocument,
     DomainEntity,
     JobParameter,
@@ -258,6 +259,7 @@ def heal_step(
     *,
     package: str,
     composites: list[CompositeType] | None = None,
+    computed_values: list[ComputedValue] | None = None,
     job_parameters: list[JobParameter] | None = None,
     input_type: str,
     output_type: str,
@@ -302,6 +304,7 @@ def heal_step(
             entities,
             package=package,
             composites=composites,
+            computed_values=computed_values,
             job_parameters=job_parameters,
             input_type=input_type,
             output_type=output_type,
@@ -555,6 +558,7 @@ def run_generate(
                     entities,
                     package=package,
                     composites=list(design.composite_types),
+                    computed_values=list(design.computed_values),
                     # Only the parameters this step declares it consumes (ADR-0026), resolved
                     # against the job's own declarations. A step naming one the job does not
                     # declare is a design defect, and `_resolve_job_parameters` raises rather

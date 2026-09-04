@@ -193,3 +193,20 @@ def test_a_composite_with_no_computed_fields_is_unchanged() -> None:
     assert render_composite(plain, package=PACKAGE) == render_composite(
         plain, package=PACKAGE, computed_values=[MONTHLY_INTEREST]
     )
+
+
+def test_the_generator_is_shown_the_computed_accessor() -> None:
+    """Gap G24's lesson, applied to the field ADR-0062 adds.
+
+    G24 was a model asked to compute interest from a composite whose declaration appeared nowhere
+    in its prompt: it guessed the accessors twice and said it was guessing. A computed field is a
+    component of the record itself, with no `item.x().y()` shape to reach it by, and a step whose
+    output type declares one has to *construct* it. Listing components without it would show the
+    generator a record it cannot build.
+    """
+    from cobol_modernizer.nodes.modernization_engineer import render_domain_facts
+
+    facts = render_domain_facts([], [ACCRUED], [MONTHLY_INTEREST])
+
+    assert "- BigDecimal monthlyInterest()" in facts
+    assert "WS-MONTHLY-INT: precision 11, scale 2, signed -- this step computes it" in facts
