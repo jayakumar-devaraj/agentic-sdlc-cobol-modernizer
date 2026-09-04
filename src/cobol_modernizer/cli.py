@@ -27,7 +27,12 @@ import sys
 import uuid
 from pathlib import Path
 
-from cobol_modernizer.core.contracts import DesignCliResult, GenerateCliResult
+from cobol_modernizer.core.contracts import (
+    NOT_RUN,
+    DesignCliResult,
+    EquivalenceVerdict,
+    GenerateCliResult,
+)
 from cobol_modernizer.core.design_outputs import write_design_outputs
 from cobol_modernizer.graph.design_graph import run_design
 from cobol_modernizer.graph.generate_pipeline import run_generate
@@ -155,6 +160,29 @@ def _run_design_command(args: argparse.Namespace) -> tuple[DesignCliResult, int]
     )
 
 
+def _describe_equivalence(verdict: EquivalenceVerdict) -> str:
+    """One line a reviewer can act on, for the sentence the release gate renders.
+
+    Reports `not run` as plainly as it reports a match. A summary that simply omits the subject is
+    what a human approved twice while the generated code posted the wrong money.
+    """
+    if verdict.status == "matched":
+        excluded = (
+            f", {len(verdict.excluded_fields)} field(s) excluded by decision"
+            if verdict.excluded_fields
+            else ""
+        )
+        return (
+            f"MATCHED against the COBOL oracle -- {verdict.records_compared} record(s), "
+            f"{verdict.fields_compared} field(s){excluded}."
+        )
+    if verdict.status == "mismatched":
+        shown = "; ".join(verdict.mismatches[:3])
+        more = f" (+{len(verdict.mismatches) - 3} more)" if len(verdict.mismatches) > 3 else ""
+        return f"MISMATCHED against the COBOL oracle -- {shown}{more}"
+    return f"NOT RUN -- {verdict.reason}"
+
+
 def _run_generate_command(args: argparse.Namespace) -> tuple[GenerateCliResult, int]:
     """Execute the `generate` subcommand. Returns the stdout contract object and the exit code."""
     run_id = args.run_id or uuid.uuid4().hex
@@ -184,8 +212,16 @@ def _run_generate_command(args: argparse.Namespace) -> tuple[GenerateCliResult, 
         )
 
     unfinished = outcome.blocked + outcome.exhausted
+    # ADR-0064: the equivalence verdict travels in `detail` as well as in its own field, because
+    # `detail` is the sentence control-plane's release gate renders. "Generated and compiled N
+    # processor step(s)." is true, contains no claim about correctness, and reads as success -- and
+    # two runs shipped wrong money past a human who saw exactly that line.
+    equivalence = NOT_RUN.model_copy(deep=True)
     if outcome.succeeded:
-        detail = f"Generated and compiled {len(outcome.compiled)} processor step(s)."
+        detail = (
+            f"Generated and compiled {len(outcome.compiled)} processor step(s). "
+            f"Equivalence: {_describe_equivalence(equivalence)}"
+        )
     elif not outcome.outcomes:
         detail = (
             "No processor steps to generate: the design's batch jobs contain no steps with "
@@ -211,6 +247,7 @@ def _run_generate_command(args: argparse.Namespace) -> tuple[GenerateCliResult, 
             steps_blocked=len(outcome.blocked),
             steps_exhausted=len(outcome.exhausted),
             steps_not_generated=len(outcome.not_generated),
+            equivalence=equivalence,
         ),
         0 if outcome.succeeded else 1,
     )
