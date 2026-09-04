@@ -52,6 +52,8 @@ from cobol_modernizer.core.contracts import (
     BatchStepDesign,
     CompositeComponent,
     CompositeType,
+    ComputedComponent,
+    ComputedValue,
     ControlBreakDesign,
     DomainEntity,
     DomainField,
@@ -67,6 +69,7 @@ from cobol_modernizer.core.model_client import call_model
 from cobol_modernizer.core.model_routing import RoutingDecision, resolve_routing
 from cobol_modernizer.core.structured_output import parse_with_repair, strip_code_fence
 from cobol_modernizer.nodes.spec_extractor import group_field_mappings_by_source
+from cobol_modernizer.parsing.computed_fields import computed_fields, referencing_paragraphs
 from cobol_modernizer.parsing.control_break import (
     ControlBreak,
     extract_control_breaks,
@@ -94,12 +97,19 @@ logger = logging.getLogger(__name__)
 
 _NODE_NAME = "solution_architect"
 
+#: v1_2_0 gives the architect the program's computed values and states the rule that a step must be
+#: able to return what it computes (ADR-0062). v1_1_0 offered no way to say "a `RatedCategoryBalance`
+#: plus the interest computed from it", so the architect designed the only expressible thing and the
+#: generated processor discarded its own result. Same two-halves shape as v1_1_0's own fix below:
+#: `_refuse_undeliverable_computed_values` enforces it, and enforcing a rule the prompt never stated
+#: would punish a model for following the contract it was given.
+#:
 #: v1_1_0 states what `step_name` has to look like (gap G22). v1_0_0 asked for a `step_name` and
 #: never said its shape, while three renderers derive a class name from it - so a model emitting a
 #: COBOL-style `1300-COMPUTE-INTEREST` was following the prompt it was given, and failing at
 #: `generate` time an approval later. Enforcing the rule without stating it would have been the
 #: worse half of the fix on its own.
-PROMPT_VERSION = "v1_1_0"
+PROMPT_VERSION = "v1_2_0"
 
 #: Rank for picking the highest tier across a run's programs. `ComplexityTier` is a `str` Enum, so
 #: it sorts alphabetically by default -- which would put "complex" below "moderate" and silently
@@ -483,6 +493,52 @@ def build_domain_entities(
 
 
 
+def build_computed_values(
+    worktree_root: Path, programs: list[ProgramDesignEntry]
+) -> list[ComputedValue]:
+    """Every working-storage value each program computes, with `pic_mapper`'s facts attached.
+
+    **The other half of `build_domain_entities`, and the reason this function exists.** That one
+    iterates the same groups and skips the program's own, because a domain entity is copybook-
+    sourced by definition (ADR-0010). Skipping was right; *discarding* was not. `WS-MONTHLY-INT`'s
+    precision and scale were computed here and thrown away one line later, and a model downstream
+    inferred them off the `PIC` clause instead.
+
+    Narrowed to values the program's arithmetic actually writes, rather than to every working-storage
+    field. Against this corpus that is 3 fields of `CBACT04C`'s 52 and 1 of `CBTRN02C`'s 52 -- the
+    business quantities, with none of the `FD-*` file aliases, `IO-STATUS` codes or `APPL-RESULT`
+    plumbing that a type-based or scale-based filter would have had to guess about. The narrowing is
+    syntactic, so it makes no judgment about which values matter.
+    """
+    values: list[ComputedValue] = []
+
+    for entry in programs:
+        resolved = resolve_program(worktree_root, entry.program_name)
+        grouped = group_field_mappings_by_source(resolved)
+        own_mappings, _unsupported = grouped.get(entry.program_name, ([], []))
+        by_name = {mapping.field_name.upper(): mapping for mapping in own_mappings}
+
+        found = computed_fields(resolved.source_text, set(by_name))
+        for cobol_field_name, paragraphs in sorted(found.items()):
+            mapping = by_name[cobol_field_name]
+            readers = referencing_paragraphs(resolved.source_text, cobol_field_name)
+            values.append(
+                ComputedValue(
+                    program_name=entry.program_name,
+                    cobol_field_name=mapping.field_name,
+                    java_type=mapping.java_type,
+                    precision=mapping.precision,
+                    scale=mapping.scale,
+                    signed=mapping.signed,
+                    computed_in_paragraphs=sorted(paragraphs),
+                    escapes_to=sorted(readers - paragraphs),
+                    lands_in_field=landing_field(resolved.source_text, cobol_field_name),
+                )
+            )
+
+    return values
+
+
 def _entities_of(type_name: str, design: UnifiedDesign) -> list[str]:
     """The domain entities a declared type carries -- itself, or a composite's components."""
     composite = next((c for c in design.composite_types if c.name == type_name), None)
@@ -529,6 +585,78 @@ def unobtainable_inputs(
     return sorted(
         {entity for entity in _entities_of(step.input_type, design) if entity not in available}
     )
+
+def undeliverable_computed_values(
+    job: BatchJobDesign, step: BatchStepDesign, design: UnifiedDesign
+) -> list[str]:
+    """Values this step computes that its output type has nowhere to put (ADR-0062).
+
+    **The check the step-49 defect needed and nobody had.** `computeMonthlyInterest` was designed
+    `in = out = RatedCategoryBalance`; the renderer emitted a structurally correct
+    `ItemProcessor<RatedCategoryBalance, RatedCategoryBalance>`; and the model computed the monthly
+    interest, wrote a javadoc saying it "accumulates it into the account's running month total", and
+    returned `item`. Discarding a value is legal Java, every component behaved correctly, and the
+    only way to notice was to read the generated body.
+
+    Three narrowings, and each of them turns a false alarm into silence rather than the reverse:
+
+    1. **Processors only.** A reader's and a writer's outputs are bound by `READ ... INTO` and
+       `WRITE ... FROM`, and a tasklet has no item at all -- which is why `unobtainable_inputs`
+       states the same limit for outputs. Without this, `CBACT01C`'s and `CBCUS01C`'s open/close
+       tasklets would be reported for computing `APPL-RESULT`, a status code that is control flow.
+    2. **Only values that escape the paragraph computing them.** `CBTRN02C`'s `WS-TEMP-BAL` is
+       computed and then compared against a credit limit in the same paragraph, and `CBACT04C`'s
+       `WS-TRANID-SUFFIX` is built and consumed inside `1300-B-WRITE-TX`. Neither has anywhere to
+       go, neither needs one, and a rule without this would refuse both correct designs. It is also
+       what makes this different from refusing `input_type == output_type`, which is mechanical,
+       cheap and wrong: a processor returning `null` to filter is a legitimate X -> X step, and this
+       fires on none of them.
+    3. **A value that lands in a record the output already carries is delivered.**
+       `WS-MONTHLY-INT` reaches `TRAN-AMT`, so a design whose output composite carries `Tran` needs
+       no computed field -- the value rides the record. Refusing that would force a redundant
+       declaration and make the honest design the one that fails.
+
+    Against this corpus the rule fires on exactly `WS-MONTHLY-INT` and `WS-TOTAL-INT` in
+    `computeMonthlyInterest` -- the two halves of the real defect, one of them the accumulation the
+    generated javadoc claimed and did not perform -- and on nothing else in four programs.
+
+    Returns sorted COBOL field names, so a refusal message is stable across runs.
+    """
+    if step.role != "processor":
+        return []
+
+    owned = {name.upper() for name in step.source_paragraphs}
+    carried = set(_entities_of(step.output_type, design))
+
+    output = next((c for c in design.composite_types if c.name == step.output_type), None)
+    declared = (
+        {computed.cobol_field_name.upper() for computed in output.computed_fields}
+        if output is not None
+        else set()
+    )
+
+    owners: dict[str, set[str]] = {}
+    for entity in design.domain_entities:
+        for field in entity.fields:
+            owners.setdefault(field.cobol_field_name.upper(), set()).add(entity.name)
+
+    undelivered: list[str] = []
+    for value in design.computed_values:
+        if value.program_name != job.program_name:
+            continue
+        if not {name.upper() for name in value.computed_in_paragraphs} & owned:
+            continue
+        if not value.escapes_to:
+            continue
+        if value.cobol_field_name.upper() in declared:
+            continue
+        landing = (value.lands_in_field or "").upper()
+        if landing and owners.get(landing, set()) & carried:
+            continue
+        undelivered.append(value.cobol_field_name)
+
+    return sorted(undelivered)
+
 
 def unreachable_entities(
     step: BatchStepDesign,
@@ -591,7 +719,9 @@ def unreachable_entities(
     return sorted(unreachable)
 
 def _render_known_facts(
-    domain_entities: list[DomainEntity], programs: list[ProgramDesignEntry]
+    domain_entities: list[DomainEntity],
+    programs: list[ProgramDesignEntry],
+    computed_values: list[ComputedValue] | None = None,
 ) -> str:
     """Render the deterministic facts block the prompt's system instructions call "Known Facts"."""
     lines = ["# Known Facts for solution_architect", ""]
@@ -612,6 +742,25 @@ def _render_known_facts(
             )
         lines.append("")
 
+    if computed_values:
+        lines.append("## Computed values per program (deterministic -- never re-read from a PIC clause)")
+        lines += [
+            "| Program | COBOL field | Java type | Precision | Scale | Computed in | Also read by |",
+            "|---|---|---|---|---|---|---|",
+        ]
+        for value in computed_values:
+            precision = value.precision if value.precision is not None else "-"
+            scale = value.scale if value.scale is not None else "-"
+            # "Also read by" is the column that decides whether a value has to cross a step
+            # boundary. An empty one is a local intermediate and needs no home.
+            escapes = ", ".join(value.escapes_to) or "(nothing -- local to its paragraph)"
+            lines.append(
+                f"| {value.program_name} | {value.cobol_field_name} | {value.java_type} "
+                f"| {precision} | {scale} | {', '.join(value.computed_in_paragraphs)} "
+                f"| {escapes} |"
+            )
+        lines.append("")
+
     lines.append("## Paragraph flow per program (source order)")
     for entry in programs:
         lines.append(f"### {entry.program_name}")
@@ -623,7 +772,9 @@ def _render_known_facts(
 
 
 def build_architect_prompt(
-    domain_entities: list[DomainEntity], programs: list[ProgramDesignEntry]
+    domain_entities: list[DomainEntity],
+    programs: list[ProgramDesignEntry],
+    computed_values: list[ComputedValue] | None = None,
 ) -> str:
     """Build the user-turn prompt content: Known Facts followed by every wrapped, untrusted narration.
 
@@ -632,7 +783,7 @@ def build_architect_prompt(
     (`core.guardrails.DelimiterForgeryError`) is not caught here, same as `spec_extractor`'s and
     `spec_critic`'s own prompt builders -- an unambiguous hard failure that must propagate.
     """
-    known_facts = _render_known_facts(domain_entities, programs)
+    known_facts = _render_known_facts(domain_entities, programs, computed_values)
     wrapped_sections = [
         wrap_untrusted_cobol(entry.spec_extraction.spec_markdown, source_label=entry.program_name)
         for entry in programs
@@ -650,6 +801,7 @@ def _parse_unified_design_response(
     raw_response: str,
     domain_entities: list[DomainEntity],
     programs: list[ProgramDesignEntry],
+    computed_values: list[ComputedValue] | None = None,
 ) -> tuple[list[BatchJobDesign], list[RestEndpointDesign], list[CompositeType]]:
     """Parse and validate the architect model's JSON response against the real Known Facts.
 
@@ -697,8 +849,37 @@ def _parse_unified_design_response(
                     field_name=component["field_name"], entity_name=component["entity_name"]
                 )
             )
+        computed_names = {value.cobol_field_name.upper() for value in computed_values or []}
+        computed_components: list[ComputedComponent] = []
+        for computed in composite.get("computed_fields", []):
+            computed = _require_keys(
+                computed, {"field_name", "cobol_field_name"}, "composite computed field"
+            )
+            # Refused here for the same reason an unknown `entity_name` is, one branch above: a
+            # composite may only reference what the deterministic layer actually produced. The
+            # difference is what a wrong answer costs -- an unknown entity fails at render time,
+            # while an unknown computed value would have to be given a Java type and precision by
+            # something, and every candidate for "something" is a guess.
+            if computed["cobol_field_name"].upper() not in computed_names:
+                raise SolutionArchitectParseError(
+                    f"solution_architect composite {composite['name']!r} declares computed field "
+                    f"{computed['field_name']!r} carrying "
+                    f"{computed['cobol_field_name']!r}, which is not one of this run's computed "
+                    f"values: {sorted(computed_names)}. A computed field's type, precision and "
+                    "scale come from the Known Facts; name one of those values or drop the field."
+                )
+            computed_components.append(
+                ComputedComponent(
+                    field_name=computed["field_name"],
+                    cobol_field_name=computed["cobol_field_name"],
+                )
+            )
         composite_types.append(
-            CompositeType(name=composite["name"], components=components)
+            CompositeType(
+                name=composite["name"],
+                components=components,
+                computed_fields=computed_components,
+            )
         )
 
     known_type_names = entity_names | {composite.name for composite in composite_types}
@@ -792,7 +973,56 @@ def _parse_unified_design_response(
             )
         )
 
+    _refuse_undeliverable_computed_values(
+        batch_jobs, composite_types, domain_entities, computed_values or []
+    )
+
     return batch_jobs, rest_endpoints, composite_types
+
+
+def _refuse_undeliverable_computed_values(
+    batch_jobs: list[BatchJobDesign],
+    composite_types: list[CompositeType],
+    domain_entities: list[DomainEntity],
+    computed_values: list[ComputedValue],
+) -> None:
+    """Refuse a design whose processor computes a value it cannot return (ADR-0062).
+
+    **Refused where it is produced, before a human approves it** -- ADR-0020 decision 5's rule and
+    ADR-0059's shape. The alternative is what actually happened: the design passed every check,
+    a human approved it at the gate, `generate` rendered a structurally correct processor, and the
+    defect surfaced only when someone read the generated Java at the release gate.
+
+    Reached through `parse_with_repair`, so a model that produced such a design gets one repair
+    attempt carrying this message rather than a run that dies an approval later. The message
+    therefore names the fix -- declare a computed field on the output composite -- because it is
+    read by a model as instructions, not only by a person as a diagnosis.
+    """
+    design = UnifiedDesign(
+        domain_entities=domain_entities,
+        batch_jobs=batch_jobs,
+        rest_endpoints=[],
+        composite_types=composite_types,
+        computed_values=computed_values,
+    )
+
+    for job in batch_jobs:
+        for step in job.steps:
+            undelivered = undeliverable_computed_values(job, step, design)
+            if not undelivered:
+                continue
+            names = ", ".join(undelivered)
+            raise SolutionArchitectParseError(
+                f"solution_architect step {step.step_name!r} computes {names}, which its output "
+                f"type {step.output_type!r} cannot carry. Paragraph(s) "
+                f"{', '.join(step.source_paragraphs)} compute those values and other paragraphs "
+                f"read them, so they must survive the step -- but {step.output_type!r} has no "
+                f"field for them, and a processor that computes a value it cannot return discards "
+                f"it silently. Declare an output composite with a computed_fields entry naming "
+                f"each of {names} (its Java type, precision and scale come from computed_values, "
+                f"so give only field_name and cobol_field_name), or make the output type carry the "
+                f"record the value is moved into."
+            )
 
 
 #: `(model, system_prompt, user_content) -> raw response text`. Injected so `design_solution`'s
@@ -847,7 +1077,8 @@ def design_solution(
     `nodes.spec_extractor.extract_spec` and `nodes.spec_critic.critique_spec`.
     """
     domain_entities = build_domain_entities(worktree_root, programs)
-    user_content = build_architect_prompt(domain_entities, programs)
+    computed_values = build_computed_values(worktree_root, programs)
+    user_content = build_architect_prompt(domain_entities, programs, computed_values)
     system_prompt = _load_system_prompt()
 
     # One call reasoning across every program at once (ADR-0010), so it takes the *highest* tier
@@ -868,7 +1099,9 @@ def design_solution(
     batch_jobs, rest_endpoints, composite_types = parse_with_repair(
         _NODE_NAME,
         raw_response,
-        lambda text: _parse_unified_design_response(text, domain_entities, programs),
+        lambda text: _parse_unified_design_response(
+            text, domain_entities, programs, computed_values
+        ),
         lambda instruction: architect(routing, system_prompt, f"{user_content}\n\n{instruction}"),
         on=SolutionArchitectParseError,
     )
@@ -883,4 +1116,7 @@ def design_solution(
         # Deterministic, and built here rather than asked of the model above: the architect decides
         # the step chain, the COBOL decides how data is reached (G31, ADR-0030).
         file_access_paths=build_file_access_paths(worktree_root, programs),
+        # Deterministic for the same reason, and for one more: a `COMPUTE`'s target precision and
+        # scale are numbers a wrong answer to looks exactly like a right one (ADR-0062).
+        computed_values=computed_values,
     )

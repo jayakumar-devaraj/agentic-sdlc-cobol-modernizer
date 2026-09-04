@@ -167,13 +167,20 @@
       "type": "object"
     },
     "CompositeType": {
-      "description": "A record composed of existing domain entities, for a value no single copybook describes.\n\nIntroduced by ADR-0020 because a real `solution_architect` run chains processor steps, and the\nvalues flowing between them are not entities: \"a `TranCatBal` with its `Account` and `CardXref`\nresolved\" is a type the target genuinely needs and no copybook declares.\n\n**Every component references an entity that already exists.** A composite never introduces a\nfield a copybook did not produce, so `pic_mapper`'s computed precision and scale still reach the\ngenerated code unchanged -- the composite only says which records travel together.\n\nRendered deterministically rather than generated (ADR-0010's line, unmoved): the *shape* is a\nmechanical transform of this declaration, and only the *name* is judgment.",
+      "description": "A record composed of existing domain entities, for a value no single copybook describes.\n\nIntroduced by ADR-0020 because a real `solution_architect` run chains processor steps, and the\nvalues flowing between them are not entities: \"a `TranCatBal` with its `Account` and `CardXref`\nresolved\" is a type the target genuinely needs and no copybook declares.\n\n**Every component references something that already exists**, and ADR-0062 widened *what* only\nby one step. `components` reference entities, as they always have. `computed_fields` reference\nentries in `UnifiedDesign.computed_values` -- values the program's own arithmetic writes, which\n`pic_mapper` has already typed and given a precision and scale. So the invariant this class was\nbuilt on still holds where it matters: **a composite never invents a field's precision.** It\nonly widened from \"a copybook produced this\" to \"the deterministic layer produced this\",\nbecause the narrower reading is what left `computeMonthlyInterest` with `in = out =\nRatedCategoryBalance` and a monthly interest it computed and discarded.\n\nRendered deterministically rather than generated (ADR-0010's line, unmoved): the *shape* is a\nmechanical transform of this declaration, and only the *name* is judgment.",
       "properties": {
         "components": {
           "items": {
             "$ref": "#/$defs/CompositeComponent"
           },
           "title": "Components",
+          "type": "array"
+        },
+        "computed_fields": {
+          "items": {
+            "$ref": "#/$defs/ComputedComponent"
+          },
+          "title": "Computed Fields",
           "type": "array"
         },
         "name": {
@@ -186,6 +193,106 @@
         "components"
       ],
       "title": "CompositeType",
+      "type": "object"
+    },
+    "ComputedComponent": {
+      "description": "One computed field of a `CompositeType`: a field name, and the COBOL value it carries.\n\nThe exact shape of `CompositeComponent`, one level down: that names an entity, this names a\nvalue in `UnifiedDesign.computed_values`. Both leave the *naming* to the model and take\neverything else from the deterministic layer -- `field_name` is judgment (`monthlyInterest`),\nand `cobol_field_name` is a reference that must resolve (`WS-MONTHLY-INT`), which is what\ncarries `pic_mapper`'s type, precision and scale into the generated record unchanged.\n\nResolved in the context of the job whose step declares the composite, because\n`UnifiedDesign.computed_values` is program-scoped and a composite is not.",
+      "properties": {
+        "cobol_field_name": {
+          "title": "Cobol Field Name",
+          "type": "string"
+        },
+        "field_name": {
+          "title": "Field Name",
+          "type": "string"
+        }
+      },
+      "required": [
+        "field_name",
+        "cobol_field_name"
+      ],
+      "title": "ComputedComponent",
+      "type": "object"
+    },
+    "ComputedValue": {
+      "description": "A working-storage value the program computes, with `pic_mapper`'s facts about it.\n\n**The sixth sighting of the class `CLAUDE.md` names** (G21, G24, G26, G28, G30): a fact the\ndeterministic layer already held, dropped one step before its consumer. `pic_mapper` computes\n`WS-MONTHLY-INT` at precision 11, scale 2; `group_field_mappings_by_source` groups it under the\nprogram; and `build_domain_entities` discards that whole group, because a domain entity is\ncopybook-sourced by definition. The number then reached the generated code anyway -- as\n`requireFits(..., 11, 2)` -- because a model read it off the `PIC` clause in narration and said\nplainly that it was inferring. **A `COMPUTE`'s target scale is exactly the kind of number that\nmust be computed and handed over rather than narrated**, for the same reason `pic_mapper` may\nnot call a model: a wrong scale on a currency field looks exactly like a right one.\n\nDeterministic throughout, and carrying no Java name on purpose. What this value should be\n*called* in a generated record is judgment, and belongs to the `ComputedComponent` that claims\nit; what it *is* -- type, precision, scale, sign, and which paragraphs produce it -- is read\nfrom the COBOL and is not the model's to choose.\n\n`program_name` is required because these are program-scoped, unlike a `DomainEntity`: two\nprograms may both declare `WS-TEMP-BAL` with different pictures, and merging them by name would\nbe the mistake ADR-0010 decision 1 refuses for copybooks.",
+      "properties": {
+        "cobol_field_name": {
+          "title": "Cobol Field Name",
+          "type": "string"
+        },
+        "computed_in_paragraphs": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Computed In Paragraphs",
+          "type": "array"
+        },
+        "escapes_to": {
+          "default": [],
+          "items": {
+            "type": "string"
+          },
+          "title": "Escapes To",
+          "type": "array"
+        },
+        "java_type": {
+          "title": "Java Type",
+          "type": "string"
+        },
+        "lands_in_field": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Lands In Field"
+        },
+        "precision": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Precision"
+        },
+        "program_name": {
+          "title": "Program Name",
+          "type": "string"
+        },
+        "scale": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Scale"
+        },
+        "signed": {
+          "default": false,
+          "title": "Signed",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "program_name",
+        "cobol_field_name",
+        "java_type",
+        "computed_in_paragraphs"
+      ],
+      "title": "ComputedValue",
       "type": "object"
     },
     "ControlBreakDesign": {
@@ -1040,6 +1147,13 @@
           "title": "Composite Types",
           "type": "array"
         },
+        "computed_values": {
+          "items": {
+            "$ref": "#/$defs/ComputedValue"
+          },
+          "title": "Computed Values",
+          "type": "array"
+        },
         "domain_entities": {
           "items": {
             "$ref": "#/$defs/DomainEntity"
@@ -1154,7 +1268,7 @@
       "type": "array"
     },
     "schema_version": {
-      "default": "3.9.0",
+      "default": "3.10.0",
       "title": "Schema Version",
       "type": "string"
     },

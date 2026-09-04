@@ -23,8 +23,14 @@ for now, and this is that level, in the generated file itself rather than only i
 from __future__ import annotations
 
 import logging
+from collections.abc import Sequence
 
-from cobol_modernizer.core.contracts import CompositeType, DomainEntity, DomainField
+from cobol_modernizer.core.contracts import (
+    CompositeType,
+    ComputedValue,
+    DomainEntity,
+    DomainField,
+)
 from cobol_modernizer.rendering.java_names import (
     UnrenderableJavaNameError,
     require_java_identifier,
@@ -32,17 +38,46 @@ from cobol_modernizer.rendering.java_names import (
 
 logger = logging.getLogger(__name__)
 
-__all__ = ["UnrenderableJavaNameError", "render_composite", "render_record"]
+
+class UnresolvedComputedValueError(Exception):
+    """A composite declares a computed field naming a value the design does not carry.
+
+    A backstop rather than the first line of defence: `UnifiedDesign.unresolvable_type_names`
+    refuses this where the design is *produced*, before a human approves it (ADR-0020 decision 5,
+    ADR-0059's shape). Reaching here means a design was assembled some other way -- by hand, or
+    loaded from a `design.json` older than the composite that references it -- and the honest
+    response is still to fail loudly, because the alternative is inventing a Java type for a
+    currency field.
+    """
 
 
-def render_composite(composite: CompositeType, *, package: str) -> str:
-    """Render a `CompositeType` as a Java record whose components are other records (ADR-0020).
+__all__ = [
+    "UnrenderableJavaNameError",
+    "UnresolvedComputedValueError",
+    "render_composite",
+    "render_record",
+]
+
+
+def render_composite(
+    composite: CompositeType,
+    *,
+    package: str,
+    computed_values: Sequence[ComputedValue] = (),
+) -> str:
+    """Render a `CompositeType` as a Java record of other records and computed values (ADR-0020).
 
     **Its provenance names the entities it composes, never a source copybook.** A composite is a
     target-side invention -- "a `TranCatBal` with its `Account` resolved" corresponds to no copybook
     -- so claiming one would satisfy `CLAUDE.md`'s trace-to-source requirement by pointing at
     something that does not exist. Naming the composed entities keeps the trace real: each of them
     carries its own copybook, one hop away.
+
+    A computed component traces to a real COBOL field too, just not a copybook one, so its `@param`
+    names the working-storage field it carries (ADR-0062). Its Java type comes from
+    `computed_values` -- `pic_mapper`'s answer -- and never from this function, which is the whole
+    point of the field existing: a `COMPUTE`'s target scale must be computed and handed over, not
+    read off a `PIC` clause by whatever writes the body.
 
     Deterministic for the same reason `render_record` is: this is a mechanical transform of a
     declaration, and a model asked to perform it would vary between runs for no gain.
@@ -55,12 +90,35 @@ def render_composite(composite: CompositeType, *, package: str) -> str:
             component.field_name, source_name=component.entity_name, kind="Component name"
         )
 
+    by_cobol_name = {value.cobol_field_name.upper(): value for value in computed_values}
+    resolved: list[tuple[str, ComputedValue]] = []
+    for computed in composite.computed_fields:
+        require_java_identifier(
+            computed.field_name, source_name=computed.cobol_field_name, kind="Computed field name"
+        )
+        value = by_cobol_name.get(computed.cobol_field_name.upper())
+        if value is None:
+            raise UnresolvedComputedValueError(
+                f"composite {composite.name!r} declares computed field "
+                f"{computed.field_name!r} carrying {computed.cobol_field_name!r}, which is not in "
+                "the design's computed_values. A computed field's Java type, precision and scale "
+                "come from pic_mapper; there is nothing to render it from."
+            )
+        resolved.append((computed.field_name, value))
+
     composed = ", ".join(component.entity_name for component in composite.components)
-    lines = [
-        f"package {package};",
-        "",
+    lines = [f"package {package};", ""]
+
+    # Entity components need no import -- every domain type is rendered into this same package.
+    # A computed component is the first thing a composite can hold that is not one of them, and
+    # `BigDecimal` is `java.math`. Rendering the field without this produces a record that reads
+    # correctly and does not compile, which the first render of `AccruedCategoryInterest` did.
+    if any(value.java_type == "BigDecimal" for _name, value in resolved):
+        lines += ["import java.math.BigDecimal;", ""]
+
+    lines += [
         "/**",
-        f" * {class_name} -- a composite of {composed}.",
+        f" * {class_name} -- a composite of {composed or '(no records)'}.",
         " *",
         " * <p>Target-side only: this type composes records that travel together through a batch",
         " * step chain, and corresponds to no single COBOL copybook. Each component below carries",
@@ -71,23 +129,32 @@ def render_composite(composite: CompositeType, *, package: str) -> str:
         f" * @param {component.field_name} the {component.entity_name} record"
         for component in composite.components
     ]
+    lines += [
+        f" * @param {field_name} {value.cobol_field_name} "
+        f"({value.java_type}, precision {value.precision}, scale {value.scale}), computed by "
+        f"{', '.join(value.computed_in_paragraphs)}"
+        for field_name, value in resolved
+    ]
     lines += [" */"]
 
-    if not composite.components:
+    parameters = [
+        f"        {component.entity_name} {component.field_name}"
+        for component in composite.components
+    ] + [f"        {value.java_type} {field_name}" for field_name, value in resolved]
+
+    if not parameters:
         lines += [f"public record {class_name}() {{}}", ""]
         return "\n".join(lines)
 
     lines += [f"public record {class_name}("]
-    lines += [
-        ",\n".join(
-            f"        {component.entity_name} {component.field_name}"
-            for component in composite.components
-        )
-    ]
+    lines += [",\n".join(parameters)]
     lines += [") {}", ""]
 
     logger.debug(
-        "rendered composite %s from %d entity component(s)", class_name, len(composite.components)
+        "rendered composite %s from %d entity component(s) and %d computed value(s)",
+        class_name,
+        len(composite.components),
+        len(resolved),
     )
     return "\n".join(lines)
 

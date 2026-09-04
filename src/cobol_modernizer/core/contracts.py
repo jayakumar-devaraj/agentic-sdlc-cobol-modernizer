@@ -258,11 +258,76 @@ class ControlBreakDesign(BaseModel):
     add_line: int
 
 
+class ComputedValue(BaseModel):
+    """A working-storage value the program computes, with `pic_mapper`'s facts about it.
+
+    **The sixth sighting of the class `CLAUDE.md` names** (G21, G24, G26, G28, G30): a fact the
+    deterministic layer already held, dropped one step before its consumer. `pic_mapper` computes
+    `WS-MONTHLY-INT` at precision 11, scale 2; `group_field_mappings_by_source` groups it under the
+    program; and `build_domain_entities` discards that whole group, because a domain entity is
+    copybook-sourced by definition. The number then reached the generated code anyway -- as
+    `requireFits(..., 11, 2)` -- because a model read it off the `PIC` clause in narration and said
+    plainly that it was inferring. **A `COMPUTE`'s target scale is exactly the kind of number that
+    must be computed and handed over rather than narrated**, for the same reason `pic_mapper` may
+    not call a model: a wrong scale on a currency field looks exactly like a right one.
+
+    Deterministic throughout, and carrying no Java name on purpose. What this value should be
+    *called* in a generated record is judgment, and belongs to the `ComputedComponent` that claims
+    it; what it *is* -- type, precision, scale, sign, and which paragraphs produce it -- is read
+    from the COBOL and is not the model's to choose.
+
+    `program_name` is required because these are program-scoped, unlike a `DomainEntity`: two
+    programs may both declare `WS-TEMP-BAL` with different pictures, and merging them by name would
+    be the mistake ADR-0010 decision 1 refuses for copybooks.
+    """
+
+    program_name: str
+    cobol_field_name: str
+    java_type: str
+    precision: int | None = None
+    scale: int | None = None
+    signed: bool = False
+    #: The paragraph(s) whose arithmetic writes this field. This is what lets a caller charge the
+    #: value to the step that declares that paragraph in `source_paragraphs`, rather than to the
+    #: job as a whole -- `WS-MONTHLY-INT` is computed in `1300-COMPUTE-INTEREST` and
+    #: `WS-TRANID-SUFFIX` in `1300-B-WRITE-TX`, and those are two different steps.
+    computed_in_paragraphs: list[str]
+    #: Paragraphs that read this value without computing it. **Empty means the value is a local
+    #: intermediate and needs to survive nothing**, which is the distinction that makes a refusal
+    #: safe: `CBTRN02C`'s `WS-TEMP-BAL` is computed and then compared against a credit limit in the
+    #: same paragraph, and `CBACT04C`'s `WS-TRANID-SUFFIX` is built and consumed inside
+    #: `1300-B-WRITE-TX`. Neither has anywhere to go and neither needs one. `WS-MONTHLY-INT`
+    #: escapes to `1300-B-WRITE-TX` and `WS-TOTAL-INT` to `1050-UPDATE-ACCOUNT` -- both owned by
+    #: other steps, which is exactly why the value has to cross a step boundary to get there.
+    escapes_to: list[str] = []
+    #: The record field this value is `MOVE`d into, if any -- `WS-MONTHLY-INT` reaches `TRAN-AMT`.
+    #: A second, legitimate way for a value to be delivered: if the step's output type already
+    #: carries the entity owning this field, the value lands without needing a computed field.
+    lands_in_field: str | None = None
+
+
 class CompositeComponent(BaseModel):
     """One component of a `CompositeType`: a field name, and the entity it holds."""
 
     field_name: str
     entity_name: str
+
+
+class ComputedComponent(BaseModel):
+    """One computed field of a `CompositeType`: a field name, and the COBOL value it carries.
+
+    The exact shape of `CompositeComponent`, one level down: that names an entity, this names a
+    value in `UnifiedDesign.computed_values`. Both leave the *naming* to the model and take
+    everything else from the deterministic layer -- `field_name` is judgment (`monthlyInterest`),
+    and `cobol_field_name` is a reference that must resolve (`WS-MONTHLY-INT`), which is what
+    carries `pic_mapper`'s type, precision and scale into the generated record unchanged.
+
+    Resolved in the context of the job whose step declares the composite, because
+    `UnifiedDesign.computed_values` is program-scoped and a composite is not.
+    """
+
+    field_name: str
+    cobol_field_name: str
 
 
 class CompositeType(BaseModel):
@@ -272,9 +337,14 @@ class CompositeType(BaseModel):
     values flowing between them are not entities: "a `TranCatBal` with its `Account` and `CardXref`
     resolved" is a type the target genuinely needs and no copybook declares.
 
-    **Every component references an entity that already exists.** A composite never introduces a
-    field a copybook did not produce, so `pic_mapper`'s computed precision and scale still reach the
-    generated code unchanged -- the composite only says which records travel together.
+    **Every component references something that already exists**, and ADR-0062 widened *what* only
+    by one step. `components` reference entities, as they always have. `computed_fields` reference
+    entries in `UnifiedDesign.computed_values` -- values the program's own arithmetic writes, which
+    `pic_mapper` has already typed and given a precision and scale. So the invariant this class was
+    built on still holds where it matters: **a composite never invents a field's precision.** It
+    only widened from "a copybook produced this" to "the deterministic layer produced this",
+    because the narrower reading is what left `computeMonthlyInterest` with `in = out =
+    RatedCategoryBalance` and a monthly interest it computed and discarded.
 
     Rendered deterministically rather than generated (ADR-0010's line, unmoved): the *shape* is a
     mechanical transform of this declaration, and only the *name* is judgment.
@@ -282,6 +352,9 @@ class CompositeType(BaseModel):
 
     name: str
     components: list[CompositeComponent]
+    #: Values the composite carries that no record holds (ADR-0062). Defaults to empty because most
+    #: composites are joins of records and carry none.
+    computed_fields: list[ComputedComponent] = Field(default_factory=list)
 
 
 class JobParameter(BaseModel):
@@ -462,6 +535,25 @@ class UnifiedDesign(BaseModel):
     #: Target-side types composed of domain entities (ADR-0020). Defaults to empty because a design
     #: whose steps all operate on plain entities needs none.
     composite_types: list[CompositeType] = Field(default_factory=list)
+    #: Working-storage values each program computes (ADR-0062). Deterministic, parsed from
+    #: arithmetic receiving positions -- never model-authored, for the reason `pic_mapper` may not
+    #: call a model. Defaults to empty so a design produced before schema 3.10.0 still validates;
+    #: the producer always fills it, so there is no silence to distinguish here.
+    computed_values: list[ComputedValue] = Field(default_factory=list)
+
+    def resolve_computed_value(
+        self, program_name: str, cobol_field_name: str
+    ) -> ComputedValue | None:
+        """The computed value `cobol_field_name` names within `program_name`, or `None`.
+
+        Scoped by program deliberately: `WS-TEMP-BAL` in one program is not `WS-TEMP-BAL` in
+        another, and resolving across programs would hand a composite the wrong precision for a
+        currency field -- silently, and in the direction that still compiles.
+        """
+        for value in self.computed_values:
+            if value.program_name == program_name and value.cobol_field_name == cobol_field_name:
+                return value
+        return None
 
     def resolve_type(self, name: str) -> DomainEntity | CompositeType | None:
         """The entity or composite `name` refers to, or `None` when it refers to neither.
@@ -495,11 +587,42 @@ class UnifiedDesign(BaseModel):
                 for name in (step.input_type, step.output_type):
                     if self.resolve_type(name) is None:
                         missing.append(name)
+        missing.extend(self.unresolvable_computed_field_names())
+        return missing
+
+    def unresolvable_computed_field_names(self) -> list[str]:
+        """Every `ComputedComponent` whose `cobol_field_name` resolves to no computed value.
+
+        Resolved in the context of the job that reaches the composite, because
+        `computed_values` is program-scoped and a `CompositeType` is not. A composite no step
+        names is checked against every program instead -- it is unreachable and about to be
+        reported as such, and refusing it here for the wrong reason would say so misleadingly.
+        """
+        programs_by_composite: dict[str, set[str]] = {}
+        for job in self.batch_jobs:
+            for step in job.steps:
+                for type_name in (step.input_type, step.output_type):
+                    programs_by_composite.setdefault(type_name, set()).add(job.program_name)
+
+        every_program = {value.program_name for value in self.computed_values}
+
+        missing: list[str] = []
+        for composite in self.composite_types:
+            if not composite.computed_fields:
+                continue
+            programs = programs_by_composite.get(composite.name) or every_program
+            for computed in composite.computed_fields:
+                if not any(
+                    self.resolve_computed_value(program, computed.cobol_field_name) is not None
+                    for program in programs
+                ):
+                    missing.append(computed.cobol_field_name)
         return missing
 
 #: design.json's own envelope version -- bump this on any breaking change to DesignDocument's
 #: shape, e.g. once solution_architect gives `unified_design` a real type.
-SCHEMA_VERSION = "3.9.0"  # 3.9.0: BatchStepDesign.optional_lookups (ADR-0042)
+SCHEMA_VERSION = "3.10.0"  # 3.10.0: UnifiedDesign.computed_values (ADR-0062)
+#: 3.9.0 added BatchStepDesign.optional_lookups (ADR-0042).
 #: 3.8.0 added BatchStepDesign.reads_own_writes (ADR-0040).
 #: 3.7.0 added FileAccessPath.write_mode/write_lines -- the upsert mode (ADR-0037).
 #: 3.6.0 added BatchStepDesign.control_break (G31, ADR-0032).
