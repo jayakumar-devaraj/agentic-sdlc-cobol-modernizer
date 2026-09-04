@@ -228,9 +228,29 @@
           "title": "Computed In Paragraphs",
           "type": "array"
         },
+        "escapes_to": {
+          "default": [],
+          "items": {
+            "type": "string"
+          },
+          "title": "Escapes To",
+          "type": "array"
+        },
         "java_type": {
           "title": "Java Type",
           "type": "string"
+        },
+        "lands_in_field": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Lands In Field"
         },
         "precision": {
           "anyOf": [

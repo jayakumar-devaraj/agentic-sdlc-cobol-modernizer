@@ -87,3 +87,22 @@ def computed_fields(source_text: str, vocabulary: set[str]) -> dict[str, set[str
                     found.setdefault(field, set()).add(paragraph.name.upper())
 
     return found
+
+
+def referencing_paragraphs(source_text: str, field_name: str) -> set[str]:
+    """Every paragraph whose body mentions `field_name` as a whole token.
+
+    Whole tokens only, for `field_references`'s reason: `ACCT-ID` is a substring of `FD-ACCT-ID`,
+    and a naive containment test would report a file-section alias as a reference to the field.
+
+    Subtracting the paragraphs that *compute* a value from the paragraphs that *mention* it is what
+    separates a local intermediate from one that has to cross a step boundary. It deliberately does
+    not follow `PERFORM`: the question is which paragraph the reference is written in, not which
+    step can reach it, and following calls would attribute a callee's read to its caller.
+    """
+    wanted = field_name.upper()
+    return {
+        paragraph.name.upper()
+        for paragraph in extract_paragraphs(source_text)
+        if wanted in set(re.findall(_WORD, paragraph.body.upper()))
+    }

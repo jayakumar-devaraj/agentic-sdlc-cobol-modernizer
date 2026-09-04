@@ -292,6 +292,18 @@ class ComputedValue(BaseModel):
     #: job as a whole -- `WS-MONTHLY-INT` is computed in `1300-COMPUTE-INTEREST` and
     #: `WS-TRANID-SUFFIX` in `1300-B-WRITE-TX`, and those are two different steps.
     computed_in_paragraphs: list[str]
+    #: Paragraphs that read this value without computing it. **Empty means the value is a local
+    #: intermediate and needs to survive nothing**, which is the distinction that makes a refusal
+    #: safe: `CBTRN02C`'s `WS-TEMP-BAL` is computed and then compared against a credit limit in the
+    #: same paragraph, and `CBACT04C`'s `WS-TRANID-SUFFIX` is built and consumed inside
+    #: `1300-B-WRITE-TX`. Neither has anywhere to go and neither needs one. `WS-MONTHLY-INT`
+    #: escapes to `1300-B-WRITE-TX` and `WS-TOTAL-INT` to `1050-UPDATE-ACCOUNT` -- both owned by
+    #: other steps, which is exactly why the value has to cross a step boundary to get there.
+    escapes_to: list[str] = []
+    #: The record field this value is `MOVE`d into, if any -- `WS-MONTHLY-INT` reaches `TRAN-AMT`.
+    #: A second, legitimate way for a value to be delivered: if the step's output type already
+    #: carries the entity owning this field, the value lands without needing a computed field.
+    lands_in_field: str | None = None
 
 
 class CompositeComponent(BaseModel):
