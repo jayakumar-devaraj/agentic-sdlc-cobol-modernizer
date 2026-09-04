@@ -15,9 +15,9 @@ from pathlib import Path
 TOOLS = Path(__file__).resolve().parents[2] / "tools" / "cobol-oracle"
 sys.path.insert(0, str(TOOLS))
 
-from cobol_modernizer.core.package_data import ORACLE_ROOT
-
 import generate_orachk
+
+from cobol_modernizer.core.package_data import ORACLE_ROOT
 
 
 def test_the_committed_orachk_matches_the_oracle_table():

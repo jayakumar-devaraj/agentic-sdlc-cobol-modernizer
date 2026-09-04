@@ -815,6 +815,30 @@ NOT_RUN = EquivalenceVerdict(
 )
 
 
+class EquivalenceTestVerdict(BaseModel):
+    """What the *rendered JUnit equivalence test* did, at unit granularity (ADR-0065).
+
+    **Separate from `EquivalenceVerdict`, and the distinction is the point.** That one is the
+    record-level differential: a built-and-run job's output files compared against COBOL's. This one
+    is a per-row check of one `COMPUTE`, rendered beside the processor and run by Maven. Folding
+    them into one field would let a green unit test read as a passing differential, which claims
+    orders of magnitude more than it has evidence for -- the exact overclaim ADR-0064 exists to
+    remove, one level down.
+
+    `refused` is the status that carries the most information and is easiest to mistake for an
+    error. It means the renderer would not write a test against this design because the step
+    computing the value has nowhere declared to put it -- **step 49's defect exactly**, caught before
+    any Java is written. A gate must render it as a finding, never as a tooling failure.
+    """
+
+    status: Literal["passed", "failed", "refused", "not_rendered"]
+    #: Why, in one line, for every status including `passed` -- what a green run does and does not
+    #: cover belongs beside the answer. ADR-0065's Consequences table is the long form.
+    reason: str
+    #: The rendered class, empty unless one was written. Names the file a reviewer opens.
+    test_class: str = ""
+
+
 class GenerateCliResult(BaseModel):
     """The `cobol-modernizer generate --json` stdout contract.
 
@@ -863,6 +887,14 @@ class GenerateCliResult(BaseModel):
     #: every later run's default. Caught by a test rather than by review.
     equivalence: EquivalenceVerdict = Field(
         default_factory=lambda: NOT_RUN.model_copy(deep=True)
+    )
+    #: What the rendered JUnit equivalence test did (ADR-0065). Defaults to `not_rendered` for the
+    #: same reason the field above defaults to `not_run`: a run that checked nothing must say so
+    #: rather than leave the subject out. Narrower than `equivalence` and never a substitute for it.
+    equivalence_test: EquivalenceTestVerdict = Field(
+        default_factory=lambda: EquivalenceTestVerdict(
+            status="not_rendered", reason="no equivalence test was rendered for this design"
+        )
     )
 
 

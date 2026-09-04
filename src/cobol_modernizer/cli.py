@@ -30,6 +30,7 @@ from pathlib import Path
 from cobol_modernizer.core.contracts import (
     DesignCliResult,
     DesignDocument,
+    EquivalenceTestVerdict,
     EquivalenceVerdict,
     GenerateCliResult,
 )
@@ -163,6 +164,26 @@ def _run_design_command(args: argparse.Namespace) -> tuple[DesignCliResult, int]
     )
 
 
+def _describe_equivalence_test(verdict: EquivalenceTestVerdict) -> str:
+    """One line for the rendered unit test, for the same sentence (ADR-0065).
+
+    **`REFUSED` reads as a finding here, not as a tooling failure**, because that is what it is: the
+    step computing the interest carries it nowhere the test can observe, which is the shape of the
+    defect that shipped as step 49. A gate that rendered it as "could not run" would restore exactly
+    the silence this line exists to break.
+    """
+    if verdict.status == "passed":
+        return (
+            f"{verdict.test_class} PASSED -- the per-row interest arithmetic matches COBOL's own "
+            f"answers. Covers one COMPUTE, not the account accumulator (ADR-0065)."
+        )
+    if verdict.status == "failed":
+        return f"{verdict.test_class} FAILED -- {verdict.reason}"
+    if verdict.status == "refused":
+        return f"REFUSED to render -- {verdict.reason}"
+    return f"not rendered -- {verdict.reason}"
+
+
 def _describe_equivalence(verdict: EquivalenceVerdict) -> str:
     """One line a reviewer can act on, for the sentence the release gate renders.
 
@@ -255,7 +276,8 @@ def _run_generate_command(args: argparse.Namespace) -> tuple[GenerateCliResult, 
     if outcome.succeeded:
         detail = (
             f"Generated and compiled {len(outcome.compiled)} processor step(s). "
-            f"Equivalence: {_describe_equivalence(equivalence)}"
+            f"Equivalence: {_describe_equivalence(equivalence)} "
+            f"Equivalence test: {_describe_equivalence_test(outcome.equivalence_test)}"
         )
     elif not outcome.outcomes:
         detail = (
@@ -283,6 +305,7 @@ def _run_generate_command(args: argparse.Namespace) -> tuple[GenerateCliResult, 
             steps_exhausted=len(outcome.exhausted),
             steps_not_generated=len(outcome.not_generated),
             equivalence=equivalence,
+            equivalence_test=outcome.equivalence_test,
         ),
         0 if outcome.succeeded else 1,
     )

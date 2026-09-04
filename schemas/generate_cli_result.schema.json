@@ -1,5 +1,35 @@
 {
   "$defs": {
+    "EquivalenceTestVerdict": {
+      "description": "What the *rendered JUnit equivalence test* did, at unit granularity (ADR-0065).\n\n**Separate from `EquivalenceVerdict`, and the distinction is the point.** That one is the\nrecord-level differential: a built-and-run job's output files compared against COBOL's. This one\nis a per-row check of one `COMPUTE`, rendered beside the processor and run by Maven. Folding\nthem into one field would let a green unit test read as a passing differential, which claims\norders of magnitude more than it has evidence for -- the exact overclaim ADR-0064 exists to\nremove, one level down.\n\n`refused` is the status that carries the most information and is easiest to mistake for an\nerror. It means the renderer would not write a test against this design because the step\ncomputing the value has nowhere declared to put it -- **step 49's defect exactly**, caught before\nany Java is written. A gate must render it as a finding, never as a tooling failure.",
+      "properties": {
+        "reason": {
+          "title": "Reason",
+          "type": "string"
+        },
+        "status": {
+          "enum": [
+            "passed",
+            "failed",
+            "refused",
+            "not_rendered"
+          ],
+          "title": "Status",
+          "type": "string"
+        },
+        "test_class": {
+          "default": "",
+          "title": "Test Class",
+          "type": "string"
+        }
+      },
+      "required": [
+        "status",
+        "reason"
+      ],
+      "title": "EquivalenceTestVerdict",
+      "type": "object"
+    },
     "EquivalenceVerdict": {
       "description": "What comparing the generated code's output against COBOL's own output found (ADR-0064).\n\n**`not_run` is a verdict, not an absence, and that is the whole point.** Two live runs shipped\nwrong money past the release gate -- a processor that computed a value and discarded it, and one\nthat set a per-account running total to a single row's amount -- and in both cases the gate said\n*\"Generated and compiled N processor step(s).\"* That sentence is true, contains no claim about\ncorrectness, and reads as success. A gate that reports quantities trains the approver to\napprove.\n\nSo this field always exists and always says something. A run that could not execute the\ncomparison reports `not_run` **with a reason**, which is a materially different thing for a\nhuman to weigh than a summary that simply omits the subject.\n\n`mismatches` is bounded by the caller: a differential that diverges early can produce one entry\nper field per record, and a gate item nobody can read is not evidence either. `excluded_fields`\nis carried because what a differential *does not* compare is exactly what a reviewer needs in\norder to price it -- ADR-0029's exclusions are decisions, and hiding them would make this\nnumber look stronger than it is.",
       "properties": {
@@ -57,6 +87,9 @@
     },
     "equivalence": {
       "$ref": "#/$defs/EquivalenceVerdict"
+    },
+    "equivalence_test": {
+      "$ref": "#/$defs/EquivalenceTestVerdict"
     },
     "output_path": {
       "title": "Output Path",

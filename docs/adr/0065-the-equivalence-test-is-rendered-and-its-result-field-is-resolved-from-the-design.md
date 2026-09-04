@@ -85,9 +85,28 @@ For the step whose `source_paragraphs` contains the oracle's `source.paragraph`,
 Selection is by declared paragraph, never by step name: `computeMonthlyInterest` is a name a model
 chose and is not a fact about anything.
 
-The rendered file goes to `src/test/java/<package>/<Processor>EquivalenceTest.java`, compiled and
-run by the same Maven the heal loop already drives. That is what makes it an equivalence test rather
-than a test of `CobolArithmetic`.
+The rendered file goes to `src/test/java/<package>/<Processor>EquivalenceTest.java`, beside the
+processor it tests. That is what makes it an equivalence test rather than a test of
+`CobolArithmetic`.
+
+**And `generate` runs it, because otherwise it renders inert.** The renderer's own docstring says
+the test is *"compiled and run by the same Maven the heal loop already drives"*. That sentence is
+false, and it was repeated into the first draft of this record before the loop was checked: the heal
+loop's goal is `compile`, which never compiles test sources. Rendering the file and stopping there
+would have shipped a feature that does nothing while the suite stays green — ADR-0063's failure,
+repeated in the record written to avoid repeating it.
+
+So `run_generate` runs one narrowed build after the heal loop:
+
+```
+mvn -B -ntp -Dtest=<Processor>EquivalenceTest -Dsurefire.failIfNoSpecifiedTests=false test
+```
+
+**The narrowing is required, not an optimisation.** The baseline template ships `BaselineStackTest`,
+which is `@SpringBootTest @Testcontainers`. An unfiltered `test` or `verify` inside `generate` would
+demand a Docker daemon on the specialist host and fail for reasons that say nothing about the
+interest arithmetic — and a gate whose correctness signal is really a Docker availability signal is
+worse than no signal.
 
 ### 2. The result accessor is resolved from the design, in two declared cases
 
@@ -113,7 +132,17 @@ consistent with the specialist contract's rule 5, as a fact for the gate, not a 
 This is a design-time catch. It fires before any Java is written, which is earlier and cheaper than
 the failing assertion it replaces.
 
-### 4. The oracle ships where the test that needs it can find it
+### 4. The verdict is its own field, never folded into `equivalence`
+
+`GenerateCliResult` gains `equivalence_test: EquivalenceTestVerdict`, defaulting to `not_rendered`
+for the reason ADR-0064 gave for `not_run`: a run that checked nothing must say so.
+
+Kept separate from `equivalence` because they are different claims at different granularities. That
+one compares a built-and-run job's **output records** against COBOL's; this one checks **one
+`COMPUTE`, per row**. Folding them would let a green unit test read as a passing differential —
+orders of magnitude more than it has evidence for, which is ADR-0064's overclaim one level down.
+
+### 5. The oracle ships where the test that needs it can find it
 
 `interest-oracle.json` moves into the package beside the `oracle/` directory ADR-0064 already moved.
 The same decision, already settled once, applied to the file left behind.
