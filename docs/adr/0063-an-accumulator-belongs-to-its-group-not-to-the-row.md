@@ -10,7 +10,14 @@ Marked *Proposed* rather than *Accepted* deliberately, and against this reposito
 prior records are Accepted. ADR-0062 was written as Accepted before anything had exercised it
 against a live model, and the hole it left was found one run later. Repeating that pattern here
 would be a decision claiming more confidence than it has earned. This becomes Accepted when the
-check below exists and a run produces a correct `postAccountInterest` item.
+check below exists **and** a run produces a correct `postAccountInterest` item.
+
+**Half met, as of this change.** The check exists and is tested: the correct design is now accepted
+where it was previously refused, the step-51 defect is refused, and both halves are verified by
+removal. `WS-MONTHLY-INT` is untouched. **The second condition is not met** — no live model has
+produced a design under prompt `v1_3_0`, so *the architect now places the accumulator correctly* is
+unproven, exactly as *the architect now returns what it computes* was unproven when ADR-0062 was
+written. That run is what flips this record.
 
 Restores the boundary [ADR-0027](0027-the-account-break-becomes-a-second-pass-over-pre-aggregated-items.md)
 already drew and ADR-0062 unknowingly crossed.
