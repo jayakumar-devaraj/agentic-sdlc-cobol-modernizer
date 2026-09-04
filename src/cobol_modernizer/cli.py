@@ -28,14 +28,17 @@ import uuid
 from pathlib import Path
 
 from cobol_modernizer.core.contracts import (
-    NOT_RUN,
     DesignCliResult,
+    DesignDocument,
     EquivalenceVerdict,
     GenerateCliResult,
 )
 from cobol_modernizer.core.design_outputs import write_design_outputs
+from cobol_modernizer.core.package_data import ORACLE_ROOT
+from cobol_modernizer.equivalence.harness import compare_project_output, unrenderable_reason
 from cobol_modernizer.graph.design_graph import run_design
 from cobol_modernizer.graph.generate_pipeline import run_generate
+from cobol_modernizer.rendering.java_job import plan_steps
 from cobol_modernizer.telemetry import tracing
 from cobol_modernizer.telemetry.logging_config import (
     bind_run_id,
@@ -183,6 +186,38 @@ def _describe_equivalence(verdict: EquivalenceVerdict) -> str:
     return f"NOT RUN -- {verdict.reason}"
 
 
+def _equivalence_for(outcome, design_path: Path, output_dir: Path) -> EquivalenceVerdict:
+    """The differential's verdict for this run, or `not_run` saying precisely why not (ADR-0064).
+
+    **Today this returns `not_run` for every real design, and the reason is the deliverable.**
+    `generate` renders processors (ADR-0019), not readers, writers or job configuration, so it
+    produces no project that runs -- for `CBACT04C`'s real design `plan_steps` reports 6 of 9 steps
+    renderable. Naming the three that are missing is a materially different thing for a reviewer to
+    weigh than a summary that omits correctness entirely, which is what a human approved twice while
+    the generated code posted the wrong money.
+
+    It becomes a real verdict with no change here the moment a run produces output: the comparison
+    is wired, the oracle ships in the wheel, and `compare_project_output` is what runs.
+    """
+    verdict = compare_project_output(output_dir, ORACLE_ROOT / "CBACT04C")
+    if verdict.status != "not_run":
+        return verdict
+
+    # No output. Say whether that is because the job could not be rendered -- which is a fact this
+    # phase knows and a reviewer cannot otherwise get -- rather than only that nothing was there.
+    try:
+        document = DesignDocument.model_validate_json(design_path.read_text(encoding="utf-8"))
+        design = document.unified_design
+        if design is not None and design.batch_jobs:
+            job = design.batch_jobs[0]
+            _renderable, skipped, _staged = plan_steps(job, design, job.program_name)
+            if skipped:
+                return EquivalenceVerdict(status="not_run", reason=unrenderable_reason(skipped))
+    except Exception:
+        logger.debug("generate: could not explain the missing comparison", exc_info=True)
+    return verdict
+
+
 def _run_generate_command(args: argparse.Namespace) -> tuple[GenerateCliResult, int]:
     """Execute the `generate` subcommand. Returns the stdout contract object and the exit code."""
     run_id = args.run_id or uuid.uuid4().hex
@@ -216,7 +251,7 @@ def _run_generate_command(args: argparse.Namespace) -> tuple[GenerateCliResult, 
     # `detail` is the sentence control-plane's release gate renders. "Generated and compiled N
     # processor step(s)." is true, contains no claim about correctness, and reads as success -- and
     # two runs shipped wrong money past a human who saw exactly that line.
-    equivalence = NOT_RUN.model_copy(deep=True)
+    equivalence = _equivalence_for(outcome, Path(args.design), output_dir)
     if outcome.succeeded:
         detail = (
             f"Generated and compiled {len(outcome.compiled)} processor step(s). "
