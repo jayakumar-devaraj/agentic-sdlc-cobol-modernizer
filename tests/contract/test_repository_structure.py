@@ -123,8 +123,7 @@ def test_the_tier_directories_are_exactly_the_declared_set():
     """
     actual = {d.name for d in TESTS_ROOT.iterdir() if d.is_dir()} - NON_TIER_DIRS
     assert actual == set(TIERS), (
-        f"directories under tests/ ({sorted(actual)}) do not match conftest.TIERS "
-        f"({sorted(TIERS)})"
+        f"directories under tests/ ({sorted(actual)}) do not match conftest.TIERS ({sorted(TIERS)})"
     )
 
 
@@ -174,9 +173,7 @@ def test_every_gitattributes_pattern_matches_something():
         pattern = stripped.split()[0]
         if not any(REPO_ROOT.glob(pattern)):
             dead.append(pattern)
-    assert not dead, (
-        f".gitattributes patterns matching no file, so their rules never apply: {dead}"
-    )
+    assert not dead, f".gitattributes patterns matching no file, so their rules never apply: {dead}"
 
 
 def test_every_repo_path_named_in_a_skill_exists():
@@ -213,6 +210,56 @@ def test_adr_numbers_run_from_one_without_gaps():
     assert numbers, "no ADRs found"
     assert numbers == list(range(1, len(numbers) + 1)), (
         f"ADR numbering has gaps or duplicates: {numbers}"
+    )
+
+
+def test_every_cited_adr_number_resolves_to_a_record():
+    """A citation is a path by another name, and nothing checked this one resolved.
+
+    **This assertion exists because it was needed.** Fourteen citations across ten committed files
+    named `ADR-0064` while no such file existed -- written into `cli.py`, `contracts.py`,
+    `package_data.py`, both equivalence modules, four test modules and `pyproject.toml`. The test
+    above passed throughout, because there was no *gap*: the record was never written, so nothing
+    was missing from the sequence.
+
+    That is this module's founding defect class one level up. Three committed files named paths that
+    did not resolve; these named a *decision* that did not exist, which is worse in one specific
+    way -- a reader who goes looking for the reasoning finds nothing and cannot tell whether the
+    record was deleted, renamed, or never written.
+
+    Checked across `src/`, `tests/`, `docs/` and `pyproject.toml`. `docs/adr/` is included so an
+    ADR citing a superseded record is caught too.
+    """
+    existing = {
+        int(m.group(1))
+        for p in (REPO_ROOT / "docs" / "adr").glob("*.md")
+        if (m := re.match(r"(\d{4})-", p.name))
+    }
+    assert existing, "no ADRs found"
+
+    cited: dict[int, list[str]] = {}
+    roots = [
+        REPO_ROOT / "src",
+        REPO_ROOT / "tests",
+        REPO_ROOT / "docs",
+        REPO_ROOT / "pyproject.toml",
+    ]
+    for root in roots:
+        files = (
+            [root]
+            if root.is_file()
+            else [f for f in root.rglob("*") if f.suffix in {".py", ".md", ".toml"} and f.is_file()]
+        )
+        for f in files:
+            for m in re.finditer(
+                r"ADR[- ]?(\d{4})", f.read_text(encoding="utf-8", errors="replace")
+            ):
+                number = int(m.group(1))
+                if number not in existing:
+                    cited.setdefault(number, []).append(str(f.relative_to(REPO_ROOT)))
+
+    assert not cited, "citations naming an ADR that does not exist: " + "; ".join(
+        f"ADR-{n:04d} in {sorted(set(files))[:4]}" for n, files in sorted(cited.items())
     )
 
 
