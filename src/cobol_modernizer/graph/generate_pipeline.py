@@ -218,7 +218,12 @@ def render_domain_types(design: UnifiedDesign, output_dir: Path, *, package: str
         relative = f"src/main/java/{package.replace('.', '/')}/{composite.name}.java"
         destination = output_dir / relative
         destination.parent.mkdir(parents=True, exist_ok=True)
-        destination.write_text(render_composite(composite, package=package), encoding="utf-8")
+        destination.write_text(
+            render_composite(
+                composite, package=package, computed_values=design.computed_values
+            ),
+            encoding="utf-8",
+        )
         written.append(relative)
 
     logger.info("generate: rendered %d domain type(s) into %s", len(written), output_dir)

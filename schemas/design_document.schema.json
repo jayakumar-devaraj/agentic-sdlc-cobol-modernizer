@@ -167,13 +167,20 @@
       "type": "object"
     },
     "CompositeType": {
-      "description": "A record composed of existing domain entities, for a value no single copybook describes.\n\nIntroduced by ADR-0020 because a real `solution_architect` run chains processor steps, and the\nvalues flowing between them are not entities: \"a `TranCatBal` with its `Account` and `CardXref`\nresolved\" is a type the target genuinely needs and no copybook declares.\n\n**Every component references an entity that already exists.** A composite never introduces a\nfield a copybook did not produce, so `pic_mapper`'s computed precision and scale still reach the\ngenerated code unchanged -- the composite only says which records travel together.\n\nRendered deterministically rather than generated (ADR-0010's line, unmoved): the *shape* is a\nmechanical transform of this declaration, and only the *name* is judgment.",
+      "description": "A record composed of existing domain entities, for a value no single copybook describes.\n\nIntroduced by ADR-0020 because a real `solution_architect` run chains processor steps, and the\nvalues flowing between them are not entities: \"a `TranCatBal` with its `Account` and `CardXref`\nresolved\" is a type the target genuinely needs and no copybook declares.\n\n**Every component references something that already exists**, and ADR-0062 widened *what* only\nby one step. `components` reference entities, as they always have. `computed_fields` reference\nentries in `UnifiedDesign.computed_values` -- values the program's own arithmetic writes, which\n`pic_mapper` has already typed and given a precision and scale. So the invariant this class was\nbuilt on still holds where it matters: **a composite never invents a field's precision.** It\nonly widened from \"a copybook produced this\" to \"the deterministic layer produced this\",\nbecause the narrower reading is what left `computeMonthlyInterest` with `in = out =\nRatedCategoryBalance` and a monthly interest it computed and discarded.\n\nRendered deterministically rather than generated (ADR-0010's line, unmoved): the *shape* is a\nmechanical transform of this declaration, and only the *name* is judgment.",
       "properties": {
         "components": {
           "items": {
             "$ref": "#/$defs/CompositeComponent"
           },
           "title": "Components",
+          "type": "array"
+        },
+        "computed_fields": {
+          "items": {
+            "$ref": "#/$defs/ComputedComponent"
+          },
+          "title": "Computed Fields",
           "type": "array"
         },
         "name": {
@@ -186,6 +193,25 @@
         "components"
       ],
       "title": "CompositeType",
+      "type": "object"
+    },
+    "ComputedComponent": {
+      "description": "One computed field of a `CompositeType`: a field name, and the COBOL value it carries.\n\nThe exact shape of `CompositeComponent`, one level down: that names an entity, this names a\nvalue in `UnifiedDesign.computed_values`. Both leave the *naming* to the model and take\neverything else from the deterministic layer -- `field_name` is judgment (`monthlyInterest`),\nand `cobol_field_name` is a reference that must resolve (`WS-MONTHLY-INT`), which is what\ncarries `pic_mapper`'s type, precision and scale into the generated record unchanged.\n\nResolved in the context of the job whose step declares the composite, because\n`UnifiedDesign.computed_values` is program-scoped and a composite is not.",
+      "properties": {
+        "cobol_field_name": {
+          "title": "Cobol Field Name",
+          "type": "string"
+        },
+        "field_name": {
+          "title": "Field Name",
+          "type": "string"
+        }
+      },
+      "required": [
+        "field_name",
+        "cobol_field_name"
+      ],
+      "title": "ComputedComponent",
       "type": "object"
     },
     "ComputedValue": {

@@ -301,6 +301,23 @@ class CompositeComponent(BaseModel):
     entity_name: str
 
 
+class ComputedComponent(BaseModel):
+    """One computed field of a `CompositeType`: a field name, and the COBOL value it carries.
+
+    The exact shape of `CompositeComponent`, one level down: that names an entity, this names a
+    value in `UnifiedDesign.computed_values`. Both leave the *naming* to the model and take
+    everything else from the deterministic layer -- `field_name` is judgment (`monthlyInterest`),
+    and `cobol_field_name` is a reference that must resolve (`WS-MONTHLY-INT`), which is what
+    carries `pic_mapper`'s type, precision and scale into the generated record unchanged.
+
+    Resolved in the context of the job whose step declares the composite, because
+    `UnifiedDesign.computed_values` is program-scoped and a composite is not.
+    """
+
+    field_name: str
+    cobol_field_name: str
+
+
 class CompositeType(BaseModel):
     """A record composed of existing domain entities, for a value no single copybook describes.
 
@@ -308,9 +325,14 @@ class CompositeType(BaseModel):
     values flowing between them are not entities: "a `TranCatBal` with its `Account` and `CardXref`
     resolved" is a type the target genuinely needs and no copybook declares.
 
-    **Every component references an entity that already exists.** A composite never introduces a
-    field a copybook did not produce, so `pic_mapper`'s computed precision and scale still reach the
-    generated code unchanged -- the composite only says which records travel together.
+    **Every component references something that already exists**, and ADR-0062 widened *what* only
+    by one step. `components` reference entities, as they always have. `computed_fields` reference
+    entries in `UnifiedDesign.computed_values` -- values the program's own arithmetic writes, which
+    `pic_mapper` has already typed and given a precision and scale. So the invariant this class was
+    built on still holds where it matters: **a composite never invents a field's precision.** It
+    only widened from "a copybook produced this" to "the deterministic layer produced this",
+    because the narrower reading is what left `computeMonthlyInterest` with `in = out =
+    RatedCategoryBalance` and a monthly interest it computed and discarded.
 
     Rendered deterministically rather than generated (ADR-0010's line, unmoved): the *shape* is a
     mechanical transform of this declaration, and only the *name* is judgment.
@@ -318,6 +340,9 @@ class CompositeType(BaseModel):
 
     name: str
     components: list[CompositeComponent]
+    #: Values the composite carries that no record holds (ADR-0062). Defaults to empty because most
+    #: composites are joins of records and carry none.
+    computed_fields: list[ComputedComponent] = Field(default_factory=list)
 
 
 class JobParameter(BaseModel):
@@ -550,6 +575,36 @@ class UnifiedDesign(BaseModel):
                 for name in (step.input_type, step.output_type):
                     if self.resolve_type(name) is None:
                         missing.append(name)
+        missing.extend(self.unresolvable_computed_field_names())
+        return missing
+
+    def unresolvable_computed_field_names(self) -> list[str]:
+        """Every `ComputedComponent` whose `cobol_field_name` resolves to no computed value.
+
+        Resolved in the context of the job that reaches the composite, because
+        `computed_values` is program-scoped and a `CompositeType` is not. A composite no step
+        names is checked against every program instead -- it is unreachable and about to be
+        reported as such, and refusing it here for the wrong reason would say so misleadingly.
+        """
+        programs_by_composite: dict[str, set[str]] = {}
+        for job in self.batch_jobs:
+            for step in job.steps:
+                for type_name in (step.input_type, step.output_type):
+                    programs_by_composite.setdefault(type_name, set()).add(job.program_name)
+
+        every_program = {value.program_name for value in self.computed_values}
+
+        missing: list[str] = []
+        for composite in self.composite_types:
+            if not composite.computed_fields:
+                continue
+            programs = programs_by_composite.get(composite.name) or every_program
+            for computed in composite.computed_fields:
+                if not any(
+                    self.resolve_computed_value(program, computed.cobol_field_name) is not None
+                    for program in programs
+                ):
+                    missing.append(computed.cobol_field_name)
         return missing
 
 #: design.json's own envelope version -- bump this on any breaking change to DesignDocument's
