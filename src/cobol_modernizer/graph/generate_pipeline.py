@@ -710,10 +710,12 @@ def run_generate(
             # selected by the paragraph the step *declares* (ADR-0065). Never by step name:
             # `computeMonthlyInterest` is a name a model chose and is not a fact about anything.
             oracle = load_equivalence_oracle(job.program_name)
-            covered = (
-                oracle is not None and oracle["source"]["paragraph"] in step.source_paragraphs
-            )
-            if covered and not step_outcome.succeeded:
+            if oracle is None or oracle["source"]["paragraph"] not in step.source_paragraphs:
+                # Nothing for this step to be checked against: the package ships no oracle for this
+                # program, or this is not the step the oracle covers. Last statement of the loop
+                # body, so `continue` skips nothing else.
+                continue
+            if not step_outcome.succeeded:
                 # The step the oracle covers exists and did not compile. Distinguished from "no such
                 # step" because they are different findings: one says this design was never in scope
                 # for the check, the other says the check was in scope and could not be reached.
@@ -725,7 +727,7 @@ def run_generate(
                         f"test could be run against it"
                     ),
                 )
-            if covered and step_outcome.succeeded:
+            else:
                 try:
                     rendered_test_paragraph = oracle["source"]["paragraph"]
                     rendered_test_class = render_step_equivalence_test(
