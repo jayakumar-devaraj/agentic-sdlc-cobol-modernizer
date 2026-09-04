@@ -15,6 +15,8 @@ from pathlib import Path
 TOOLS = Path(__file__).resolve().parents[2] / "tools" / "cobol-oracle"
 sys.path.insert(0, str(TOOLS))
 
+from cobol_modernizer.core.package_data import ORACLE_ROOT
+
 import generate_orachk
 
 
@@ -45,10 +47,7 @@ def test_every_oracle_row_reaches_the_generated_program():
     import json
 
     rows = json.loads(
-        (
-            Path(__file__).resolve().parents[1]
-            / "fixtures" / "golden" / "CBACT04C" / "interest-oracle.json"
-        ).read_text(encoding="utf-8")
+        (ORACLE_ROOT / "CBACT04C" / "interest-oracle.json").read_text(encoding="utf-8")
     )["rows"]
     text = (TOOLS / "ORACHK.cbl").read_text(encoding="utf-8")
     for row in rows:

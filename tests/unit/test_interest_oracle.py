@@ -24,13 +24,14 @@ from pathlib import Path
 
 import pytest
 
+from cobol_modernizer.core.package_data import ORACLE_ROOT
 from cobol_modernizer.nodes.spec_extractor import group_field_mappings_by_source
 from cobol_modernizer.tools.data_loader import derive_layout, parse_record, read_records
 from cobol_modernizer.tools.tenant_repo import resolve_program
 
 FIXTURE_ROOT = Path(__file__).resolve().parents[1] / "fixtures" / "tenant_repo_sample"
 DATA = FIXTURE_ROOT / "app" / "data" / "ASCII"
-ORACLE = Path(__file__).resolve().parents[1] / "fixtures" / "golden" / "CBACT04C" / "interest-oracle.json"
+ORACLE = ORACLE_ROOT / "CBACT04C" / "interest-oracle.json"
 
 #: The divisor is a literal in the COBOL, not a derived constant. Spelled out here so a reader can
 #: see that this module hardcodes the same 1200 the program does rather than computing a rate.
