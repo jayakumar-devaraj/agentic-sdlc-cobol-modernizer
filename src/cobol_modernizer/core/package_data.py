@@ -28,6 +28,19 @@ DATA_ROOT = Path(__file__).resolve().parent.parent / "data"
 
 PROMPTS_ROOT = DATA_ROOT / "prompts" / "registry"
 CONFIG_ROOT = DATA_ROOT / "config"
+
+#: COBOL's own output for each program, per ADR-0028's oracle. Package data rather than a test
+#: fixture (ADR-0064) because `generate` runs the differential against it: an oracle reachable only
+#: from the test tree can prove the *hand-written* Java is right and can say nothing about what the
+#: pipeline actually generated, which is the gap that let two defects reach a human gate.
+#:
+#: One tension worth naming rather than hiding: this is tenant-shaped data in a wheel that is
+#: otherwise domain-general machinery, and it is the first such thing here. The alternative -- read
+#: the oracle from the tenant repository -- keeps the wheel clean and makes the gate depend on a
+#: tenant laying its oracle out the way this expects. Shipping it keeps the guarantee inside the
+#: artifact that makes the claim, and `equivalence` still takes the directory as a parameter, so a
+#: caller with a better source is not blocked by this default.
+ORACLE_ROOT = DATA_ROOT / "oracle"
 TEMPLATES_ROOT = DATA_ROOT / "templates"
 
 

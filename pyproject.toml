@@ -76,6 +76,11 @@ cobol_modernizer = [
     "py.typed",
     "data/prompts/registry/**/*.md",
     "data/config/*.yaml",
+    # ADR-0064: the oracle `generate` runs its differential against. `.dat` files are byte-exact
+    # fixed-length COBOL output -- see .gitattributes, which marks them binary so no CRLF
+    # conversion can silently shift every field offset in the comparison.
+    "data/oracle/**/*.dat",
+    "data/oracle/**/*.md",
     "data/templates/**/*",
     # `**/*` does not descend into a dot-directory, so the line above misses the Maven wrapper's
     # `.mvn/wrapper/maven-wrapper.properties` -- which `mvnw` reads to learn which Maven

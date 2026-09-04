@@ -32,12 +32,13 @@ from pathlib import Path
 
 import pytest
 
+from cobol_modernizer.core.package_data import ORACLE_ROOT
 from cobol_modernizer.tools.data_loader import decode_zoned_decimal
 
 CORPUS = (
     Path(__file__).resolve().parents[1] / "fixtures" / "tenant_repo_sample" / "app" / "data" / "ASCII"
 )
-ORACLE = Path(__file__).resolve().parents[1] / "fixtures" / "golden" / "CBACT04C" / "oracle"
+ORACLE = ORACLE_ROOT / "CBACT04C"
 
 #: One real `DALYTRAN-AMT` per overpunch character, with the value derived by hand.
 #:

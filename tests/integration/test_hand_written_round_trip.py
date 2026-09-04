@@ -41,6 +41,7 @@ from cobol_modernizer.core.contracts import (
     build_design_document,
 )
 from cobol_modernizer.core.model_client import RunBudget, collect_usage
+from cobol_modernizer.core.package_data import ORACLE_ROOT
 from cobol_modernizer.equivalence import (
     ACCOUNT_LAYOUT,
     EXCLUSIONS,
@@ -95,7 +96,7 @@ from tests.support.posting_design import POSTING
 from tests.support.posting_design import STEP as POSTING_STEP
 
 HANDWRITTEN = Path(__file__).resolve().parents[1] / "fixtures" / "handwritten" / "CBACT04C"
-ORACLE_DIR = Path(__file__).resolve().parents[1] / "fixtures" / "golden" / "CBACT04C" / "oracle"
+ORACLE_DIR = ORACLE_ROOT / "CBACT04C"
 
 
 def load_account_oracle():

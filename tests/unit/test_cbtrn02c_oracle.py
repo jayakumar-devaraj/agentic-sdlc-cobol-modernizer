@@ -23,9 +23,10 @@ provenance are two artifacts of one run, and each is evidence about the other.
 from __future__ import annotations
 
 import re
-from pathlib import Path
 
-ORACLE_DIR = Path(__file__).resolve().parents[1] / "fixtures" / "golden" / "CBACT04C" / "oracle"
+from cobol_modernizer.core.package_data import ORACLE_ROOT
+
+ORACLE_DIR = ORACLE_ROOT / "CBACT04C"
 TRANSACT_STAGE1 = ORACLE_DIR / "transact-stage1.dat"
 PROVENANCE = ORACLE_DIR / "PROVENANCE.md"
 

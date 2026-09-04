@@ -31,6 +31,7 @@ import pytest
 # ADR-0064: the code these tests exercise now lives in the package, so `generate` can reach it too.
 # The tests below are unchanged -- that they still pass, against the same fixtures, is what proves
 # the move carried no behaviour with it.
+from cobol_modernizer.core.package_data import ORACLE_ROOT
 from cobol_modernizer.equivalence import (
     EXCLUSIONS,
     TRAN_LAYOUT,
@@ -42,7 +43,7 @@ from cobol_modernizer.equivalence import (
 from cobol_modernizer.equivalence import load_account_oracle as _load_account_oracle
 from cobol_modernizer.equivalence import load_oracle as _load_oracle
 
-ORACLE_DIR = Path(__file__).resolve().parents[1] / "fixtures" / "golden" / "CBACT04C" / "oracle"
+ORACLE_DIR = ORACLE_ROOT / "CBACT04C"
 TRANSACT = ORACLE_DIR / "transact.dat"
 PROVENANCE = ORACLE_DIR / "PROVENANCE.md"
 

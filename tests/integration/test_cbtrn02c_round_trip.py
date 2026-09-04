@@ -41,6 +41,7 @@ from cobol_modernizer.core.contracts import (
     build_design_document,
 )
 from cobol_modernizer.core.model_client import RunBudget, collect_usage
+from cobol_modernizer.core.package_data import ORACLE_ROOT
 from cobol_modernizer.equivalence import (
     ACCOUNT_LAYOUT,
     TRAN_LAYOUT,
@@ -518,7 +519,7 @@ _NEGATIVE_OVERPUNCH = "}JKLMNOPQR"
 
 
 def _oracle(name: str) -> Path:
-    return Path(__file__).resolve().parents[1] / "fixtures" / "golden" / "CBACT04C" / "oracle" / name
+    return ORACLE_ROOT / "CBACT04C" / name
 
 
 def test_cbact04c_was_never_affected_by_it_and_here_is_the_corrected_reason():
