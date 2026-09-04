@@ -74,6 +74,31 @@ def test_the_javadoc_traces_the_computed_field_to_its_cobol() -> None:
     )
 
 
+def test_a_bigdecimal_computed_field_brings_its_import() -> None:
+    """Without this the record reads correctly and does not compile.
+
+    Every entity component is rendered into the same package, so composites had never needed an
+    import and did not emit one. A computed component is the first thing a composite can hold that
+    is not a domain type, and `BigDecimal` is `java.math`. The first render of
+    `AccruedCategoryInterest` was missing the import, and it was caught by reading the output --
+    not by any check, which is the same way the defect this whole change is about was found.
+    """
+    source = render_composite(ACCRUED, package=PACKAGE, computed_values=[MONTHLY_INTEREST])
+
+    assert "import java.math.BigDecimal;" in source
+    assert source.index("import java.math.BigDecimal;") < source.index("public record")
+
+
+def test_a_composite_of_records_alone_emits_no_import() -> None:
+    """The import is conditional, as it is in `render_record`: no computed field, nothing to import."""
+    plain = CompositeType(
+        name="RatedCategoryBalance",
+        components=[CompositeComponent(field_name="categoryBalance", entity_name="TranCatBal")],
+    )
+
+    assert "import" not in render_composite(plain, package=PACKAGE)
+
+
 def test_an_unresolved_computed_field_is_refused_rather_than_typed_by_guess() -> None:
     """The renderer has no way to know a currency field's type, and does not pretend to.
 

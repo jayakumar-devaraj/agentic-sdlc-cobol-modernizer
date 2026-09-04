@@ -107,9 +107,16 @@ def render_composite(
         resolved.append((computed.field_name, value))
 
     composed = ", ".join(component.entity_name for component in composite.components)
-    lines = [
-        f"package {package};",
-        "",
+    lines = [f"package {package};", ""]
+
+    # Entity components need no import -- every domain type is rendered into this same package.
+    # A computed component is the first thing a composite can hold that is not one of them, and
+    # `BigDecimal` is `java.math`. Rendering the field without this produces a record that reads
+    # correctly and does not compile, which the first render of `AccruedCategoryInterest` did.
+    if any(value.java_type == "BigDecimal" for _name, value in resolved):
+        lines += ["import java.math.BigDecimal;", ""]
+
+    lines += [
         "/**",
         f" * {class_name} -- a composite of {composed or '(no records)'}.",
         " *",
