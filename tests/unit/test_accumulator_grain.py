@@ -74,7 +74,9 @@ def facts():
     )
 
 
-def _design(facts, *, row_carries_total: bool, posting_carries_total: bool = True):
+def _design(
+    facts, *, row_carries_total: bool, posting_carries_total: bool = True, attach_break: bool = True
+):
     """The step-51 job, with the one field under test toggled on the row-grain item."""
     entities, computed = facts
 
@@ -118,7 +120,7 @@ def _design(facts, *, row_carries_total: bool, posting_carries_total: bool = Tru
         input_type="AccountInterestPosting",
         output_type="Account",
         guard_condition=None,
-        control_break=BREAK,
+        control_break=BREAK if attach_break else None,
     )
     job = BatchJobDesign(
         job_name="interestJob",
@@ -212,3 +214,50 @@ def test_a_job_with_no_control_break_is_unaffected(facts) -> None:
 
     assert stripped.accumulator_owners(PROGRAM) == {}
     assert misplaced_accumulators(stripped_job, stripped) == []
+
+
+# --- the state the checks actually run in -------------------------------------------------------
+
+#: What `build_accumulator_paragraphs` reads straight from `CBACT04C`.
+FROM_COBOL = {"WS-TOTAL-INT": "1050-UPDATE-ACCOUNT"}
+
+
+def test_the_owner_resolves_before_the_control_break_is_attached(facts) -> None:
+    """**The test that would have caught the defect a live run found.**
+
+    `attach_control_breaks` runs *after* `parse_with_repair`, so when the design is validated no
+    step carries a `ControlBreakDesign` yet. Resolving the owner from `step.control_break` therefore
+    returned nothing for every step, the excusal never applied, and run
+    `step52-cbact04c-20260904-144214` was refused for `WS-TOTAL-INT` -- the exact value ADR-0063
+    exists to excuse -- and stopped at `safe_stop` having produced no design.
+
+    Every other test in this module built the design with the break already attached, which is the
+    *post*-attachment state and not the one the check runs in. They all passed. The suite was
+    measuring a state the production path never reaches.
+    """
+    job, processor, design = _design(facts, row_carries_total=False, attach_break=False)
+
+    assert all(step.control_break is None for step in job.steps), "fixture must be pre-attachment"
+    assert design.accumulator_owners(PROGRAM, FROM_COBOL) == {"WS-TOTAL-INT": "postAccountInterest"}
+    assert undeliverable_computed_values(job, processor, design, FROM_COBOL) == []
+
+
+def test_pre_attachment_still_refuses_the_row_grain_accumulator(facts) -> None:
+    """The refusing half must work in the same state, or it only fires after the gate."""
+    job, _processor, design = _design(facts, row_carries_total=True, attach_break=False)
+
+    assert misplaced_accumulators(job, design, FROM_COBOL) == [
+        ("AccruedCategoryInterest", "WS-TOTAL-INT", "postAccountInterest")
+    ]
+
+
+def test_without_the_cobol_map_pre_attachment_nothing_is_excused(facts) -> None:
+    """The regression itself, pinned: no map and no attached break means no owner is known.
+
+    Kept as a test rather than a comment because it is the precise shape of the defect -- the
+    check silently degrades to ADR-0062's behaviour and refuses a correct design.
+    """
+    job, processor, design = _design(facts, row_carries_total=False, attach_break=False)
+
+    assert design.accumulator_owners(PROGRAM) == {}
+    assert undeliverable_computed_values(job, processor, design) == ["WS-TOTAL-INT"]
