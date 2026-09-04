@@ -52,6 +52,7 @@ from cobol_modernizer.core.contracts import (
     BatchStepDesign,
     CompositeComponent,
     CompositeType,
+    ComputedValue,
     ControlBreakDesign,
     DomainEntity,
     DomainField,
@@ -67,6 +68,7 @@ from cobol_modernizer.core.model_client import call_model
 from cobol_modernizer.core.model_routing import RoutingDecision, resolve_routing
 from cobol_modernizer.core.structured_output import parse_with_repair, strip_code_fence
 from cobol_modernizer.nodes.spec_extractor import group_field_mappings_by_source
+from cobol_modernizer.parsing.computed_fields import computed_fields
 from cobol_modernizer.parsing.control_break import (
     ControlBreak,
     extract_control_breaks,
@@ -483,6 +485,49 @@ def build_domain_entities(
 
 
 
+def build_computed_values(
+    worktree_root: Path, programs: list[ProgramDesignEntry]
+) -> list[ComputedValue]:
+    """Every working-storage value each program computes, with `pic_mapper`'s facts attached.
+
+    **The other half of `build_domain_entities`, and the reason this function exists.** That one
+    iterates the same groups and skips the program's own, because a domain entity is copybook-
+    sourced by definition (ADR-0010). Skipping was right; *discarding* was not. `WS-MONTHLY-INT`'s
+    precision and scale were computed here and thrown away one line later, and a model downstream
+    inferred them off the `PIC` clause instead.
+
+    Narrowed to values the program's arithmetic actually writes, rather than to every working-storage
+    field. Against this corpus that is 3 fields of `CBACT04C`'s 52 and 1 of `CBTRN02C`'s 52 -- the
+    business quantities, with none of the `FD-*` file aliases, `IO-STATUS` codes or `APPL-RESULT`
+    plumbing that a type-based or scale-based filter would have had to guess about. The narrowing is
+    syntactic, so it makes no judgment about which values matter.
+    """
+    values: list[ComputedValue] = []
+
+    for entry in programs:
+        resolved = resolve_program(worktree_root, entry.program_name)
+        grouped = group_field_mappings_by_source(resolved)
+        own_mappings, _unsupported = grouped.get(entry.program_name, ([], []))
+        by_name = {mapping.field_name.upper(): mapping for mapping in own_mappings}
+
+        found = computed_fields(resolved.source_text, set(by_name))
+        for cobol_field_name, paragraphs in sorted(found.items()):
+            mapping = by_name[cobol_field_name]
+            values.append(
+                ComputedValue(
+                    program_name=entry.program_name,
+                    cobol_field_name=mapping.field_name,
+                    java_type=mapping.java_type,
+                    precision=mapping.precision,
+                    scale=mapping.scale,
+                    signed=mapping.signed,
+                    computed_in_paragraphs=sorted(paragraphs),
+                )
+            )
+
+    return values
+
+
 def _entities_of(type_name: str, design: UnifiedDesign) -> list[str]:
     """The domain entities a declared type carries -- itself, or a composite's components."""
     composite = next((c for c in design.composite_types if c.name == type_name), None)
@@ -847,6 +892,7 @@ def design_solution(
     `nodes.spec_extractor.extract_spec` and `nodes.spec_critic.critique_spec`.
     """
     domain_entities = build_domain_entities(worktree_root, programs)
+    computed_values = build_computed_values(worktree_root, programs)
     user_content = build_architect_prompt(domain_entities, programs)
     system_prompt = _load_system_prompt()
 
@@ -883,4 +929,7 @@ def design_solution(
         # Deterministic, and built here rather than asked of the model above: the architect decides
         # the step chain, the COBOL decides how data is reached (G31, ADR-0030).
         file_access_paths=build_file_access_paths(worktree_root, programs),
+        # Deterministic for the same reason, and for one more: a `COMPUTE`'s target precision and
+        # scale are numbers a wrong answer to looks exactly like a right one (ADR-0062).
+        computed_values=computed_values,
     )

@@ -188,6 +188,67 @@
       "title": "CompositeType",
       "type": "object"
     },
+    "ComputedValue": {
+      "description": "A working-storage value the program computes, with `pic_mapper`'s facts about it.\n\n**The sixth sighting of the class `CLAUDE.md` names** (G21, G24, G26, G28, G30): a fact the\ndeterministic layer already held, dropped one step before its consumer. `pic_mapper` computes\n`WS-MONTHLY-INT` at precision 11, scale 2; `group_field_mappings_by_source` groups it under the\nprogram; and `build_domain_entities` discards that whole group, because a domain entity is\ncopybook-sourced by definition. The number then reached the generated code anyway -- as\n`requireFits(..., 11, 2)` -- because a model read it off the `PIC` clause in narration and said\nplainly that it was inferring. **A `COMPUTE`'s target scale is exactly the kind of number that\nmust be computed and handed over rather than narrated**, for the same reason `pic_mapper` may\nnot call a model: a wrong scale on a currency field looks exactly like a right one.\n\nDeterministic throughout, and carrying no Java name on purpose. What this value should be\n*called* in a generated record is judgment, and belongs to the `ComputedComponent` that claims\nit; what it *is* -- type, precision, scale, sign, and which paragraphs produce it -- is read\nfrom the COBOL and is not the model's to choose.\n\n`program_name` is required because these are program-scoped, unlike a `DomainEntity`: two\nprograms may both declare `WS-TEMP-BAL` with different pictures, and merging them by name would\nbe the mistake ADR-0010 decision 1 refuses for copybooks.",
+      "properties": {
+        "cobol_field_name": {
+          "title": "Cobol Field Name",
+          "type": "string"
+        },
+        "computed_in_paragraphs": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Computed In Paragraphs",
+          "type": "array"
+        },
+        "java_type": {
+          "title": "Java Type",
+          "type": "string"
+        },
+        "precision": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Precision"
+        },
+        "program_name": {
+          "title": "Program Name",
+          "type": "string"
+        },
+        "scale": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Scale"
+        },
+        "signed": {
+          "default": false,
+          "title": "Signed",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "program_name",
+        "cobol_field_name",
+        "java_type",
+        "computed_in_paragraphs"
+      ],
+      "title": "ComputedValue",
+      "type": "object"
+    },
     "ControlBreakDesign": {
       "description": "What a step groups by and what it accumulates -- the fact a control break hides in an idiom.\n\n**Why it is on the step rather than in the job.** A control break performs one paragraph at the\ngroup boundary, and that paragraph is what a step declares in `source_paragraphs`. Attaching it\nanywhere else would leave a renderer matching paragraph names to find it.\n\n**`accumulated_from_field` is what to sum, and `landing_field` is where a generated type can\nfind it.** `WS-TOTAL-INT` accumulates `WS-MONTHLY-INT`, which is also moved to `TRAN-AMT`. The\naccumulator is a program variable no generated record has; the landing field is a column an\naggregation can actually sum, which is what makes ADR-0027's \"already-summed item\" renderable\nrather than a note.\n\nDeterministic throughout: every field is read from the COBOL by\n`parsing/control_break.py`, and a program whose idiom does not match completely gets no\n`ControlBreakDesign` at all rather than a partial one.",
       "properties": {
@@ -1040,6 +1101,13 @@
           "title": "Composite Types",
           "type": "array"
         },
+        "computed_values": {
+          "items": {
+            "$ref": "#/$defs/ComputedValue"
+          },
+          "title": "Computed Values",
+          "type": "array"
+        },
         "domain_entities": {
           "items": {
             "$ref": "#/$defs/DomainEntity"
@@ -1154,7 +1222,7 @@
       "type": "array"
     },
     "schema_version": {
-      "default": "3.9.0",
+      "default": "3.10.0",
       "title": "Schema Version",
       "type": "string"
     },

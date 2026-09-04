@@ -258,6 +258,42 @@ class ControlBreakDesign(BaseModel):
     add_line: int
 
 
+class ComputedValue(BaseModel):
+    """A working-storage value the program computes, with `pic_mapper`'s facts about it.
+
+    **The sixth sighting of the class `CLAUDE.md` names** (G21, G24, G26, G28, G30): a fact the
+    deterministic layer already held, dropped one step before its consumer. `pic_mapper` computes
+    `WS-MONTHLY-INT` at precision 11, scale 2; `group_field_mappings_by_source` groups it under the
+    program; and `build_domain_entities` discards that whole group, because a domain entity is
+    copybook-sourced by definition. The number then reached the generated code anyway -- as
+    `requireFits(..., 11, 2)` -- because a model read it off the `PIC` clause in narration and said
+    plainly that it was inferring. **A `COMPUTE`'s target scale is exactly the kind of number that
+    must be computed and handed over rather than narrated**, for the same reason `pic_mapper` may
+    not call a model: a wrong scale on a currency field looks exactly like a right one.
+
+    Deterministic throughout, and carrying no Java name on purpose. What this value should be
+    *called* in a generated record is judgment, and belongs to the `ComputedComponent` that claims
+    it; what it *is* -- type, precision, scale, sign, and which paragraphs produce it -- is read
+    from the COBOL and is not the model's to choose.
+
+    `program_name` is required because these are program-scoped, unlike a `DomainEntity`: two
+    programs may both declare `WS-TEMP-BAL` with different pictures, and merging them by name would
+    be the mistake ADR-0010 decision 1 refuses for copybooks.
+    """
+
+    program_name: str
+    cobol_field_name: str
+    java_type: str
+    precision: int | None = None
+    scale: int | None = None
+    signed: bool = False
+    #: The paragraph(s) whose arithmetic writes this field. This is what lets a caller charge the
+    #: value to the step that declares that paragraph in `source_paragraphs`, rather than to the
+    #: job as a whole -- `WS-MONTHLY-INT` is computed in `1300-COMPUTE-INTEREST` and
+    #: `WS-TRANID-SUFFIX` in `1300-B-WRITE-TX`, and those are two different steps.
+    computed_in_paragraphs: list[str]
+
+
 class CompositeComponent(BaseModel):
     """One component of a `CompositeType`: a field name, and the entity it holds."""
 
@@ -462,6 +498,25 @@ class UnifiedDesign(BaseModel):
     #: Target-side types composed of domain entities (ADR-0020). Defaults to empty because a design
     #: whose steps all operate on plain entities needs none.
     composite_types: list[CompositeType] = Field(default_factory=list)
+    #: Working-storage values each program computes (ADR-0062). Deterministic, parsed from
+    #: arithmetic receiving positions -- never model-authored, for the reason `pic_mapper` may not
+    #: call a model. Defaults to empty so a design produced before schema 3.10.0 still validates;
+    #: the producer always fills it, so there is no silence to distinguish here.
+    computed_values: list[ComputedValue] = Field(default_factory=list)
+
+    def resolve_computed_value(
+        self, program_name: str, cobol_field_name: str
+    ) -> ComputedValue | None:
+        """The computed value `cobol_field_name` names within `program_name`, or `None`.
+
+        Scoped by program deliberately: `WS-TEMP-BAL` in one program is not `WS-TEMP-BAL` in
+        another, and resolving across programs would hand a composite the wrong precision for a
+        currency field -- silently, and in the direction that still compiles.
+        """
+        for value in self.computed_values:
+            if value.program_name == program_name and value.cobol_field_name == cobol_field_name:
+                return value
+        return None
 
     def resolve_type(self, name: str) -> DomainEntity | CompositeType | None:
         """The entity or composite `name` refers to, or `None` when it refers to neither.
@@ -499,7 +554,8 @@ class UnifiedDesign(BaseModel):
 
 #: design.json's own envelope version -- bump this on any breaking change to DesignDocument's
 #: shape, e.g. once solution_architect gives `unified_design` a real type.
-SCHEMA_VERSION = "3.9.0"  # 3.9.0: BatchStepDesign.optional_lookups (ADR-0042)
+SCHEMA_VERSION = "3.10.0"  # 3.10.0: UnifiedDesign.computed_values (ADR-0062)
+#: 3.9.0 added BatchStepDesign.optional_lookups (ADR-0042).
 #: 3.8.0 added BatchStepDesign.reads_own_writes (ADR-0040).
 #: 3.7.0 added FileAccessPath.write_mode/write_lines -- the upsert mode (ADR-0037).
 #: 3.6.0 added BatchStepDesign.control_break (G31, ADR-0032).
