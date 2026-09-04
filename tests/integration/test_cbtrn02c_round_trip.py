@@ -41,6 +41,14 @@ from cobol_modernizer.core.contracts import (
     build_design_document,
 )
 from cobol_modernizer.core.model_client import RunBudget, collect_usage
+from cobol_modernizer.core.package_data import ORACLE_ROOT
+from cobol_modernizer.equivalence import (
+    ACCOUNT_LAYOUT,
+    TRAN_LAYOUT,
+    FieldValue,
+    compare,
+    parse_fixed_records,
+)
 from cobol_modernizer.graph.generate_pipeline import (
     DEFAULT_DOMAIN_PACKAGE,
     DEFAULT_PACKAGE,
@@ -64,13 +72,6 @@ from cobol_modernizer.rendering.java_working_set import (
 from cobol_modernizer.rendering.java_writer import render_item_writer, writer_class_name
 from cobol_modernizer.tools.data_loader import decode_zoned_decimal
 from cobol_modernizer.tools.local_compiler import compile_project
-from tests.unit.test_cobol_oracle_comparison import (
-    ACCOUNT_LAYOUT,
-    TRAN_LAYOUT,
-    FieldValue,
-    compare,
-    parse_fixed_records,
-)
 
 FIXTURE_ROOT = Path(__file__).resolve().parents[1] / "fixtures" / "tenant_repo_sample"
 HANDWRITTEN = Path(__file__).resolve().parents[1] / "fixtures" / "handwritten" / "CBTRN02C"
@@ -518,7 +519,7 @@ _NEGATIVE_OVERPUNCH = "}JKLMNOPQR"
 
 
 def _oracle(name: str) -> Path:
-    return Path(__file__).resolve().parents[1] / "fixtures" / "golden" / "CBACT04C" / "oracle" / name
+    return ORACLE_ROOT / "CBACT04C" / name
 
 
 def test_cbact04c_was_never_affected_by_it_and_here_is_the_corrected_reason():

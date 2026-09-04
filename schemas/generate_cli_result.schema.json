@@ -1,9 +1,62 @@
 {
+  "$defs": {
+    "EquivalenceVerdict": {
+      "description": "What comparing the generated code's output against COBOL's own output found (ADR-0064).\n\n**`not_run` is a verdict, not an absence, and that is the whole point.** Two live runs shipped\nwrong money past the release gate -- a processor that computed a value and discarded it, and one\nthat set a per-account running total to a single row's amount -- and in both cases the gate said\n*\"Generated and compiled N processor step(s).\"* That sentence is true, contains no claim about\ncorrectness, and reads as success. A gate that reports quantities trains the approver to\napprove.\n\nSo this field always exists and always says something. A run that could not execute the\ncomparison reports `not_run` **with a reason**, which is a materially different thing for a\nhuman to weigh than a summary that simply omits the subject.\n\n`mismatches` is bounded by the caller: a differential that diverges early can produce one entry\nper field per record, and a gate item nobody can read is not evidence either. `excluded_fields`\nis carried because what a differential *does not* compare is exactly what a reviewer needs in\norder to price it -- ADR-0029's exclusions are decisions, and hiding them would make this\nnumber look stronger than it is.",
+      "properties": {
+        "excluded_fields": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Excluded Fields",
+          "type": "array"
+        },
+        "fields_compared": {
+          "default": 0,
+          "title": "Fields Compared",
+          "type": "integer"
+        },
+        "mismatches": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Mismatches",
+          "type": "array"
+        },
+        "reason": {
+          "title": "Reason",
+          "type": "string"
+        },
+        "records_compared": {
+          "default": 0,
+          "title": "Records Compared",
+          "type": "integer"
+        },
+        "status": {
+          "enum": [
+            "matched",
+            "mismatched",
+            "not_run"
+          ],
+          "title": "Status",
+          "type": "string"
+        }
+      },
+      "required": [
+        "status",
+        "reason"
+      ],
+      "title": "EquivalenceVerdict",
+      "type": "object"
+    }
+  },
   "description": "The `cobol-modernizer generate --json` stdout contract.\n\nDeliberately minimal -- matches the current `cli.py` stub's shape. Self-healing-loop-specific\nfields (attempt count, compile diagnosis) are Milestone C4 work, once `build_validator` exists\nto define them; inventing them now would be the same speculative-design mistake\n`DesignDocument.unified_design` avoids.\n\n`run_id` carries the same meaning as `DesignCliResult.run_id` and was added for the same\nreason, late: until this field existed, `--run-id` was accepted by `design` and **not** by\n`generate`, so the half of the pipeline that runs the compile loop and the second model stage\ncould not be correlated with control-plane's audit chain at all. That silently violated the\nspecialist contract's rule that a specialist accepts `--run-id` to join the chain -- on the\nnoisier half. Both phases now echo it.",
   "properties": {
     "detail": {
       "title": "Detail",
       "type": "string"
+    },
+    "equivalence": {
+      "$ref": "#/$defs/EquivalenceVerdict"
     },
     "output_path": {
       "title": "Output Path",

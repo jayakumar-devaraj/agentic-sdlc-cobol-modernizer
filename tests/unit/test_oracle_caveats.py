@@ -21,14 +21,12 @@ from pathlib import Path
 
 import pytest
 
+from cobol_modernizer.core.package_data import ORACLE_ROOT
+
 DOCS = Path(__file__).resolve().parents[2] / "docs" / "qa"
 CAVEATS = DOCS / "oracle-caveats.md"
 PROVENANCE = (
-    Path(__file__).resolve().parents[1]
-    / "fixtures"
-    / "golden"
-    / "CBACT04C"
-    / "oracle"
+    ORACLE_ROOT / "CBACT04C"
     / "PROVENANCE.md"
 )
 

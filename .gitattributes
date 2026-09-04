@@ -34,4 +34,4 @@ tools/cobol-oracle/*.sh text eol=lf
 # accident of the data, not a guarantee: a future corpus whose bytes contain an 0x0A would be
 # silently line-ending-converted on a Windows checkout, and the comparison would fail against
 # records that were correct when they were produced.
-tests/fixtures/golden/**/oracle/*.dat -text
+src/cobol_modernizer/data/oracle/**/*.dat -text

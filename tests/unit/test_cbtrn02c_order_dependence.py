@@ -42,9 +42,11 @@ from pathlib import Path
 
 import pytest
 
+from cobol_modernizer.core.package_data import ORACLE_ROOT
+
 FIXTURES = Path(__file__).resolve().parents[1] / "fixtures"
 CORPUS = FIXTURES / "tenant_repo_sample" / "app" / "data" / "ASCII"
-ORACLE = FIXTURES / "golden" / "CBACT04C" / "oracle"
+ORACLE = ORACLE_ROOT / "CBACT04C"
 
 RECORD_LENGTH = 350
 #: `CVTRA06Y` and `CVACT01Y` offsets, both verified against the copybooks in the repo.

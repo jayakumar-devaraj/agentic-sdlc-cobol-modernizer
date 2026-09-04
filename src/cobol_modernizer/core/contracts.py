@@ -771,6 +771,50 @@ class DesignCliResult(BaseModel):
     detail: str
 
 
+class EquivalenceVerdict(BaseModel):
+    """What comparing the generated code's output against COBOL's own output found (ADR-0064).
+
+    **`not_run` is a verdict, not an absence, and that is the whole point.** Two live runs shipped
+    wrong money past the release gate -- a processor that computed a value and discarded it, and one
+    that set a per-account running total to a single row's amount -- and in both cases the gate said
+    *"Generated and compiled N processor step(s)."* That sentence is true, contains no claim about
+    correctness, and reads as success. A gate that reports quantities trains the approver to
+    approve.
+
+    So this field always exists and always says something. A run that could not execute the
+    comparison reports `not_run` **with a reason**, which is a materially different thing for a
+    human to weigh than a summary that simply omits the subject.
+
+    `mismatches` is bounded by the caller: a differential that diverges early can produce one entry
+    per field per record, and a gate item nobody can read is not evidence either. `excluded_fields`
+    is carried because what a differential *does not* compare is exactly what a reviewer needs in
+    order to price it -- ADR-0029's exclusions are decisions, and hiding them would make this
+    number look stronger than it is.
+    """
+
+    status: Literal["matched", "mismatched", "not_run"]
+    #: Why, in one line. Required for every status, including `matched` -- the qualifiers on what
+    #: was compared belong beside the answer, not in a document a reviewer would have to find.
+    reason: str
+    records_compared: int = 0
+    fields_compared: int = 0
+    mismatches: list[str] = Field(default_factory=list)
+    #: Fields the comparison deliberately skipped, each traceable to the decision that makes it
+    #: unproducible (ADR-0026's `TRAN-ID` and timestamps).
+    excluded_fields: list[str] = Field(default_factory=list)
+
+
+#: What a `generate` run reports when nothing ran the differential. Deliberately the default, so a
+#: result cannot be silent on the subject: silence is what let two defects reach a human gate.
+NOT_RUN = EquivalenceVerdict(
+    status="not_run",
+    reason=(
+        "no equivalence comparison was run: this phase compiled the generated code and did not "
+        "execute it against the COBOL oracle"
+    ),
+)
+
+
 class GenerateCliResult(BaseModel):
     """The `cobol-modernizer generate --json` stdout contract.
 
@@ -811,6 +855,15 @@ class GenerateCliResult(BaseModel):
     #: human at the gate decides which this was. Until this field existed the step reached no
     #: outcome and no count, and a job of one processor plus one writer reported a clean success.
     steps_not_generated: int = 0
+    #: What the differential found (ADR-0064). Defaults to `not_run` rather than being optional, so
+    #: every result states something about correctness instead of leaving the subject out -- the
+    #: omission is what two live defects passed through.
+    #: `deep=True` is load-bearing: a shallow copy shares `mismatches` and `excluded_fields`
+    #: with the module-level `NOT_RUN`, so one run appending to its own verdict would mutate
+    #: every later run's default. Caught by a test rather than by review.
+    equivalence: EquivalenceVerdict = Field(
+        default_factory=lambda: NOT_RUN.model_copy(deep=True)
+    )
 
 
 def build_gate_items(programs: list[ProgramDesignEntry]) -> list[GateItem]:
