@@ -23,218 +23,38 @@ between this and a comparison that passes by excluding whatever disagrees.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
 from decimal import Decimal
 from pathlib import Path
 
 import pytest
 
+# ADR-0064: the code these tests exercise now lives in the package, so `generate` can reach it too.
+# The tests below are unchanged -- that they still pass, against the same fixtures, is what proves
+# the move carried no behaviour with it.
+from cobol_modernizer.equivalence import (
+    EXCLUSIONS,
+    TRAN_LAYOUT,
+    TRAN_RECORD_LEN,
+    FieldValue,
+    compare,
+    decode_signed,
+)
+from cobol_modernizer.equivalence import load_account_oracle as _load_account_oracle
+from cobol_modernizer.equivalence import load_oracle as _load_oracle
+
 ORACLE_DIR = Path(__file__).resolve().parents[1] / "fixtures" / "golden" / "CBACT04C" / "oracle"
 TRANSACT = ORACLE_DIR / "transact.dat"
 PROVENANCE = ORACLE_DIR / "PROVENANCE.md"
 
-#: `CVTRA05Y`'s TRAN-RECORD, 350 bytes. Offsets are 0-based, widths are the copybook's.
-#: Written out rather than derived from the copybook on purpose: this is the *comparison's* view of
-#: the record, and if it ever disagrees with `pic_mapper`'s that disagreement should be visible here
-#: rather than silently shared.
-TRAN_LAYOUT: tuple[tuple[str, int, int, int | None], ...] = (
-    # (field, offset, width, scale)  -- scale None means alphanumeric
-    ("TRAN-ID", 0, 16, None),
-    ("TRAN-TYPE-CD", 16, 2, None),
-    ("TRAN-CAT-CD", 18, 4, 0),
-    ("TRAN-SOURCE", 22, 10, None),
-    ("TRAN-DESC", 32, 100, None),
-    ("TRAN-AMT", 132, 11, 2),
-    ("TRAN-MERCHANT-ID", 143, 9, 0),
-    ("TRAN-MERCHANT-NAME", 152, 50, None),
-    ("TRAN-MERCHANT-CITY", 202, 50, None),
-    ("TRAN-MERCHANT-ZIP", 252, 10, None),
-    ("TRAN-CARD-NUM", 262, 16, None),
-    ("TRAN-ORIG-TS", 278, 26, None),
-    ("TRAN-PROC-TS", 304, 26, None),
-)
 
-TRAN_RECORD_LEN = 350
-
-#: `CVACT01Y`'s ACCOUNT-RECORD, 300 bytes -- the *other* file `CBACT04C` writes. `1050-UPDATE-ACCOUNT`
-#: rewrites it, so a round trip that compares only `transact.dat` leaves half the program's
-#: observable output unmeasured.
-#:
-#: **No field is excluded.** Every one of these is producible by the generated pipeline, which is why
-#: the account half is the stricter of the two comparisons despite being the smaller record.
-ACCOUNT_LAYOUT: tuple[tuple[str, int, int, int | None], ...] = (
-    ("ACCT-ID", 0, 11, 0),
-    ("ACCT-ACTIVE-STATUS", 11, 1, None),
-    ("ACCT-CURR-BAL", 12, 12, 2),
-    ("ACCT-CREDIT-LIMIT", 24, 12, 2),
-    ("ACCT-CASH-CREDIT-LIMIT", 36, 12, 2),
-    ("ACCT-OPEN-DATE", 48, 10, None),
-    ("ACCT-EXPIRAION-DATE", 58, 10, None),
-    ("ACCT-REISSUE-DATE", 68, 10, None),
-    ("ACCT-CURR-CYC-CREDIT", 78, 12, 2),
-    ("ACCT-CURR-CYC-DEBIT", 90, 12, 2),
-    ("ACCT-ADDR-ZIP", 102, 10, None),
-    ("ACCT-GROUP-ID", 112, 10, None),
-)
-
-#: Fields the generated pipeline cannot produce, each with the decision that says so.
-#: **A field may not be added here without an ADR that makes it unproducible.**
-EXCLUSIONS: dict[str, str] = {
-    "TRAN-ID": (
-        "ADR-0026: STRING PARM-DATE, WS-TRANID-SUFFIX needs a per-run counter, and a stateless "
-        "ItemProcessor cannot reproduce a monotonic suffix under restart or partitioning. Scoped "
-        "out rather than faked."
-    ),
-    "TRAN-ORIG-TS": (
-        "ADR-0026: the run timestamp is supplied once per run where COBOL reads FUNCTION "
-        "CURRENT-DATE per record, a divergence taken so a batch record is reproducible."
-    ),
-    "TRAN-PROC-TS": ("ADR-0026: the same run-timestamp divergence as TRAN-ORIG-TS -- COBOL reads the "
-        "clock per record and the generated processor is handed one instant per run, so both "
-        "timestamp fields differ by construction rather than by defect."),
-}
-
-#: Zoned-decimal overpunch: the last byte carries the final digit *and* the sign.
-_OVERPUNCH = {
-    **{c: ("+", str(i)) for i, c in enumerate("{ABCDEFGHI")},
-    **{c: ("-", str(i)) for i, c in enumerate("}JKLMNOPQR")},
-}
-
-
-def decode_signed(raw: str, scale: int) -> Decimal:
-    """A zoned-decimal DISPLAY field as a `Decimal`.
-
-    The corpus really uses overpunches -- `00000001940{` is +194.00, not 19400 (audit G16) -- so a
-    comparison that read these as plain digits would be wrong by a factor of ten *and* lose the sign,
-    which is precisely the defect the data loader was built to avoid.
-    """
-    body, last = raw[:-1], raw[-1]
-    sign, digit = _OVERPUNCH.get(last, ("+", last))
-    digits = f"{body}{digit}"
-    value = Decimal(digits or "0")
-    if scale:
-        value = value.scaleb(-scale)
-    return -value if sign == "-" else value
-
-
-@dataclass(frozen=True)
-class FieldValue:
-    name: str
-    raw: str
-    scale: int | None
-
-    @property
-    def value(self):
-        """Alphanumerics compare as their full declared width; numerics as a decimal."""
-        return self.raw if self.scale is None else decode_signed(self.raw, self.scale)
-
-
-def parse_record(record: str) -> dict[str, FieldValue]:
-    if len(record) != TRAN_RECORD_LEN:
-        raise ValueError(f"expected {TRAN_RECORD_LEN}-byte record, got {len(record)}")
-    return {
-        name: FieldValue(name, record[off : off + width], scale)
-        for name, off, width, scale in TRAN_LAYOUT
-    }
-
-
+# The loaders take the oracle directory now (see the package docstring on why). These thin wrappers
+# keep every test below byte-identical to the version that passed before the move.
 def load_oracle() -> list[dict[str, FieldValue]]:
-    raw = TRANSACT.read_bytes().decode("latin-1")
-    if len(raw) % TRAN_RECORD_LEN:
-        raise ValueError(f"oracle is not a whole number of records: {len(raw)} bytes")
-    return [
-        parse_record(raw[i : i + TRAN_RECORD_LEN])
-        for i in range(0, len(raw), TRAN_RECORD_LEN)
-    ]
-
-
-def parse_fixed_records(
-    path: Path, layout: tuple[tuple[str, int, int, int | None], ...], record_length: int
-) -> list[dict[str, FieldValue]]:
-    """Parse a fixed-width file with `layout`, whatever wrote it.
-
-    Used for the oracle *and* for a candidate produced by a rendered writer, deliberately: two
-    parsers would be two places for one of the sides to be misread, and a difference in how the
-    files are read would show up as a difference in what the programs computed.
-    """
-    raw = path.read_bytes().decode("latin-1")
-    if len(raw) % record_length:
-        raise ValueError(f"{path.name} is not a whole number of records: {len(raw)} bytes")
-    return [
-        {
-            name: FieldValue(name, raw[i + off : i + off + width], scale)
-            for name, off, width, scale in layout
-        }
-        for i in range(0, len(raw), record_length)
-    ]
+    return _load_oracle(ORACLE_DIR)
 
 
 def load_account_oracle() -> list[dict[str, FieldValue]]:
-    """The account file `CBACT04C` left behind, parsed with `ACCOUNT_LAYOUT`."""
-    return parse_fixed_records(ORACLE_DIR / "acctdata-posted.dat", ACCOUNT_LAYOUT, 300)
-
-
-@dataclass(frozen=True)
-class ComparisonResult:
-    """What ADR-0029 requires a result to carry: matches, mismatches, and what was excluded."""
-
-    compared: int
-    matched: int
-    mismatches: tuple[str, ...]
-    excluded: tuple[str, ...]
-
-    @property
-    def passed(self) -> bool:
-        return not self.mismatches
-
-    def render(self) -> str:
-        """The qualifier ADR-0029 says the metric never appears without."""
-        return (
-            f"{self.matched} of {self.compared} fields matched; "
-            f"{len(self.excluded)} excluded by decision"
-        )
-
-
-def compare(
-    candidate: list[dict[str, FieldValue]],
-    oracle: list[dict[str, FieldValue]],
-    layout: tuple[tuple[str, int, int, int | None], ...] = TRAN_LAYOUT,
-    exclusions: dict[str, str] | None = None,
-) -> ComparisonResult:
-    """Field-for-field, skipping only what `exclusions` names.
-
-    `layout` and `exclusions` are parameters rather than constants because `CBACT04C` writes **two**
-    files -- the interest transactions and the rewritten account master -- and comparing one of them
-    measures half the program. The semantics are identical for both: full declared width, exclusions
-    citing a decision, record framing out of scope.
-    """
-    exclusions = EXCLUSIONS if exclusions is None else exclusions
-    if len(candidate) != len(oracle):
-        return ComparisonResult(
-            compared=0,
-            matched=0,
-            mismatches=(f"record count {len(candidate)} != oracle {len(oracle)}",),
-            excluded=tuple(exclusions),
-        )
-
-    compared = matched = 0
-    mismatches: list[str] = []
-    for index, (got, want) in enumerate(zip(candidate, oracle)):
-        for name, *_ in layout:
-            if name in exclusions:
-                continue
-            compared += 1
-            if got[name].value == want[name].value:
-                matched += 1
-            else:
-                mismatches.append(
-                    f"record {index} {name}: got {got[name].value!r} want {want[name].value!r}"
-                )
-    return ComparisonResult(compared, matched, tuple(mismatches), tuple(exclusions))
-
-
-# --- the fixture is real -------------------------------------------------------------------------
-
+    return _load_account_oracle(ORACLE_DIR)
 
 def test_the_oracle_fixture_is_a_whole_number_of_records():
     records = load_oracle()

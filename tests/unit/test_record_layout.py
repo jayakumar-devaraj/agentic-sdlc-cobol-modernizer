@@ -22,6 +22,10 @@ from pathlib import Path
 import pytest
 
 from cobol_modernizer.core.contracts import ProgramDesignEntry
+from cobol_modernizer.equivalence import (
+    ACCOUNT_LAYOUT,
+    TRAN_LAYOUT,
+)
 from cobol_modernizer.nodes.solution_architect import build_domain_entities
 from cobol_modernizer.nodes.spec_critic import critique_spec
 from cobol_modernizer.nodes.spec_extractor import extract_spec
@@ -31,7 +35,6 @@ from cobol_modernizer.parsing.record_layout import (
     display_width,
 )
 from cobol_modernizer.tools.pic_mapper import map_pic_clause
-from tests.unit.test_cobol_oracle_comparison import ACCOUNT_LAYOUT, TRAN_LAYOUT
 
 FIXTURE_ROOT = Path(__file__).resolve().parents[1] / "fixtures" / "tenant_repo_sample"
 CPY = FIXTURE_ROOT / "app" / "cpy"

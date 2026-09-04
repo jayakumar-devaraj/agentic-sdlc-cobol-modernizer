@@ -41,6 +41,16 @@ from cobol_modernizer.core.contracts import (
     build_design_document,
 )
 from cobol_modernizer.core.model_client import RunBudget, collect_usage
+from cobol_modernizer.equivalence import (
+    ACCOUNT_LAYOUT,
+    EXCLUSIONS,
+    TRAN_LAYOUT,
+    ComparisonResult,
+    compare,
+    parse_fixed_records,
+)
+from cobol_modernizer.equivalence import load_account_oracle as _load_account_oracle
+from cobol_modernizer.equivalence import load_oracle as _load_oracle
 from cobol_modernizer.graph.generate_pipeline import (
     DEFAULT_DOMAIN_PACKAGE,
     DEFAULT_PACKAGE,
@@ -83,19 +93,21 @@ from tests.support.posting_design import _FAITHFUL as _POSTING_BODY
 from tests.support.posting_design import _IMPORTS as _POSTING_IMPORTS
 from tests.support.posting_design import POSTING
 from tests.support.posting_design import STEP as POSTING_STEP
-from tests.unit.test_cobol_oracle_comparison import (
-    ACCOUNT_LAYOUT,
-    EXCLUSIONS,
-    TRAN_LAYOUT,
-    ComparisonResult,
-    compare,
-    load_account_oracle,
-    load_oracle,
-    parse_fixed_records,
-)
 
 HANDWRITTEN = Path(__file__).resolve().parents[1] / "fixtures" / "handwritten" / "CBACT04C"
 ORACLE_DIR = Path(__file__).resolve().parents[1] / "fixtures" / "golden" / "CBACT04C" / "oracle"
+
+
+def load_account_oracle():
+    """ADR-0064: the loader takes the oracle directory; this module already has one."""
+    return _load_account_oracle(ORACLE_DIR)
+
+
+def load_oracle():
+    """ADR-0064: the loader takes the oracle directory; this module already has one."""
+    return _load_oracle(ORACLE_DIR)
+
+
 CORPUS = FIXTURE_ROOT / "app" / "data" / "ASCII"
 
 #: What the reader is given, and where each file comes from.
