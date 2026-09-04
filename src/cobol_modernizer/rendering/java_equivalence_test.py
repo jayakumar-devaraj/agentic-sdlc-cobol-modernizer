@@ -119,6 +119,79 @@ def _construct(entity: DomainEntity, bound_field: str | None, bound_expression: 
     return f"new {entity.name}({', '.join(arguments)})"
 
 
+def _resolve_result_path(
+    binding: Mapping[str, Any],
+    *,
+    output_entity: str,
+    output_composite: CompositeType | None,
+    entities: Sequence[DomainEntity],
+) -> str:
+    """The accessor chain reaching the computed interest on this step's output (ADR-0065).
+
+    **Where the value lands is a property of the design, not of the COBOL**, and that distinction is
+    what this function exists for. The oracle knows a durable fact -- `1300-B-WRITE-TX` does
+    `MOVE WS-MONTHLY-INT TO TRAN-AMT` -- but a model decomposes the program afresh every run, and
+    when it owns `1300-B-WRITE-TX` as a *separate* step the interest never reaches `TRAN-AMT` inside
+    the step under test at all. Resolving against the oracle's `component` alone refused the real
+    step-51 design, whose arithmetic was correct; a gate that blocks working code is not a strict
+    gate.
+
+    Two cases, both **declared** rather than matched on plausible-looking names:
+
+    - **carried** -- the output composite declares a `computed_fields` entry for the oracle's
+      working-storage field. `cobol_field_name` is the key, never `field_name`: `monthlyInterest` is
+      a name a model chose, and keying on it would be the "`tranAmt` is probably the amount" guess
+      this module removes everywhere else.
+    - **written** -- the output composite carries the oracle's declared `component`, which is the
+      case where the design keeps both paragraphs in one step.
+
+    Carried is tried first: it is the nearer observation of the value under test.
+    """
+    result_field = binding["result_field"]["field"]
+    working_storage = binding["result_field"].get("working_storage")
+
+    if working_storage is not None and output_composite is not None:
+        carried = [
+            computed.field_name
+            for computed in output_composite.computed_fields
+            if computed.cobol_field_name.upper() == working_storage.upper()
+        ]
+        if len(carried) > 1:
+            raise UnrenderableOracleError(
+                f"{output_composite.name!r} declares {len(carried)} computed fields carrying "
+                f"{working_storage!r} ({sorted(carried)}), so which one the test should assert is "
+                f"ambiguous"
+            )
+        if carried:
+            return f"{carried[0]}()"
+
+    result_component = binding["result_field"].get("component")
+    if result_component is None:
+        _field(_entity(entities, output_entity), result_field)
+        return f"{result_field}()"
+
+    if output_composite is None or output_composite.name != output_entity:
+        raise UnrenderableOracleError(
+            f"the oracle's java_binding names component {result_component!r} on "
+            f"{output_entity!r}, but no matching composite was supplied to render against"
+        )
+    owner = next((c for c in output_composite.components if c.field_name == result_component), None)
+    if owner is None:
+        # Neither case matched, and *that is the finding* (ADR-0065): the step computing the
+        # interest has nowhere declared to put it, which is step 49's defect stated exactly -- it
+        # computed the value and returned its input unchanged. Reported at render time, before any
+        # Java exists, rather than as a failing assertion afterwards.
+        raise UnrenderableOracleError(
+            f"{output_entity!r} carries the interest nowhere this renderer can assert on: it "
+            f"declares no computed field for {working_storage!r} (computed fields are "
+            f"{sorted(c.cobol_field_name for c in output_composite.computed_fields)}) and has no "
+            f"{result_component!r} component (components are "
+            f"{sorted(c.field_name for c in output_composite.components)})"
+        )
+    _field(_entity(entities, owner.entity_name), result_field)
+    return f"{result_component}().{result_field}()"
+
+
 def render_equivalence_test(
     oracle: Mapping[str, Any],
     *,
@@ -148,37 +221,17 @@ def render_equivalence_test(
 
     balance_entity = _entity(entities, binding["balance_field"]["entity"])
     rate_entity = _entity(entities, binding["rate_field"]["entity"])
-    # The output may be a composite once a design splits a paragraph chain into steps: with
-    # `1300-B-WRITE-TX` owned separately, the interest step hands its successor a record *plus* the
-    # context that successor needs, and the amount sits one accessor deeper. The binding names that
-    # component -- declared, not guessed, like everything else here.
-    result_component = binding["result_field"].get("component")
-    if result_component is not None:
-        if output_composite is None or output_composite.name != output_entity:
-            raise UnrenderableOracleError(
-                f"the oracle's java_binding names component {result_component!r} on "
-                f"{output_entity!r}, but no matching composite was supplied to render against"
-            )
-        owner = next(
-            (c for c in output_composite.components if c.field_name == result_component), None
-        )
-        if owner is None:
-            raise UnrenderableOracleError(
-                f"{output_entity!r} has no {result_component!r} component; components are "
-                f"{sorted(c.field_name for c in output_composite.components)}"
-            )
-        result_entity = _entity(entities, owner.entity_name)
-    else:
-        result_entity = _entity(entities, output_entity)
     _field(balance_entity, binding["balance_field"]["field"])
     _field(rate_entity, binding["rate_field"]["field"])
-    _field(result_entity, binding["result_field"]["field"])
 
     _require_reachable(composite, balance_entity.name)
     _require_reachable(composite, rate_entity.name)
-    result_field = binding["result_field"]["field"]
-    result_path = (
-        f"{result_component}().{result_field}()" if result_component else f"{result_field}()"
+
+    result_path = _resolve_result_path(
+        binding,
+        output_entity=output_entity,
+        output_composite=output_composite,
+        entities=entities,
     )
 
     # Component order is the composite's own, so the constructor call matches the rendered record.

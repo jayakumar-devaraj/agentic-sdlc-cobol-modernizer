@@ -33,11 +33,19 @@
       "",
       "`component` names the composite component the Tran travels in, once 1300-B-WRITE-TX is a",
       "step of its own and the interest step hands its successor the record plus the context that",
-      "successor needs. Declared rather than inferred, like every other entry here."
+      "successor needs. Declared rather than inferred, like every other entry here.",
+      "",
+      "`working_storage` names the COBOL field the result *is* (ADR-0065), and it is the entry that",
+      "makes this binding survive a decomposition it did not anticipate. When a model owns",
+      "1300-B-WRITE-TX as a separate step, the interest never reaches TRAN-AMT inside the step under",
+      "test at all -- it is carried on the output composite as a computed field. Which Java accessor",
+      "that is differs per run and cannot be known here; the design declares it, keyed on this name.",
+      "Everything above stays true of the COBOL, which is the only thing this file is entitled to",
+      "state."
     ],
     "balance_field": {"entity": "TranCatBal", "field": "tranCatBal", "cobol": "TRAN-CAT-BAL"},
     "rate_field": {"entity": "DisGroup", "field": "disIntRate", "cobol": "DIS-INT-RATE"},
-    "result_field": {"entity": "Tran", "field": "tranAmt", "cobol": "TRAN-AMT", "component": "tran"},
+    "result_field": {"entity": "Tran", "field": "tranAmt", "cobol": "TRAN-AMT", "component": "tran", "working_storage": "WS-MONTHLY-INT"},
     "absent_output_means": "COBOL writes no transaction record; an ItemProcessor returns null to filter the item"
   },
   "rows": [
