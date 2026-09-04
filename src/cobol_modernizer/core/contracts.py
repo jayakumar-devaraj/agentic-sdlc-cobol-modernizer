@@ -590,6 +590,29 @@ class UnifiedDesign(BaseModel):
         missing.extend(self.unresolvable_computed_field_names())
         return missing
 
+    def accumulator_owners(self, program_name: str) -> dict[str, str]:
+        """`{COBOL accumulator field: the step that owns its control break}` for one program.
+
+        **Grain, derived rather than declared** (ADR-0063). A control break's `accumulator_field` is
+        group-scoped by the definition of a control break: it is zeroed at the group boundary,
+        added to once per row, and read once per group. That makes it a property of the *group*,
+        not of the row that feeds it -- and a `BigDecimal` field cannot tell those apart, which is
+        how ADR-0062 came to require a per-row item to carry one.
+
+        Nothing new is declared. `attach_control_breaks` already put a `ControlBreakDesign` on the
+        step declaring the break's `performed_paragraph`, and that step is exactly the one entitled
+        to carry the accumulator -- ADR-0027's already-summed `(account, totalInterest)` item. The
+        fact was present and correct and simply never consulted.
+        """
+        owners: dict[str, str] = {}
+        for job in self.batch_jobs:
+            if job.program_name != program_name:
+                continue
+            for step in job.steps:
+                if step.control_break is not None:
+                    owners[step.control_break.accumulator_field.upper()] = step.step_name
+        return owners
+
     def unresolvable_computed_field_names(self) -> list[str]:
         """Every `ComputedComponent` whose `cobol_field_name` resolves to no computed value.
 

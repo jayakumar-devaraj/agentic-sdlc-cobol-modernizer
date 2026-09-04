@@ -97,6 +97,14 @@ logger = logging.getLogger(__name__)
 
 _NODE_NAME = "solution_architect"
 
+#: v1_3_0 states that an accumulator belongs to its group, not to the row that feeds it
+#: (ADR-0063). v1_2_0's rule -- a step must be able to return what it computes -- is correct for
+#: a per-row value and *required* a defect for a group-scoped one: `WS-TOTAL-INT` escapes the
+#: paragraph that computes it, so the rule demanded the producing step carry it, and a stateless
+#: processor can only satisfy that by setting a running total to the current row's value. A live
+#: run generated exactly that. Two halves again: the rule is stated here and the contract refuses
+#: it, because a model told only "not here" will find another wrong home.
+#:
 #: v1_2_0 gives the architect the program's computed values and states the rule that a step must be
 #: able to return what it computes (ADR-0062). v1_1_0 offered no way to say "a `RatedCategoryBalance`
 #: plus the interest computed from it", so the architect designed the only expressible thing and the
@@ -109,7 +117,7 @@ _NODE_NAME = "solution_architect"
 #: COBOL-style `1300-COMPUTE-INTEREST` was following the prompt it was given, and failing at
 #: `generate` time an approval later. Enforcing the rule without stating it would have been the
 #: worse half of the fix on its own.
-PROMPT_VERSION = "v1_2_0"
+PROMPT_VERSION = "v1_3_0"
 
 #: Rank for picking the highest tier across a run's programs. `ComplexityTier` is a `str` Enum, so
 #: it sorts alphabetically by default -- which would put "complex" below "moderate" and silently
@@ -539,6 +547,24 @@ def build_computed_values(
     return values
 
 
+def build_accumulator_paragraphs(
+    worktree_root: Path, programs: list[ProgramDesignEntry]
+) -> dict[str, str]:
+    """`{COBOL accumulator field: the paragraph its control break performs}` (ADR-0063).
+
+    Read straight from the COBOL rather than from the design, because this is used to build the
+    prompt that *produces* the design -- there are no steps yet to attach a `ControlBreakDesign` to.
+    Naming the paragraph is the actionable half regardless: the architect decides which step
+    declares it, and `UnifiedDesign.accumulator_owners` resolves paragraph to step afterwards.
+    """
+    found: dict[str, str] = {}
+    for entry in programs:
+        source_text = resolve_program(worktree_root, entry.program_name).source_text
+        for control in extract_control_breaks(source_text):
+            found[control.accumulator_field.upper()] = control.performed_paragraph
+    return found
+
+
 def _entities_of(type_name: str, design: UnifiedDesign) -> list[str]:
     """The domain entities a declared type carries -- itself, or a composite's components."""
     composite = next((c for c in design.composite_types if c.name == type_name), None)
@@ -640,6 +666,14 @@ def undeliverable_computed_values(
         for field in entity.fields:
             owners.setdefault(field.cobol_field_name.upper(), set()).add(entity.name)
 
+    # ADR-0063: a control break's accumulator is group-grain and belongs to the step that owns the
+    # break, not to the rows that feed it. Without this the rule does not merely miss the defect --
+    # it *requires* it: `WS-TOTAL-INT` is computed in a paragraph `computeMonthlyInterest` owns,
+    # escapes to `1050-UPDATE-ACCOUNT`, and lands in no record, so every clause below demands the
+    # producing step carry it, and the only way to satisfy that at row grain is to fabricate a
+    # total. A live run did exactly that: `BigDecimal totalInterest = monthlyInterest;`.
+    accumulators = set(design.accumulator_owners(job.program_name))
+
     undelivered: list[str] = []
     for value in design.computed_values:
         if value.program_name != job.program_name:
@@ -647,6 +681,8 @@ def undeliverable_computed_values(
         if not {name.upper() for name in value.computed_in_paragraphs} & owned:
             continue
         if not value.escapes_to:
+            continue
+        if value.cobol_field_name.upper() in accumulators:
             continue
         if value.cobol_field_name.upper() in declared:
             continue
@@ -656,6 +692,53 @@ def undeliverable_computed_values(
         undelivered.append(value.cobol_field_name)
 
     return sorted(undelivered)
+
+
+def misplaced_accumulators(job: BatchJobDesign, design: UnifiedDesign) -> list[tuple[str, str, str]]:
+    """Accumulators carried by an item that is not at the group's grain (ADR-0063).
+
+    The other half of excusing the producing step. Excusing it alone would leave the wrong design
+    merely *permitted*; this makes it refused. A control break's `accumulator_field` may be carried
+    only by the output of the step that owns the break -- ADR-0027's already-summed
+    `(account, totalInterest)` item, where the value is obtained by summing rather than received.
+
+    The live design that motivated this carried `WS-TOTAL-INT` **twice**: correctly on
+    `AccountInterestPosting` (the posting step's item) and incorrectly on `AccruedCategoryInterest`
+    (a per-balance item), so it held two contradictory representations of one value and nothing
+    compared them.
+
+    Returns `(composite_name, cobol_field_name, owning_step_name)` triples, sorted, so a refusal
+    message can name where the value does belong rather than only where it does not.
+    """
+    owners = design.accumulator_owners(job.program_name)
+    if not owners:
+        return []
+
+    # The types the entitled step operates on -- **both**, and the input is the load-bearing one.
+    # ADR-0027's already-summed item is what the posting step *reads*: `postAccountInterest` is a
+    # writer with `input_type = AccountInterestPosting` (account + totalInterest) and
+    # `output_type = Account`. Checking the output alone reports the correct carrier as misplaced,
+    # which is what a first version of this function did.
+    entitled: dict[str, set[str]] = {}
+    for step in job.steps:
+        for field, owning_step in owners.items():
+            if step.step_name == owning_step:
+                entitled[field] = {step.input_type, step.output_type}
+
+    # Only composites this job's steps actually reach. A composite no step names is unreachable and
+    # already reported as such; refusing it here would report it for the wrong reason.
+    reached = {name for step in job.steps for name in (step.input_type, step.output_type)}
+
+    misplaced: list[tuple[str, str, str]] = []
+    for composite in design.composite_types:
+        if composite.name not in reached:
+            continue
+        for computed in composite.computed_fields:
+            field = computed.cobol_field_name.upper()
+            if field in owners and composite.name not in entitled.get(field, set()):
+                misplaced.append((composite.name, computed.cobol_field_name, owners[field]))
+
+    return sorted(misplaced)
 
 
 def unreachable_entities(
@@ -722,6 +805,7 @@ def _render_known_facts(
     domain_entities: list[DomainEntity],
     programs: list[ProgramDesignEntry],
     computed_values: list[ComputedValue] | None = None,
+    accumulators: dict[str, str] | None = None,
 ) -> str:
     """Render the deterministic facts block the prompt's system instructions call "Known Facts"."""
     lines = ["# Known Facts for solution_architect", ""]
@@ -742,11 +826,13 @@ def _render_known_facts(
             )
         lines.append("")
 
+    accumulators = accumulators or {}
+
     if computed_values:
         lines.append("## Computed values per program (deterministic -- never re-read from a PIC clause)")
         lines += [
-            "| Program | COBOL field | Java type | Precision | Scale | Computed in | Also read by |",
-            "|---|---|---|---|---|---|---|",
+            "| Program | COBOL field | Java type | Precision | Scale | Computed in | Also read by | Grain |",
+            "|---|---|---|---|---|---|---|---|",
         ]
         for value in computed_values:
             precision = value.precision if value.precision is not None else "-"
@@ -754,10 +840,18 @@ def _render_known_facts(
             # "Also read by" is the column that decides whether a value has to cross a step
             # boundary. An empty one is a local intermediate and needs no home.
             escapes = ", ".join(value.escapes_to) or "(nothing -- local to its paragraph)"
+            # ADR-0063: an accumulator is group-scoped and the architect cannot tell that from a
+            # BigDecimal. The *step* that will own it does not exist yet -- this prompt is what
+            # produces the steps -- so the paragraph is named instead, which is the thing the
+            # architect assigns to a step and therefore the actionable half.
+            para = accumulators.get(value.cobol_field_name.upper())
+            grain = (
+                f"GROUP -- accumulator; belongs to the step declaring {para}" if para else "row"
+            )
             lines.append(
                 f"| {value.program_name} | {value.cobol_field_name} | {value.java_type} "
                 f"| {precision} | {scale} | {', '.join(value.computed_in_paragraphs)} "
-                f"| {escapes} |"
+                f"| {escapes} | {grain} |"
             )
         lines.append("")
 
@@ -775,6 +869,7 @@ def build_architect_prompt(
     domain_entities: list[DomainEntity],
     programs: list[ProgramDesignEntry],
     computed_values: list[ComputedValue] | None = None,
+    accumulators: dict[str, str] | None = None,
 ) -> str:
     """Build the user-turn prompt content: Known Facts followed by every wrapped, untrusted narration.
 
@@ -783,7 +878,7 @@ def build_architect_prompt(
     (`core.guardrails.DelimiterForgeryError`) is not caught here, same as `spec_extractor`'s and
     `spec_critic`'s own prompt builders -- an unambiguous hard failure that must propagate.
     """
-    known_facts = _render_known_facts(domain_entities, programs, computed_values)
+    known_facts = _render_known_facts(domain_entities, programs, computed_values, accumulators)
     wrapped_sections = [
         wrap_untrusted_cobol(entry.spec_extraction.spec_markdown, source_label=entry.program_name)
         for entry in programs
@@ -1007,6 +1102,21 @@ def _refuse_undeliverable_computed_values(
     )
 
     for job in batch_jobs:
+        # ADR-0063, checked before the per-step rule below: an accumulator on a row-grain item is a
+        # wrong *home* for a value, and reporting it as "nowhere to put it" would send a model
+        # looking for another row-grain home. The message names the step that should carry it.
+        for composite_name, field, owning_step in misplaced_accumulators(job, design):
+            raise SolutionArchitectParseError(
+                f"solution_architect composite {composite_name!r} carries computed field "
+                f"{field!r}, which is the accumulator of a control break owned by step "
+                f"{owning_step!r}. An accumulator is a property of the whole group -- it is zeroed "
+                f"at the group boundary, added to once per row, and read once per group -- so a "
+                f"per-row item cannot hold it, and a stateless processor asked to fill one can only "
+                f"set it to the current row's value. Carry it on {owning_step!r}'s output type "
+                f"instead, whose item is one already-summed row per group, and remove "
+                f"{field!r} from {composite_name!r}."
+            )
+
         for step in job.steps:
             undelivered = undeliverable_computed_values(job, step, design)
             if not undelivered:
@@ -1078,7 +1188,10 @@ def design_solution(
     """
     domain_entities = build_domain_entities(worktree_root, programs)
     computed_values = build_computed_values(worktree_root, programs)
-    user_content = build_architect_prompt(domain_entities, programs, computed_values)
+    accumulators = build_accumulator_paragraphs(worktree_root, programs)
+    user_content = build_architect_prompt(
+        domain_entities, programs, computed_values, accumulators
+    )
     system_prompt = _load_system_prompt()
 
     # One call reasoning across every program at once (ADR-0010), so it takes the *highest* tier
