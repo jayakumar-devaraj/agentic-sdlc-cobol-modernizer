@@ -33,6 +33,7 @@ import os
 import re
 import subprocess
 import time
+from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal
@@ -320,6 +321,7 @@ def compile_project(
     goal: str = "compile",
     timeout_seconds: int = DEFAULT_TIMEOUT_SECONDS,
     offline: bool = False,
+    extra_args: Sequence[str] = (),
 ) -> CompileResult:
     """Run one Maven build in `project_dir` and return its structured outcome.
 
@@ -330,6 +332,12 @@ def compile_project(
         timeout_seconds: Killed past this. See `CompileTimeoutError` for why a timeout is not
             reported as a compile failure.
         offline: Pass `-o`. Useful once `~/.m2` is warm, and wrong on a first build.
+        extra_args: Further Maven arguments, appended before the goal. Exists so a caller can
+            *narrow* a run -- ADR-0065's `-Dtest=` selecting the rendered equivalence test alone.
+            That narrowing is not a nicety: the baseline template's `BaselineStackTest` is
+            `@SpringBootTest @Testcontainers`, so an unfiltered `verify` inside `generate` would
+            demand Docker on the specialist host and fail for reasons having nothing to do with
+            the interest arithmetic.
 
     Raises:
         FileNotFoundError: `project_dir` has no `pom.xml` -- an unambiguous caller error, and one
@@ -345,6 +353,7 @@ def compile_project(
     argv = [*resolve_build_command(project_dir), *_BASE_ARGS]
     if offline:
         argv.append("-o")
+    argv.extend(extra_args)
     argv.append(goal)
 
     logger.info(

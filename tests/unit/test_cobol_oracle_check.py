@@ -17,6 +17,8 @@ sys.path.insert(0, str(TOOLS))
 
 import generate_orachk
 
+from cobol_modernizer.core.package_data import ORACLE_ROOT
+
 
 def test_the_committed_orachk_matches_the_oracle_table():
     committed = (TOOLS / "ORACHK.cbl").read_text(encoding="utf-8")
@@ -45,10 +47,7 @@ def test_every_oracle_row_reaches_the_generated_program():
     import json
 
     rows = json.loads(
-        (
-            Path(__file__).resolve().parents[1]
-            / "fixtures" / "golden" / "CBACT04C" / "interest-oracle.json"
-        ).read_text(encoding="utf-8")
+        (ORACLE_ROOT / "CBACT04C" / "interest-oracle.json").read_text(encoding="utf-8")
     )["rows"]
     text = (TOOLS / "ORACHK.cbl").read_text(encoding="utf-8")
     for row in rows:

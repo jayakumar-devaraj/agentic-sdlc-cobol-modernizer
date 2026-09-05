@@ -24,12 +24,11 @@ from cobol_modernizer.core.contracts import (
     CompositeComponent,
     CompositeType,
 )
+from cobol_modernizer.core.package_data import ORACLE_ROOT
 from cobol_modernizer.graph.generate_pipeline import DEFAULT_DOMAIN_PACKAGE
 
 FIXTURE_ROOT = Path(__file__).resolve().parents[1] / "fixtures" / "tenant_repo_sample"
-ORACLE_PATH = (
-    Path(__file__).resolve().parents[1] / "fixtures" / "golden" / "CBACT04C" / "interest-oracle.json"
-)
+ORACLE_PATH = ORACLE_ROOT / "CBACT04C" / "interest-oracle.json"
 PROGRAM = "CBACT04C"
 
 #: What the step actually needs, arrived at in two steps and both times from a model's refusal.

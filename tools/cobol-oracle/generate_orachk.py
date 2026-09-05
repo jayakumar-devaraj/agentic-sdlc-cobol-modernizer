@@ -19,7 +19,7 @@ from pathlib import Path
 
 ORACLE = (
     Path(__file__).resolve().parents[2]
-    / "tests" / "fixtures" / "golden" / "CBACT04C" / "interest-oracle.json"
+    / "src" / "cobol_modernizer" / "data" / "oracle" / "CBACT04C" / "interest-oracle.json"
 )
 TARGET = Path(__file__).resolve().parent / "ORACHK.cbl"
 

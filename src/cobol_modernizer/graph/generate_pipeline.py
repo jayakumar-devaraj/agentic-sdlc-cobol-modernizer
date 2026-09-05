@@ -28,8 +28,10 @@ layers' logs and quadratic in cost.
 
 from __future__ import annotations
 
+import json
 import logging
 import shutil
+from collections.abc import Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -42,17 +44,22 @@ from cobol_modernizer.core.contracts import (
     ComputedValue,
     DesignDocument,
     DomainEntity,
+    EquivalenceTestVerdict,
     JobParameter,
     ProgramDesignEntry,
     UnifiedDesign,
 )
-from cobol_modernizer.core.package_data import TEMPLATES_ROOT
+from cobol_modernizer.core.package_data import ORACLE_ROOT, TEMPLATES_ROOT
 from cobol_modernizer.nodes.build_validator import AdviseFn, ValidationVerdict, validate_build
 from cobol_modernizer.nodes.modernization_engineer import (
     AuthorFn,
     GeneratedProcessor,
     RepairContext,
     generate_processor,
+)
+from cobol_modernizer.rendering.java_equivalence_test import (
+    UnrenderableOracleError,
+    render_equivalence_test,
 )
 from cobol_modernizer.rendering.java_processor import (
     model_authored_line_numbers,
@@ -250,6 +257,118 @@ def processor_types(
     return (f"{domain_package}.{step.input_type}", f"{domain_package}.{step.output_type}")
 
 
+#: The per-program oracle a rendered equivalence test reads its expected values from. Absent for
+#: every program but `CBACT04C` today, and absence is not an error: a program with no hand-derived
+#: oracle gets no rendered test, which `not_rendered` says.
+EQUIVALENCE_ORACLE_NAME = "interest-oracle.json"
+
+
+def load_equivalence_oracle(program_name: str) -> dict[str, Any] | None:
+    """The parsed oracle for `program_name`, or `None` when the package ships none."""
+    path = ORACLE_ROOT / program_name / EQUIVALENCE_ORACLE_NAME
+    if not path.is_file():
+        return None
+    return json.loads(path.read_text(encoding="utf-8"))
+
+
+def render_step_equivalence_test(
+    step: BatchStepDesign,
+    design: UnifiedDesign,
+    output_dir: Path,
+    *,
+    oracle: Mapping[str, Any],
+    processor_class: str,
+    package: str,
+    domain_package: str,
+) -> str:
+    """Render the equivalence test for `step` into the target project, and return its class name.
+
+    Raises `UnrenderableOracleError` when the design gives the computed value nowhere to land --
+    which the caller reports as a `refused` verdict rather than swallowing, because that refusal
+    *is* the finding (ADR-0065).
+    """
+    test_class = f"{processor_class}EquivalenceTest"
+    composites = {c.name: c for c in design.composite_types}
+    consumed = composites.get(step.input_type)
+    if consumed is None:
+        # The renderer builds the item it feeds the processor out of the composite's own components,
+        # so a step consuming a bare entity is a shape it cannot construct. Refused rather than
+        # approximated, per this module's standing rule.
+        raise UnrenderableOracleError(
+            f"step {step.step_name!r} consumes {step.input_type!r}, which is a domain entity "
+            f"rather than a declared composite, so the balance and the rate cannot both be "
+            f"supplied to one item"
+        )
+    rendered = render_equivalence_test(
+        oracle,
+        package=package,
+        test_class_name=test_class,
+        processor_class=processor_class,
+        composite=consumed,
+        entities=design.domain_entities,
+        output_entity=step.output_type,
+        domain_package=domain_package,
+        output_composite=composites.get(step.output_type),
+    )
+    destination = output_dir.joinpath(
+        "src", "test", "java", *package.split("."), f"{test_class}.java"
+    )
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    destination.write_text(rendered, encoding="utf-8")
+    logger.info("generate: rendered equivalence test %s for %s", test_class, processor_class)
+    return test_class
+
+
+def run_equivalence_test(
+    project_dir: Path, test_class: str, *, paragraph: str
+) -> EquivalenceTestVerdict:
+    """Run the one rendered test through Maven and turn the build's exit into a verdict.
+
+    **`-Dtest=` is not an optimisation.** The heal loop's own goal is `compile`, which never
+    compiles test sources, so something here has to run tests or the rendered file is inert -- the
+    ADR-0063 failure this record was written to avoid repeating. But the baseline template ships
+    `BaselineStackTest`, which is `@SpringBootTest @Testcontainers`: an unfiltered `test` would
+    demand Docker on the specialist host and fail for reasons that say nothing about the interest
+    arithmetic. Narrowing to the rendered class runs exactly the check this verdict claims to
+    report, and claims no more.
+    """
+    result = compile_project(
+        project_dir,
+        goal="test",
+        extra_args=(f"-Dtest={test_class}", "-Dsurefire.failIfNoSpecifiedTests=false"),
+    )
+    if result.succeeded:
+        return EquivalenceTestVerdict(
+            status="passed",
+            reason=(
+                f"{test_class} passed: the per-row interest arithmetic matches the hand-derived "
+                f"oracle and the value reaches the step's output. Covers one COMPUTE -- not the "
+                f"account accumulator, and not the job's written records (ADR-0065)"
+            ),
+            test_class=test_class,
+        )
+    # **A build that did not compile is not a wrong answer**, and reporting it as one would tell a
+    # reviewer the generated arithmetic diverges from COBOL when nothing has been compared at all.
+    # The same distinction `build_validator` draws for the processor, drawn again here.
+    if result.errors:
+        return EquivalenceTestVerdict(
+            status="failed",
+            reason=(
+                f"{test_class} did not compile, so nothing was compared: "
+                f"{result.errors[0].render()}"
+            ),
+            test_class=test_class,
+        )
+    return EquivalenceTestVerdict(
+        status="failed",
+        reason=(
+            f"{test_class} failed: generated code does not reproduce COBOL's own answers for "
+            f"{paragraph}. Maven exit {result.exit_code}"
+        ),
+        test_class=test_class,
+    )
+
+
 def heal_step(
     worktree_root: Path,
     project_dir: Path,
@@ -393,6 +512,13 @@ class GenerateOutcome:
     outcomes: tuple[StepOutcome, ...]
     scaffolded: bool
     output_dir: str
+    #: What the rendered JUnit equivalence test did (ADR-0065). Defaults to `not_rendered` so a run
+    #: that checked nothing says so, rather than leaving the subject out.
+    equivalence_test: EquivalenceTestVerdict = field(
+        default_factory=lambda: EquivalenceTestVerdict(
+            status="not_rendered", reason="no equivalence test was rendered for this design"
+        )
+    )
 
     @property
     def compiled(self) -> tuple[StepOutcome, ...]:
@@ -467,6 +593,15 @@ def run_generate(
     render_domain_types(design, output_dir, package=domain_package)
 
     outcomes: list[StepOutcome] = []
+    rendered_test_class: str | None = None
+    rendered_test_paragraph = ""
+    equivalence_test = EquivalenceTestVerdict(
+        status="not_rendered",
+        reason=(
+            "no step declares the paragraph this program's oracle covers, or the package ships no "
+            "oracle for it"
+        ),
+    )
     for job in document.unified_design.batch_jobs:
         entry = entries.get(job.program_name)
         if entry is None:
@@ -549,28 +684,81 @@ def run_generate(
                 )
                 continue
 
-            outcomes.append(
-                heal_step(
-                    worktree_root,
-                    output_dir,
-                    entry,
-                    step,
-                    entities,
-                    package=package,
-                    composites=list(design.composite_types),
-                    computed_values=list(design.computed_values),
-                    # Only the parameters this step declares it consumes (ADR-0026), resolved
-                    # against the job's own declarations. A step naming one the job does not
-                    # declare is a design defect, and `_resolve_job_parameters` raises rather
-                    # than rendering a constructor argument nothing will ever bind.
-                    job_parameters=_resolve_job_parameters(job, step),
-                    input_type=types[0],
-                    output_type=types[1],
-                    max_attempts=max_attempts,
-                    author=author,
-                    advise=advise,
-                )
+            step_outcome = heal_step(
+                worktree_root,
+                output_dir,
+                entry,
+                step,
+                entities,
+                package=package,
+                composites=list(design.composite_types),
+                computed_values=list(design.computed_values),
+                # Only the parameters this step declares it consumes (ADR-0026), resolved
+                # against the job's own declarations. A step naming one the job does not
+                # declare is a design defect, and `_resolve_job_parameters` raises rather
+                # than rendering a constructor argument nothing will ever bind.
+                job_parameters=_resolve_job_parameters(job, step),
+                input_type=types[0],
+                output_type=types[1],
+                max_attempts=max_attempts,
+                author=author,
+                advise=advise,
             )
+            outcomes.append(step_outcome)
+
+            # The equivalence test is rendered for the one step the oracle has expected values for,
+            # selected by the paragraph the step *declares* (ADR-0065). Never by step name:
+            # `computeMonthlyInterest` is a name a model chose and is not a fact about anything.
+            oracle = load_equivalence_oracle(job.program_name)
+            if oracle is None or oracle["source"]["paragraph"] not in step.source_paragraphs:
+                # Nothing for this step to be checked against: the package ships no oracle for this
+                # program, or this is not the step the oracle covers. Last statement of the loop
+                # body, so `continue` skips nothing else.
+                continue
+            if not step_outcome.succeeded:
+                # The step the oracle covers exists and did not compile. Distinguished from "no such
+                # step" because they are different findings: one says this design was never in scope
+                # for the check, the other says the check was in scope and could not be reached.
+                equivalence_test = EquivalenceTestVerdict(
+                    status="not_rendered",
+                    reason=(
+                        f"the step covering {oracle['source']['paragraph']} "
+                        f"({job.program_name}/{step.step_name}) is {step_outcome.status}, so no "
+                        f"test could be run against it"
+                    ),
+                )
+            else:
+                try:
+                    rendered_test_paragraph = oracle["source"]["paragraph"]
+                    rendered_test_class = render_step_equivalence_test(
+                        step,
+                        design,
+                        output_dir,
+                        oracle=oracle,
+                        processor_class=step_outcome.class_name,
+                        package=package,
+                        domain_package=domain_package,
+                    )
+                except UnrenderableOracleError as exc:
+                    # **The refusal is the finding, not a tooling failure.** A design whose interest
+                    # step carries the computed value nowhere is step 49's defect exactly, and it is
+                    # caught here before any Java is written.
+                    logger.warning(
+                        "generate: no equivalence test for %s/%s -- %s",
+                        job.program_name, step.step_name, exc,
+                    )
+                    equivalence_test = EquivalenceTestVerdict(
+                        status="refused",
+                        reason=(
+                            f"no equivalence test could be rendered for "
+                            f"{step_outcome.class_name}: {exc}"
+                        ),
+                    )
+
+    if rendered_test_class is not None:
+        equivalence_test = run_equivalence_test(
+            output_dir, rendered_test_class, paragraph=rendered_test_paragraph
+        )
 
     logger.info(
         "generate: %d step(s) -- %d compiled, %d blocked, %d exhausted",
@@ -580,5 +768,8 @@ def run_generate(
         len([o for o in outcomes if o.status == "exhausted"]),
     )
     return GenerateOutcome(
-        outcomes=tuple(outcomes), scaffolded=scaffolded, output_dir=str(output_dir)
+        outcomes=tuple(outcomes),
+        scaffolded=scaffolded,
+        output_dir=str(output_dir),
+        equivalence_test=equivalence_test,
     )
