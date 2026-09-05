@@ -33,6 +33,7 @@ from cobol_modernizer.core.contracts import (
     EquivalenceTestVerdict,
     EquivalenceVerdict,
     GenerateCliResult,
+    WiringVerdict,
 )
 from cobol_modernizer.core.design_outputs import write_design_outputs
 from cobol_modernizer.core.package_data import ORACLE_ROOT
@@ -164,6 +165,25 @@ def _run_design_command(args: argparse.Namespace) -> tuple[DesignCliResult, int]
     )
 
 
+def _describe_wiring(verdict: WiringVerdict) -> str:
+    """One line for whether this run produced a program or a library of processors (ADR-0066).
+
+    **A skipped step is named, not counted.** Each one is a piece of the COBOL absent from the
+    generated project, and a gate that read "rendered" beside a number would approve a job that
+    compiles, starts, produces output, and is not the program.
+    """
+    if verdict.status == "rendered" and verdict.skipped_steps:
+        return (
+            f"rendered, but {len(verdict.skipped_steps)} step(s) are NOT in the generated project: "
+            + "; ".join(verdict.skipped_steps)
+        )
+    if verdict.status == "rendered":
+        return "rendered and compiled; every renderable step is wired."
+    if verdict.status == "refused":
+        return f"REFUSED -- {verdict.reason}"
+    return f"not rendered -- {verdict.reason}"
+
+
 def _describe_equivalence_test(verdict: EquivalenceTestVerdict) -> str:
     """One line for the rendered unit test, for the same sentence (ADR-0065).
 
@@ -276,6 +296,7 @@ def _run_generate_command(args: argparse.Namespace) -> tuple[GenerateCliResult, 
     if outcome.succeeded:
         detail = (
             f"Generated and compiled {len(outcome.compiled)} processor step(s). "
+            f"Wiring: {_describe_wiring(outcome.wiring)} "
             f"Equivalence: {_describe_equivalence(equivalence)} "
             f"Equivalence test: {_describe_equivalence_test(outcome.equivalence_test)}"
         )
@@ -306,6 +327,7 @@ def _run_generate_command(args: argparse.Namespace) -> tuple[GenerateCliResult, 
             steps_not_generated=len(outcome.not_generated),
             equivalence=equivalence,
             equivalence_test=outcome.equivalence_test,
+            wiring=outcome.wiring,
         ),
         0 if outcome.succeeded else 1,
     )

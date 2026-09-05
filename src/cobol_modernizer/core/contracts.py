@@ -815,6 +815,32 @@ NOT_RUN = EquivalenceVerdict(
 )
 
 
+class WiringVerdict(BaseModel):
+    """Whether `generate` produced a job that can run, and what it left out (ADR-0066).
+
+    **`skipped_steps` is the field that matters most, and it is not a failure list.** A step
+    `plan_steps` cannot render is business logic present in the COBOL and **absent from the generated
+    project** — ADR-0023's rule, which until now applied only to the processor loop. A job rendered
+    with three of nine steps compiles, starts, produces output, and is not the program. A gate
+    reading only `status: rendered` would approve exactly that.
+
+    Separate from `steps_not_generated`, which counts steps this pipeline never renders by role. This
+    counts steps it would render and cannot, because the design gives their input or output nowhere
+    to come from or go.
+    """
+
+    status: Literal["rendered", "refused", "not_rendered"]
+    #: Why, in one line, for every status — including `rendered`, where it carries the count of what
+    #: was left out rather than making a reviewer infer it from an empty list.
+    reason: str
+    #: Project-relative paths, so a reviewer can open what was produced rather than trust a count.
+    files_rendered: list[str] = Field(default_factory=list)
+    #: `"stepName: why not"`, one per step. Never truncated: each entry is a distinct piece of the
+    #: program that is missing, and a summary of how many would be the count this field exists to
+    #: replace.
+    skipped_steps: list[str] = Field(default_factory=list)
+
+
 class EquivalenceTestVerdict(BaseModel):
     """What the *rendered JUnit equivalence test* did, at unit granularity (ADR-0065).
 
@@ -891,6 +917,14 @@ class GenerateCliResult(BaseModel):
     #: What the rendered JUnit equivalence test did (ADR-0065). Defaults to `not_rendered` for the
     #: same reason the field above defaults to `not_run`: a run that checked nothing must say so
     #: rather than leave the subject out. Narrower than `equivalence` and never a substitute for it.
+    #: Whether this run produced a job that can run, and what it left out (ADR-0066). Defaults to
+    #: `not_rendered` for the same reason the two verdicts below do: a run that produced a library
+    #: of processors rather than a program must say so.
+    wiring: WiringVerdict = Field(
+        default_factory=lambda: WiringVerdict(
+            status="not_rendered", reason="no job wiring was rendered for this design"
+        )
+    )
     equivalence_test: EquivalenceTestVerdict = Field(
         default_factory=lambda: EquivalenceTestVerdict(
             status="not_rendered", reason="no equivalence test was rendered for this design"

@@ -505,6 +505,7 @@ import org.springframework.batch.infrastructure.item.ItemWriter;
 import org.springframework.batch.infrastructure.support.transaction.ResourcelessTransactionManager;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
+import org.springframework.context.annotation.Lazy;
 {profile_import}import org.springframework.transaction.PlatformTransactionManager;
 
 /**
@@ -521,7 +522,8 @@ import org.springframework.context.annotation.Configuration;
  * <p>The job looks every declared step up by name, so a missing one is a startup failure naming it
  * rather than a step that silently does not run.
  */
-@Configuration{profile_annotation}
+@Configuration
+@Lazy{profile_annotation}
 public class {class_name} {{
 
 {_INDENT}/**
