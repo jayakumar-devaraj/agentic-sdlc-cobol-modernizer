@@ -103,6 +103,22 @@ reported `not_run` for every real design since ADR-0064, with the reason naming 
 something to compare, and `GenerateCliResult.equivalence` can report `matched` or `mismatched` on a
 project the pipeline produced end to end.
 
+**And its verdict for `CBACT04C` is `mismatched`, permanently, for a reason that is not a defect.**
+Measured on the first run rather than predicted: the rendered job's transaction half matches the
+oracle exactly across all 50 records, and its account half reports **597 of 600 fields matched, 0
+excluded by decision**, with three mismatches on the last account. Those three are `CBACT04C`'s own
+unreachable EOF branch — `PERFORM UNTIL END-OF-FILE = 'Y'` puts the account-break post in the `ELSE`
+of `IF END-OF-FILE = 'N'`, so the final account keeps a balance excluding the interest the same run
+wrote for it. The rendered wiring reproduces that divergence **exactly as the hand-written wiring
+does**, asserted through that module's own helper so a divergence with a different cause cannot pass
+by being described differently.
+
+This is stated here because a reviewer reading `equivalence: mismatched` will otherwise conclude the
+generated code is wrong. It is not. The wiring could have skipped the last account and made the
+verdict green; `test_hand_written_round_trip` already records why that would be **encoding a defect
+to improve a number**, and that reasoning applies unchanged to rendered wiring. The verdict carries
+its `mismatches` list, which names the record and the three fields, and that is the honest surface.
+
 **A green run will claim much more than ADR-0065's does, and that is the point and the risk.** The
 unit equivalence test covers one `COMPUTE`; the differential compares every field of every written
 record, and the account half excludes nothing (ADR-0029). It is the check that would have caught step
