@@ -322,17 +322,24 @@ def render_job_wiring(
     generated project** -- ADR-0023's rule, applied to the wiring. A job rendered with three of nine
     steps runs, produces output, and is not the program.
 
-    Nothing here is new rendering. Every renderer it calls has shipped in the package for weeks and
-    was reachable only from an integration test; this is the call that was missing.
+    **Everything is rendered before anything is written**, and that is correctness rather than
+    style. The bindings are rendered last and are the most likely to refuse -- a design with no
+    declared file access paths reaches them after the job configuration is already on disk -- and a
+    project left holding a configuration whose step beans have no reader is worse than one left
+    holding nothing: it compiles, and then no Spring context in it can start. Caught in CI exactly
+    that way.
+
+    Nothing here is new rendering. Every renderer it calls but one has shipped in the package for
+    weeks and was reachable only from an integration test; this is the call that was missing.
     """
     program_name = job.program_name
     renderable, skipped, staged = plan_steps(job, design, program_name)
-    written: list[str] = []
+    #: `(package, class name, source)`, accumulated and written only once all of it exists.
+    pending: list[tuple[str, str, str]] = []
 
     for type_name in staged:
-        written.append(
-            _write_java(
-                output_dir,
+        pending.append(
+            (
                 job_package,
                 staging_class_name(type_name),
                 render_staging(type_name, package=job_package, domain_package=domain_package),
@@ -343,9 +350,8 @@ def render_job_wiring(
         # A control-break step reads a rendered aggregation over an earlier step's staged output.
         source = aggregation_source(job, step, design)
         if source is not None:
-            written.append(
-                _write_java(
-                    output_dir,
+            pending.append(
+                (
                     reader_package,
                     aggregating_reader_class_name(step),
                     render_aggregating_reader(
@@ -359,9 +365,8 @@ def render_job_wiring(
                 )
             )
         elif _has_file_source(step, design, program_name):
-            written.append(
-                _write_java(
-                    output_dir,
+            pending.append(
+                (
                     reader_package,
                     reader_class_name(step),
                     render_item_reader(
@@ -374,9 +379,8 @@ def render_job_wiring(
                 )
             )
         if _has_file_sink(step, design, program_name):
-            written.append(
-                _write_java(
-                    output_dir,
+            pending.append(
+                (
                     writer_package,
                     writer_class_name(step),
                     render_item_writer(
@@ -389,9 +393,8 @@ def render_job_wiring(
                 )
             )
 
-    written.append(
-        _write_java(
-            output_dir,
+    pending.append(
+        (
             job_package,
             configuration_class_name(job),
             render_job_configuration(
@@ -408,10 +411,10 @@ def render_job_wiring(
 
     # The beans binding those readers and writers to files, and the properties that fill them
     # (ADR-0067). Rendered without a profile, unlike the hand-written fixture: a job that runs only
-    # under a non-default profile is not the program.
-    written.append(
-        _write_java(
-            output_dir,
+    # under a non-default profile is not the program. Rendered `@Lazy` instead, because a reader
+    # opens its files in its constructor.
+    pending.append(
+        (
             job_package,
             bindings_class_name(job),
             render_file_bindings(
@@ -425,11 +428,15 @@ def render_job_wiring(
             ),
         )
     )
-    properties = output_dir / "src" / "main" / "resources" / "application.properties"
-    properties.parent.mkdir(parents=True, exist_ok=True)
-    properties.write_text(
-        render_application_properties(job, design, program_name), encoding="utf-8"
-    )
+    properties = render_application_properties(job, design, program_name)
+
+    written = [
+        _write_java(output_dir, package, class_name, source)
+        for package, class_name, source in pending
+    ]
+    destination = output_dir / "src" / "main" / "resources" / "application.properties"
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    destination.write_text(properties, encoding="utf-8")
     written.append("src/main/resources/application.properties")
 
     logger.info(
