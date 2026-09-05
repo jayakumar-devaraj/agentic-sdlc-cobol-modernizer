@@ -48,6 +48,7 @@ from cobol_modernizer.core.contracts import (
     JobParameter,
     ProgramDesignEntry,
     UnifiedDesign,
+    WiringVerdict,
 )
 from cobol_modernizer.core.package_data import ORACLE_ROOT, TEMPLATES_ROOT
 from cobol_modernizer.nodes.build_validator import AdviseFn, ValidationVerdict, validate_build
@@ -57,15 +58,45 @@ from cobol_modernizer.nodes.modernization_engineer import (
     RepairContext,
     generate_processor,
 )
+from cobol_modernizer.rendering.java_aggregation import (
+    aggregating_reader_class_name,
+    render_aggregating_reader,
+)
 from cobol_modernizer.rendering.java_equivalence_test import (
     UnrenderableOracleError,
     render_equivalence_test,
+)
+from cobol_modernizer.rendering.java_file_bindings import (
+    bindings_class_name,
+    render_application_properties,
+    render_file_bindings,
+)
+from cobol_modernizer.rendering.java_job import (
+    UnrenderableJobError,
+    _has_file_sink,
+    _has_file_source,
+    aggregation_source,
+    configuration_class_name,
+    plan_steps,
+    render_job_configuration,
+    render_staging,
+    staging_class_name,
 )
 from cobol_modernizer.rendering.java_processor import (
     model_authored_line_numbers,
     model_authored_line_range,
 )
+from cobol_modernizer.rendering.java_reader import (
+    UnrenderableReaderError,
+    reader_class_name,
+    render_item_reader,
+)
 from cobol_modernizer.rendering.java_records import render_composite, render_record
+from cobol_modernizer.rendering.java_writer import (
+    UnrenderableWriterError,
+    render_item_writer,
+    writer_class_name,
+)
 from cobol_modernizer.tools.local_compiler import (
     CompileResult,
     compile_project,
@@ -88,6 +119,13 @@ DEFAULT_PACKAGE = "com.modernized.batch.processor"
 #: processors so a reviewer can tell computed data shapes from model-authored logic by path
 #: alone.
 DEFAULT_DOMAIN_PACKAGE = "com.modernized.batch.domain"
+
+#: Where the rendered wiring is declared (ADR-0066). Split by role for the same reason the domain
+#: package is split from the processors: a reviewer can tell rendered infrastructure from
+#: model-authored logic by path alone, and only the processor package holds anything a model wrote.
+DEFAULT_READER_PACKAGE = "com.modernized.batch.reader"
+DEFAULT_WRITER_PACKAGE = "com.modernized.batch.writer"
+DEFAULT_JOB_PACKAGE = "com.modernized.batch.job"
 
 
 @dataclass(frozen=True)
@@ -255,6 +293,150 @@ def processor_types(
     if design.resolve_type(step.output_type) is None:
         return None
     return (f"{domain_package}.{step.input_type}", f"{domain_package}.{step.output_type}")
+
+
+def _write_java(output_dir: Path, package: str, class_name: str, source: str) -> str:
+    """Write one rendered class, and return its project-relative path."""
+    relative = f"src/main/java/{package.replace('.', '/')}/{class_name}.java"
+    destination = output_dir / Path(relative)
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    destination.write_text(source, encoding="utf-8")
+    return relative
+
+
+def render_job_wiring(
+    job: BatchJobDesign,
+    design: UnifiedDesign,
+    output_dir: Path,
+    *,
+    domain_package: str,
+    processor_package: str,
+    reader_package: str = DEFAULT_READER_PACKAGE,
+    writer_package: str = DEFAULT_WRITER_PACKAGE,
+    job_package: str = DEFAULT_JOB_PACKAGE,
+) -> tuple[list[str], list[tuple[BatchStepDesign, str]]]:
+    """Render everything that turns this job's processors into a job that runs (ADR-0066).
+
+    Returns `(files written, steps plan_steps could not render)`. The second is returned rather than
+    logged because a skipped step means business logic present in the COBOL is **absent from the
+    generated project** -- ADR-0023's rule, applied to the wiring. A job rendered with three of nine
+    steps runs, produces output, and is not the program.
+
+    Nothing here is new rendering. Every renderer it calls has shipped in the package for weeks and
+    was reachable only from an integration test; this is the call that was missing.
+    """
+    program_name = job.program_name
+    renderable, skipped, staged = plan_steps(job, design, program_name)
+    written: list[str] = []
+
+    for type_name in staged:
+        written.append(
+            _write_java(
+                output_dir,
+                job_package,
+                staging_class_name(type_name),
+                render_staging(type_name, package=job_package, domain_package=domain_package),
+            )
+        )
+
+    for step in renderable:
+        # A control-break step reads a rendered aggregation over an earlier step's staged output.
+        source = aggregation_source(job, step, design)
+        if source is not None:
+            written.append(
+                _write_java(
+                    output_dir,
+                    reader_package,
+                    aggregating_reader_class_name(step),
+                    render_aggregating_reader(
+                        step,
+                        source,
+                        design,
+                        package=reader_package,
+                        domain_package=domain_package,
+                        staging_package=job_package,
+                    ),
+                )
+            )
+        elif _has_file_source(step, design, program_name):
+            written.append(
+                _write_java(
+                    output_dir,
+                    reader_package,
+                    reader_class_name(step),
+                    render_item_reader(
+                        step,
+                        design,
+                        program_name,
+                        package=reader_package,
+                        domain_package=domain_package,
+                    ),
+                )
+            )
+        if _has_file_sink(step, design, program_name):
+            written.append(
+                _write_java(
+                    output_dir,
+                    writer_package,
+                    writer_class_name(step),
+                    render_item_writer(
+                        step,
+                        design,
+                        program_name,
+                        package=writer_package,
+                        domain_package=domain_package,
+                    ),
+                )
+            )
+
+    written.append(
+        _write_java(
+            output_dir,
+            job_package,
+            configuration_class_name(job),
+            render_job_configuration(
+                job,
+                design,
+                program_name,
+                package=job_package,
+                domain_package=domain_package,
+                processor_package=processor_package,
+                reader_package=reader_package,
+            ),
+        )
+    )
+
+    # The beans binding those readers and writers to files, and the properties that fill them
+    # (ADR-0067). Rendered without a profile, unlike the hand-written fixture: a job that runs only
+    # under a non-default profile is not the program.
+    written.append(
+        _write_java(
+            output_dir,
+            job_package,
+            bindings_class_name(job),
+            render_file_bindings(
+                job,
+                design,
+                program_name,
+                package=job_package,
+                domain_package=domain_package,
+                reader_package=reader_package,
+                writer_package=writer_package,
+            ),
+        )
+    )
+    properties = output_dir / "src" / "main" / "resources" / "application.properties"
+    properties.parent.mkdir(parents=True, exist_ok=True)
+    properties.write_text(
+        render_application_properties(job, design, program_name), encoding="utf-8"
+    )
+    written.append("src/main/resources/application.properties")
+
+    logger.info(
+        "generate: rendered %d wiring file(s) for job %s -- %d step(s) renderable, %d skipped",
+        len(written), job.job_name, len(renderable), len(skipped),
+    )
+    return written, skipped
 
 
 #: The per-program oracle a rendered equivalence test reads its expected values from. Absent for
@@ -519,6 +701,12 @@ class GenerateOutcome:
             status="not_rendered", reason="no equivalence test was rendered for this design"
         )
     )
+    #: Whether this run produced a job that can run, and what it left out (ADR-0066).
+    wiring: WiringVerdict = field(
+        default_factory=lambda: WiringVerdict(
+            status="not_rendered", reason="no job wiring was rendered for this design"
+        )
+    )
 
     @property
     def compiled(self) -> tuple[StepOutcome, ...]:
@@ -593,6 +781,13 @@ def run_generate(
     render_domain_types(design, output_dir, package=domain_package)
 
     outcomes: list[StepOutcome] = []
+    wiring = WiringVerdict(
+        status="not_rendered",
+        reason="this design declares no batch job whose steps could be wired",
+    )
+    wiring_files: list[str] = []
+    wiring_skipped: list[str] = []
+    wiring_refusal: str | None = None
     rendered_test_class: str | None = None
     rendered_test_paragraph = ""
     equivalence_test = EquivalenceTestVerdict(
@@ -755,6 +950,63 @@ def run_generate(
                         ),
                     )
 
+    # **The wiring is rendered after every processor, not beside them** (ADR-0066). A step bean
+    # names its processor class, so rendering it into a project mid-loop would break the heal loop's
+    # own compiles on classes that do not exist yet -- and those failures would reach
+    # `build_validator` as if a model had written them.
+    if any(o.succeeded for o in outcomes):
+        for job in document.unified_design.batch_jobs:
+            try:
+                files, skipped = render_job_wiring(
+                    job,
+                    design,
+                    output_dir,
+                    domain_package=domain_package,
+                    processor_package=package,
+                )
+            except (UnrenderableJobError, UnrenderableReaderError, UnrenderableWriterError) as exc:
+                logger.warning("generate: wiring refused for job %s -- %s", job.job_name, exc)
+                wiring_refusal = f"{job.job_name}: {exc}"
+                break
+            wiring_files += files
+            wiring_skipped += [f"{step.step_name}: {why}" for step, why in skipped]
+
+    if wiring_refusal is not None:
+        wiring = WiringVerdict(
+            status="refused",
+            reason=(
+                f"the job wiring could not be rendered, so this run produced processors rather "
+                f"than a program -- {wiring_refusal}"
+            ),
+            skipped_steps=wiring_skipped,
+        )
+    elif wiring_files:
+        # Compiled once with the wiring in it, because until this runs nothing has built the
+        # readers, writers, staging or job configuration at all: the heal loop's last compile
+        # predates every one of them.
+        built = compile_project(output_dir, goal="compile")
+        if built.succeeded:
+            left_out = (
+                f"; {len(wiring_skipped)} step(s) left out, and their COBOL is absent from the "
+                f"generated project"
+                if wiring_skipped
+                else " with every renderable step wired"
+            )
+            wiring = WiringVerdict(
+                status="rendered",
+                reason=f"{len(wiring_files)} wiring file(s) rendered and compiled{left_out}",
+                files_rendered=wiring_files,
+                skipped_steps=wiring_skipped,
+            )
+        else:
+            first = built.errors[0].render() if built.errors else "no located diagnostic"
+            wiring = WiringVerdict(
+                status="refused",
+                reason=f"the rendered wiring does not compile: {first}",
+                files_rendered=wiring_files,
+                skipped_steps=wiring_skipped,
+            )
+
     if rendered_test_class is not None:
         equivalence_test = run_equivalence_test(
             output_dir, rendered_test_class, paragraph=rendered_test_paragraph
@@ -772,4 +1024,5 @@ def run_generate(
         scaffolded=scaffolded,
         output_dir=str(output_dir),
         equivalence_test=equivalence_test,
+        wiring=wiring,
     )

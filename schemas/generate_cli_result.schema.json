@@ -77,6 +77,44 @@
       ],
       "title": "EquivalenceVerdict",
       "type": "object"
+    },
+    "WiringVerdict": {
+      "description": "Whether `generate` produced a job that can run, and what it left out (ADR-0066).\n\n**`skipped_steps` is the field that matters most, and it is not a failure list.** A step\n`plan_steps` cannot render is business logic present in the COBOL and **absent from the generated\nproject** \u2014 ADR-0023's rule, which until now applied only to the processor loop. A job rendered\nwith three of nine steps compiles, starts, produces output, and is not the program. A gate\nreading only `status: rendered` would approve exactly that.\n\nSeparate from `steps_not_generated`, which counts steps this pipeline never renders by role. This\ncounts steps it would render and cannot, because the design gives their input or output nowhere\nto come from or go.",
+      "properties": {
+        "files_rendered": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Files Rendered",
+          "type": "array"
+        },
+        "reason": {
+          "title": "Reason",
+          "type": "string"
+        },
+        "skipped_steps": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Skipped Steps",
+          "type": "array"
+        },
+        "status": {
+          "enum": [
+            "rendered",
+            "refused",
+            "not_rendered"
+          ],
+          "title": "Status",
+          "type": "string"
+        }
+      },
+      "required": [
+        "status",
+        "reason"
+      ],
+      "title": "WiringVerdict",
+      "type": "object"
     }
   },
   "description": "The `cobol-modernizer generate --json` stdout contract.\n\nDeliberately minimal -- matches the current `cli.py` stub's shape. Self-healing-loop-specific\nfields (attempt count, compile diagnosis) are Milestone C4 work, once `build_validator` exists\nto define them; inventing them now would be the same speculative-design mistake\n`DesignDocument.unified_design` avoids.\n\n`run_id` carries the same meaning as `DesignCliResult.run_id` and was added for the same\nreason, late: until this field existed, `--run-id` was accepted by `design` and **not** by\n`generate`, so the half of the pipeline that runs the compile loop and the second model stage\ncould not be correlated with control-plane's audit chain at all. That silently violated the\nspecialist contract's rule that a specialist accepts `--run-id` to join the chain -- on the\nnoisier half. Both phases now echo it.",
@@ -137,6 +175,9 @@
       "default": 0,
       "title": "Steps Total",
       "type": "integer"
+    },
+    "wiring": {
+      "$ref": "#/$defs/WiringVerdict"
     }
   },
   "required": [

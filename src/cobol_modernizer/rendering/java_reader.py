@@ -231,6 +231,45 @@ def reader_class_name(step: BatchStepDesign) -> str:
     return f"{base}ItemReader"
 
 
+def reader_path_parameters(
+    step: BatchStepDesign, design: UnifiedDesign, program_name: str
+) -> list[str]:
+    """The `ASSIGN TO` names this step's reader takes as `Path` arguments, in constructor order.
+
+    **One definition, two callers** (ADR-0067). `render_item_reader` builds the constructor from
+    this, and `java_file_bindings` builds the bean that fills it. Deriving the order twice is how a
+    reader that takes four paths starts being handed them in a different sequence -- which compiles
+    silently, because every one of them is a `Path`, and then reads the discount groups out of the
+    account file.
+
+    The working-set argument a `reads_own_writes` step takes is deliberately *not* here: it is a
+    bean, not a path, and this function answers only the path question.
+    """
+    components = _component_entities(step, design)
+    paths = {entity: _paths_for(design, program_name, entity) for _field, entity in components}
+
+    streams = [name for name, path in paths.items() if not path.is_keyed_lookup]
+    if len(streams) != 1:
+        raise UnrenderableReaderError(
+            f"step {step.step_name!r} needs exactly one driving stream and its input resolves to "
+            f"{len(streams)} ({', '.join(sorted(streams)) or 'none'}). A reader with no stream has "
+            "nothing to iterate; one with two has no defined order"
+        )
+    driving = streams[0]
+    lookups = {name: path for name, path in paths.items() if path.is_keyed_lookup}
+    order = _order_lookups(design, driving, lookups)
+
+    from cobol_modernizer.rendering.java_working_set import read_modify_written
+
+    shared = (
+        {path.written_entity_name for path in read_modify_written(design, program_name)}
+        if step.reads_own_writes
+        else set()
+    )
+    held = [name for name in order if name not in shared]
+    return [paths[name].assign_to for name in [driving, *held]]
+
+
 def render_item_reader(
     step: BatchStepDesign,
     design: UnifiedDesign,
@@ -307,7 +346,7 @@ def render_item_reader(
 
     parameters = ", ".join(
         ([f"{working_set} state"] if shared else [])
-        + [f"Path {_camel(paths[name].assign_to)}" for name in [driving, *held]]
+        + [f"Path {_camel(name)}" for name in reader_path_parameters(step, design, program_name)]
     )
     loads = [
         (

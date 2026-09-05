@@ -25,6 +25,7 @@ from cobol_modernizer.core.contracts import (
     BatchStepDesign,
     CompositeType,
     DomainEntity,
+    FileAccessPath,
     UnifiedDesign,
 )
 from cobol_modernizer.rendering.java_names import require_java_identifier
@@ -94,6 +95,52 @@ def _serialiser(entity: DomainEntity) -> str:
     if trailing > 0:
         pieces.append(f"CobolText.spaces({trailing})")
     return ("\n" + _INDENT * 4 + "+ ").join(pieces)
+
+
+def writer_path_parameters(
+    step: BatchStepDesign, design: UnifiedDesign, program_name: str
+) -> list[str]:
+    """The `ASSIGN TO` names this step's writer takes as `Path` arguments, in constructor order.
+
+    The writer's half of `reader_path_parameters`, and there for the same reason (ADR-0067): the
+    bean that fills a constructor and the constructor itself must derive their order from one place.
+
+    A composite writer's components come in the composite's own order, and a component held in the
+    working set contributes **no** path -- it is flushed through the shared state rather than
+    written here, so a bean supplying one would be handing over an argument that does not exist.
+    """
+    composite = next((c for c in design.composite_types if c.name == step.output_type), None)
+    if composite is None:
+        entity = _entity(design, step.output_type)
+        return [_written_path(design, program_name, entity.name, step).assign_to]
+
+    shared = {
+        path.written_entity_name
+        for path in read_modify_written(design, program_name)
+        if path.written_entity_name
+    }
+    return [
+        _written_path(design, program_name, component.entity_name, step).assign_to
+        for component in composite.components
+        if component.entity_name not in shared
+    ]
+
+
+def _written_path(
+    design: UnifiedDesign, program_name: str, entity_name: str, step: BatchStepDesign
+) -> FileAccessPath:
+    """The one declared file `program_name` writes `entity_name` to."""
+    written = [
+        path
+        for path in design.file_access_paths
+        if path.program_name == program_name and path.written_entity_name == entity_name
+    ]
+    if len(written) != 1:
+        raise UnrenderableWriterError(
+            f"{program_name} writes {entity_name!r} to {len(written)} declared files, and step "
+            f"{step.step_name!r} outputs it; a writer needs exactly one file to write to"
+        )
+    return written[0]
 
 
 def render_item_writer(
