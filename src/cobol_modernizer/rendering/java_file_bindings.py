@@ -46,6 +46,7 @@ from cobol_modernizer.rendering.java_job import (
     _bean_name,
     _has_file_sink,
     _has_file_source,
+    aggregation_source,
     plan_steps,
 )
 from cobol_modernizer.rendering.java_reader import (
@@ -97,6 +98,27 @@ def _refuse_working_set(step: BatchStepDesign) -> None:
         )
 
 
+def _reads_a_file(
+    job: BatchJobDesign, step: BatchStepDesign, design: UnifiedDesign, program_name: str
+) -> bool:
+    """Whether this step's *reader* is a file reader that needs paths bound to it.
+
+    **A control-break step is fed by a rendered aggregation over an earlier step's staged output,
+    not by a file**, and that aggregation needs no path: everything it groups and sums is already in
+    memory. `render_job_configuration` constructs it directly rather than injecting a bean, so a
+    binding rendered here would be supplying an argument nothing asks for -- and, worse, would
+    refuse first, because a step whose input is an in-memory aggregate resolves to no driving
+    stream at all.
+
+    `render_job_wiring` has always asked `aggregation_source` before `_has_file_source`. This module
+    did not, and a live design put a control break on `postAccountInterest` and refused the whole
+    job's wiring for it.
+    """
+    return aggregation_source(job, step, design) is None and _has_file_source(
+        step, design, program_name
+    )
+
+
 def file_binding_properties(
     job: BatchJobDesign, design: UnifiedDesign, program_name: str
 ) -> dict[str, str]:
@@ -109,7 +131,7 @@ def file_binding_properties(
     properties: dict[str, str] = {}
     for step in renderable:
         assigns: list[str] = []
-        if _has_file_source(step, design, program_name):
+        if _reads_a_file(job, step, design, program_name):
             _refuse_working_set(step)
             assigns += reader_path_parameters(step, design, program_name)
         if _has_file_sink(step, design, program_name):
@@ -212,7 +234,7 @@ def render_file_bindings(
         claimed[bean_type] = step_name
 
     for step in renderable:
-        if _has_file_source(step, design, program_name):
+        if _reads_a_file(job, step, design, program_name):
             _refuse_working_set(step)
             bean_type = f"ItemReader<{domain_package}.{step.input_type}>"
             claim(bean_type, step.step_name)
