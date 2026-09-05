@@ -148,3 +148,43 @@ runner registers no bean the pipeline should have rendered — it supplies prope
 
 **Paths are not validated at render time**, and cannot be: the specialist renders on one machine and
 the job runs on another.
+
+## The defect CI caught that the local run did not
+
+The first version of this work rendered `InterestJobFileBindings` as an ungated `@Configuration`.
+CI failed:
+
+```
+CompileResult(succeeded=False, exit_code=1, diagnostics=(), ...)
+tests/integration/test_hand_written_round_trip.py:474: AssertionError
+```
+
+No located diagnostic, because it was not a compile failure: the Spring context would not start.
+`BatchApplication` component-scans `com.modernized.batch`, a rendered reader opens its files **in
+its constructor**, and so the baseline template's `BaselineStackTest` — a full `@SpringBootTest`,
+which by its own docstring never skips — died looking for `data/TCATBALF`.
+
+**The hand-written fixture had already written this down**, and it was read and overridden:
+
+> Gated behind the rendered configuration's profile because `BatchApplication` component-scans
+> `com.modernized.batch`: without it this wiring would join the context of every Spring Boot test in
+> the generated project.
+
+ADR-0066 rejected the profile on a *policy* argument — a job that runs only under a non-default
+profile is not the program — which is sound and does not address the mechanism. Rendering the
+configurations `@Lazy` keeps the policy and removes the mechanism: nothing is constructed until
+something asks for the `Job`.
+
+**Why the local run missed it.** `test_hand_written_round_trip.py` was run to verify the
+`reader_path_parameters` extraction changed nothing, and passed — *before* the call site that renders
+wiring existed. It was not re-run after. The check that would have caught it is running both round
+trips together, which is now what this entry's command does:
+
+```
+JAVA_HOME=... pytest tests/integration/test_generate_renders_the_wiring.py \
+                     tests/integration/test_hand_written_round_trip.py -q
+16 passed, 1 skipped in 224.62s (0:03:44)
+```
+
+Running the new round trip alone was never sufficient: the regression was entirely in what the
+rendered wiring does to *other* contexts, which only the older module exercises.

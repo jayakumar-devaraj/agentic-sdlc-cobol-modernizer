@@ -21,6 +21,19 @@ the argument it fills trace to one source and cannot drift apart.
 exists so the project starts and so every file the job touches is visible in one list. A default is a
 convention, never a claim about where a tenant's data is; a wrong one surfaces as a missing file at
 read time with the path in the message.
+
+**`@Lazy`, and it is load-bearing rather than a performance choice.** A rendered reader opens its
+files *in its constructor*, and `BatchApplication` component-scans this package -- so an eagerly
+instantiated binding reads from disk while the Spring context is still starting, and every
+`@SpringBootTest` in the generated project dies looking for a file that has nothing to do with it.
+That is not hypothetical: the baseline template ships `BaselineStackTest`, and the first ungated
+version of this renderer broke it in CI. The hand-written stopgap avoided the same collision with a
+`@Profile`, and said so in its own docstring.
+
+A profile would work and was rejected: a job that runs only under a non-default profile is not the
+program (ADR-0066). Deferring construction achieves the same isolation without that cost, and moves
+a missing file from a context-startup failure to a job-start failure -- which is both later and more
+honest, because it fails when something actually wanted the data.
 """
 
 from __future__ import annotations
@@ -246,6 +259,7 @@ import org.springframework.batch.infrastructure.item.ItemWriter;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
+import org.springframework.context.annotation.Lazy;
 
 /**
  * Binds {program_name}'s rendered readers and writers to files.
@@ -261,6 +275,7 @@ import org.springframework.context.annotation.Configuration;
  * <p>This file is rendered from design.json. It is not model-authored.
  */
 @Configuration
+@Lazy
 public class {class_name} {{
 
 {body}

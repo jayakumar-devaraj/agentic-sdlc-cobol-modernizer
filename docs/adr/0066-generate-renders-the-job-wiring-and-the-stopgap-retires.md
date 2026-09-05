@@ -148,6 +148,23 @@ for the rendered path: a job that only runs under a non-default profile is not t
 generated project's own context is where it belongs. The rendered configuration keeps its optional
 `profile` parameter, unused by `generate`, because the fixture round trip still needs it.
 
+**The rendered configurations are `@Lazy`, and this record originally missed why they had to be.**
+Rejecting the profile answered the *policy* question and ignored the *mechanism* the fixture's
+docstring had already written down: `BatchApplication` component-scans `com.modernized.batch`, and a
+rendered reader opens its files **in its constructor**. So the first version of this work rendered
+an ungated `@Configuration` that read from disk during context startup, and broke the baseline
+template's `BaselineStackTest` — a full `@SpringBootTest` — in CI. Caught by CI rather than locally,
+because the round trip had been run to verify an earlier refactor and not re-run after the call site
+existed.
+
+`@Lazy` on the rendered job configuration and bindings defers construction until something asks for
+the `Job`, which is the only thing that wants the data. It keeps this decision's stance — the job is
+the app's default wiring, no profile — and moves a missing file from a context-startup failure to a
+job-start failure, which is the more honest moment for it. The alternative considered and rejected
+was changing `BaselineStackTest` to exclude the job configuration: arguably the cleaner split, but it
+changes the baseline template shipped in every generated project to fix a problem the rendering
+created.
+
 **Wait for `CBTRN02C` and render both at once.** Rejected on ADR-0030's own ordering principle —
 sequence by risk retired per unit of effort. The risk here is that generated logic is wrong, and one
 program measuring it retires far more of that than a second program measuring nothing yet.
