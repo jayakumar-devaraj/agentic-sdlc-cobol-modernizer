@@ -22,6 +22,9 @@ import pytest
 from cobol_modernizer.core.contracts import (
     SCHEMA_VERSION,
     BatchJobDesign,
+    CompositeComponent,
+    CompositeType,
+    ComputedComponent,
     ProgramDesignEntry,
     UnifiedDesign,
 )
@@ -300,6 +303,45 @@ def test_the_blockers_are_exactly_what_the_upstream_type_cannot_reach(design):
     # made the aggregation renderable, and asserting the pair is what shows the difference is real
     # rather than a check that never fires.
     assert aggregation_blockers(posting, "TranWithContext", design) == []
+
+
+def _accrued(*, carries_the_value: bool) -> CompositeType:
+    """ADR-0063's row-grain item, with and without the computed field that makes it summable."""
+    return CompositeType(
+        name="AccruedCategoryInterest",
+        components=[CompositeComponent(field_name="categoryBalance", entity_name="TranCatBal")],
+        computed_fields=(
+            [ComputedComponent(field_name="monthlyInterest", cobol_field_name="WS-MONTHLY-INT")]
+            if carries_the_value
+            else []
+        ),
+    )
+
+
+def test_a_stream_carrying_the_value_itself_needs_no_landing_column(design):
+    """The live shape, and the one this check refused.
+
+    ADR-0063 requires the row-grain item to carry `WS-MONTHLY-INT` and *not* the account total. A
+    design that obeys it returns the value as a `computed_fields` entry (ADR-0062) rather than
+    inside a `Tran`, so nothing on that stream is called `TRAN-AMT` -- and a check that asks only
+    for the landing column reports a correct design as unrenderable.
+
+    Asserted as a pair, like the `Tran`/`TranWithContext` case above: without the computed field the
+    same composite is blocked on exactly `TRAN-AMT`, so this is the difference the computed field
+    makes rather than a check that stopped firing.
+    """
+    job = design.batch_jobs[0]
+    posting = next(step for step in job.steps if step.step_name == "postAccountInterest")
+
+    carried = design.model_copy(
+        update={"composite_types": [*design.composite_types, _accrued(carries_the_value=True)]}
+    )
+    assert aggregation_blockers(posting, "AccruedCategoryInterest", carried) == []
+
+    bare = design.model_copy(
+        update={"composite_types": [*design.composite_types, _accrued(carries_the_value=False)]}
+    )
+    assert aggregation_blockers(posting, "AccruedCategoryInterest", bare) == ["TRAN-AMT"]
 
 
 def test_a_step_with_no_control_break_reports_no_blockers(design):
