@@ -180,12 +180,43 @@ def test_the_file_lifecycle_steps_a_live_design_declares_are_not_chunk_steps(des
         "completeTransaction",
         "postAccountInterest",
     ], "the work steps plan exactly as they do without the lifecycle steps around them"
-    assert [step.step_name for step, _ in skipped] == ["openInterestFiles", "readTranCatBalance"]
-    assert "role is 'tasklet'" in skipped[0][1]
-    assert "role is 'reader'" in skipped[1][1]
+    # **Not reported as skipped.** `skipped_steps` means business logic absent from the generated
+    # project, and `steps_not_generated` already counts a step excluded by role. Reporting a file
+    # open in the first is the misreading that field's own docstring warns about, and it is what
+    # told a live run's gate that the differential could not run.
+    assert skipped == []
     # Dropped from the chain as well as from the plan. If `previous` were still the raw preceding
     # step, `computeInterest` would read `TranCatBal` from a reader that is not being rendered.
     assert staged == ["TranWithContext"]
+
+
+def test_the_job_names_the_chunk_steps_and_not_the_lifecycle_around_them(design):
+    """ADR-0032 names an unrendered step so a missing bean fails loudly. A tasklet is not that.
+
+    A live run's rendered job named nine steps, had beans for five, and threw at startup on the
+    first file-open tasklet. Naming a step whose *business logic* could not be wired is what makes
+    it impossible to forget; naming one that is not a step at all makes the job impossible to start.
+    """
+    opens = STEP.model_copy(
+        update={
+            "step_name": "openInterestFiles",
+            "role": "tasklet",
+            "source_paragraphs": ["0000-TCATBALF-OPEN"],
+            "input_type": "TranCatBal",
+            "output_type": "TranCatBal",
+        }
+    )
+    job = design.batch_jobs[0]
+    wrapped = design.model_copy(
+        update={"batch_jobs": [job.model_copy(update={"steps": [opens, *job.steps]})]}
+    )
+    rendered = render(wrapped)
+
+    assert (
+        'STEP_NAMES = List.of("computeInterest", "completeTransaction", "postAccountInterest")'
+        in rendered
+    )
+    assert "openInterestFiles" not in rendered
 
 
 def test_a_job_with_no_steps_is_refused(design):

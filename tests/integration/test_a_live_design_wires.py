@@ -3,9 +3,8 @@
 **The gap this closes.** Verification 16 proved `generate` wires a project that builds and runs, and
 every number in it was measured against the hand-written round trip's three-step design --
 `computeInterest`, `TranCatBalWithRate`, the composite this repository's own fixtures declare. No
-design a live `solution_architect` produced had ever reached `render_job_wiring`. Three defects were
-sitting behind that, and each one was found by pointing this pipeline at a real design for the first
-time:
+design a live `solution_architect` produced had ever reached `render_job_wiring`. Six defects were
+sitting behind that, and every one was found by pointing this pipeline at a real design:
 
 1. `aggregation_source` could not see a value carried as a `computed_fields` entry, so a control
    break on a design obeying ADR-0063 resolved to no source and the step fell through to a file
@@ -15,26 +14,36 @@ time:
 3. `render_item_reader` built its constructor from `components` alone, so a composite of three
    records and one computed field came out as a three-argument call to a four-component record --
    uncompilable Java, emitted with no diagnostic.
+4. That same renderer wrapped a plain entity in its own constructor -- `new TranCatBal(toTranCatBal(
+   record))` -- because every step of the fixture design takes a composite.
+5. The design typed two transforms `writer`, and a body is rendered for a processor and nothing
+   else, so the job was wired to classes that would never exist (ADR-0070 refuses this now).
+6. `STEP_NAMES` went on naming every declared step after `plan_steps` stopped planning some of them,
+   so the rendered job required beans for steps nothing rendered and threw at startup (ADR-0071).
 
 None of them is reachable from the fixture design, because it declares no computed field, no
-tasklet and no reader step. **A fixture the repository wrote cannot exercise the shapes a model
-writes**, which is why this module pins one that a model actually wrote.
+tasklet, no reader step, and no step taking a plain entity. **A fixture the repository wrote cannot
+exercise the shapes a model writes**, which is why this module pins one that a model actually wrote.
+Defects 4 and 6 were found *by this module*, after the first three had been fixed.
 
-**What it measures, and what it deliberately does not.** The wiring: that every step is planned,
-that the classes it renders are consistent, and that what reaches the compiler fails for exactly one
-named reason and no other. Not correctness -- the processor bodies here are scripted `return null;`,
+**What it measures, and what it deliberately does not.** The wiring: which steps are planned, that
+the classes it renders are consistent, that the job names only steps it has beans for, and that the
+whole project compiles. Not correctness -- the processor bodies here are scripted `return null;`,
 so nothing about the generated logic is claimed and the differential stays where it belongs, in
 `test_generate_renders_the_wiring.py`. A body that compiles is all a wiring test needs, and
 scripting it is what keeps this module free of a model call.
 
-**This project does not yet compile, and the reason is the design's.** It types
-`writeInterestTransaction` and `postAccountInterest` as `writer`, and `generate` renders a body only
-for `role == "processor"` (ADR-0023, G27), so the job configuration injects two classes the pipeline
-will never produce. ADR-0027 settled that a pre-aggregated posting step is an ordinary per-item
-transform, and this repository's fixture types it `processor` for that reason -- so the durable fix
-is a refusal where the design is produced, not another renderer change. Until it lands,
-`test_what_remains_is_exactly_the_two_steps_typed_writer` pins that this is the *only* thing left,
-so a fourth defect cannot hide behind a known one.
+**This project compiles, and its job still cannot start.** `computeCategoryFees` is ordered after
+`writeInterestTransaction`, whose output is a `Tran`, so nothing supplies the
+`AccruedCategoryInterest` it consumes. It is named in `STEP_NAMES` with no bean behind it, which is
+ADR-0032 working exactly as written: business logic the design gives nowhere to come from fails
+loudly rather than leaving a shorter job that looks like it ran. Its COBOL happens to be
+`* To be implemented` / `EXIT.`, so nothing is really lost -- but the pipeline cannot know that, and
+inferring it would be the kind of guess this repository refuses everywhere else. The remaining gap
+is a design-ordering one, not a renderer one.
+
+That distinction is why `test_the_rendered_project_compiles` is not the last word here: compilation
+is necessary and not sufficient, and a green build gave exactly that false comfort once already.
 
 Costs a Maven build. See `docs/development-environment.md` for `JAVA_HOME`.
 """
@@ -50,10 +59,18 @@ from cobol_modernizer.graph.generate_pipeline import run_generate
 from cobol_modernizer.tools.local_compiler import compile_project
 from tests.support.interest_design import FIXTURE_ROOT
 
-#: A design `solution_architect` produced for `CBACT04C` under prompt `v1_3_0`, saved verbatim from
-#: run `step54b-cbact04c-20260905-211254`. Pinned as a fixture rather than regenerated: the point is
-#: that it is *not* this repository's own idea of what a design looks like, and re-deriving it from a
-#: model would make this test's subject change under it.
+#: A design `solution_architect` produced for `CBACT04C` under prompt `v1_4_0`, saved verbatim from
+#: run `step55-cbact04c-20260906-090845`. Pinned rather than regenerated: the point is that it is
+#: *not* this repository's own idea of what a design looks like, and re-deriving it from a model
+#: would make this test's subject change under it.
+#:
+#: **It replaced `step54b`'s design, and the reason is worth stating.** ADR-0069 said that fixture
+#: would go stale once ADR-0070's refusal changed what an architect produces, and that it should stay
+#: anyway. That was wrong in a way only the replacement showed: `step54b` types two transforms
+#: `writer`, and once a `writer` is correctly excluded from being a chunk step (ADR-0071) its
+#: aggregation, its control break and its computed fields all stop being reachable. Keeping it would
+#: have left a test that passes while exercising none of what it names. A regression fixture has to
+#: still reach the code it regresses.
 LIVE_DESIGN = Path(__file__).resolve().parents[1] / "fixtures" / "live_designs" / "cbact04c-design.json"
 
 #: The steps this design decomposes `CBACT04C` into that carry an item, in job order.
@@ -66,7 +83,17 @@ CHUNK_STEPS = [
 ]
 
 #: The file lifecycle it also declares, which is real COBOL and not a chunk step.
-LIFECYCLE_STEPS = ["openInterestFiles", "readTranCatBalance", "closeInterestFiles"]
+LIFECYCLE_STEPS = [
+    "openInterestCalculationFiles",
+    "readTranCatBalance",
+    "closeInterestCalculationFiles",
+]
+
+#: The one step whose *business logic* this design gives nowhere to come from: it is ordered after
+#: `writeInterestTransaction`, whose output is a `Tran`, so nothing supplies its
+#: `AccruedCategoryInterest`. Its COBOL is `* To be implemented` / `EXIT.`, so nothing is lost --
+#: but the pipeline cannot know that, and ADR-0032 requires it to be named rather than dropped.
+UNWIRABLE_STEP = "computeCategoryFees"
 
 
 def _null_author(routing, system_prompt: str, user_content: str) -> str:
@@ -97,27 +124,19 @@ def generated(tmp_path_factory):
     return outcome, project, build
 
 
-def test_every_class_the_wiring_needs_is_rendered_or_named(generated):
-    """The wiring reaches the compiler at all, which it did not for any live design before this.
-
-    Not `status == "rendered"`: this design does not get there, and for a reason that belongs to the
-    design rather than to these renderers -- see
-    `test_what_remains_is_exactly_the_two_steps_typed_writer`. What is asserted here is that every
-    refusal `plan_steps` and `render_job_wiring` used to raise is gone: the control break resolves,
-    the file lifecycle is skipped with a reason, and no two steps collide on one bean type.
-    """
+def test_the_wiring_renders_for_a_design_a_model_wrote(generated):
+    """`status == "rendered"`, which no live design reached before v0.4.2."""
     outcome, _project, _build = generated
-    assert outcome.wiring.status != "not_rendered", outcome.wiring.reason
+    assert outcome.wiring.status == "rendered", outcome.wiring.reason
     assert "driving stream" not in outcome.wiring.reason
     assert "ambiguous" not in outcome.wiring.reason
-    assert outcome.wiring.files_rendered, "nothing was rendered at all"
 
 
 def test_every_step_that_carries_an_item_is_planned(generated):
-    """The five that transform or store an item, and the three that are the reader's lifecycle.
+    """The five that transform an item, against the three that are the reader's own lifecycle.
 
     Asserted as a pair. A test naming only the planned steps would keep passing if the lifecycle
-    steps came back as chunk steps, which is exactly the defect that refused this job's wiring.
+    steps came back as chunk steps, which is the defect that refused this job's wiring.
     """
     outcome, _project, _build = generated
     rendered = {Path(p).name for p in outcome.wiring.files_rendered}
@@ -128,9 +147,42 @@ def test_every_step_that_carries_an_item_is_planned(generated):
             f"{step} contributed no rendered class"
         )
     for step in LIFECYCLE_STEPS:
-        assert any(step in reason for reason in outcome.wiring.skipped_steps), (
-            f"{step} should be reported as skipped with a reason, not silently rendered"
-        )
+        assert not any(step in name for name in rendered), f"{step} should render no class"
+
+
+def test_only_a_step_whose_logic_is_missing_is_reported_as_skipped(generated):
+    """`skipped_steps` is business logic absent from the project, and a file open is not that.
+
+    Reporting the lifecycle here is what told a live run's gate the differential could not run, and
+    what would have told a reviewer three file-handling paragraphs had gone missing. `role` already
+    has a field of its own: `steps_not_generated` counts a step this pipeline never renders by role,
+    with the role and the paragraphs in its reason.
+    """
+    outcome, _project, _build = generated
+
+    assert [s.split(":")[0] for s in outcome.wiring.skipped_steps] == [UNWIRABLE_STEP]
+    assert "neither readable from a declared file" in outcome.wiring.skipped_steps[0]
+
+
+def test_the_job_names_the_steps_it_has_beans_for(generated):
+    """A job naming a step nothing renders throws at startup, naming it (ADR-0032).
+
+    That is right for `computeCategoryFees`, whose COBOL really is absent. It is wrong for a file
+    open, which is not a step at all -- and a live run's job named nine, had beans for five, and
+    threw on the first tasklet. So the lifecycle is absent from `STEP_NAMES` and the unwirable step
+    is present: the loud failure still covers exactly what it was written to cover.
+    """
+    _outcome, project, _build = generated
+    source = (
+        project / "src" / "main" / "java" / "com" / "modernized" / "batch" / "job"
+        / "InterestCalculationJobConfiguration.java"
+    ).read_text(encoding="utf-8")
+    names = source.split("STEP_NAMES = List.of(")[1].split(");")[0]
+
+    for step in CHUNK_STEPS + [UNWIRABLE_STEP]:
+        assert f'"{step}"' in names, f"{step} should be named in STEP_NAMES"
+    for step in LIFECYCLE_STEPS:
+        assert f'"{step}"' not in names, f"{step} is not a step and must not be named"
 
 
 def test_the_control_break_renders_an_aggregating_reader_over_the_computed_value(generated):
@@ -167,38 +219,16 @@ def test_no_file_reader_is_rendered_for_an_item_carrying_a_computed_value(genera
             / "AccruedCategoryInterestStaging.java").exists()
 
 
-#: The two steps this design types `writer` and ADR-0027 types `processor`.
-MISTYPED_AS_WRITER = ["WriteInterestTransactionProcessor", "PostAccountInterestProcessor"]
+def test_the_rendered_project_compiles(generated):
+    """Held to javac rather than to review.
 
-
-def test_what_remains_is_exactly_the_two_steps_typed_writer(generated):
-    """The one thing still between this design and a project that compiles, pinned by its cause.
-
-    `generate` renders a body only for `role == "processor"` (ADR-0023, G27), and this design types
-    `writeInterestTransaction` and `postAccountInterest` as `writer`. So the job configuration
-    injects two processor classes the pipeline will never produce. **That is a fact about the
-    design, not about these renderers**: ADR-0027 settled that once the item is pre-aggregated the
-    posting step is an ordinary per-item transform, and this repository's own fixture types it
-    `processor` for that reason. The durable fix is a refusal where the design is produced, the same
-    shape as ADR-0059, ADR-0062 and ADR-0063.
-
-    Held here rather than deferred to a note, and held *exactly*: the assertion is that these are the
-    only errors left. A fourth defect appearing in this project fails this test rather than hiding
-    behind a known one -- the same discipline as
-    `assert_account_half_matches_except_the_last`, which pins a divergence to its cause so a
-    different cause cannot pass.
+    Compilation is necessary and not sufficient: this project compiles and its job still cannot
+    start, because `computeCategoryFees` has no bean and `STEP_NAMES` names it. That is
+    ADR-0032 working, and it is why `test_the_job_names_the_steps_it_has_beans_for` asserts on
+    the list rather than trusting a green build here.
     """
     _outcome, _project, build = generated
-    assert not build.succeeded, (
-        "the two writer-typed steps now compile -- if the design-time refusal landed, this test "
-        "should become `assert build.succeeded` and the module docstring should lose its caveat"
-    )
-    unexplained = [
-        d
-        for d in build.diagnostics
-        if not any(name in " ".join(d.details) for name in MISTYPED_AS_WRITER)
-    ]
-    assert unexplained == [], (
-        "something other than the two writer-typed steps stops this project compiling:\n"
-        + "\n".join(str(d) for d in unexplained)
+    assert build.succeeded, (
+        f"the rendered project did not compile: exit {build.exit_code}; "
+        + "; ".join(str(d) for d in build.diagnostics)
     )
