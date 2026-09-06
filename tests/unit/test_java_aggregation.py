@@ -22,6 +22,7 @@ from cobol_modernizer.core.contracts import (
     BatchJobDesign,
     CompositeComponent,
     CompositeType,
+    ComputedComponent,
     ProgramDesignEntry,
     UnifiedDesign,
 )
@@ -152,6 +153,92 @@ def test_the_provenance_names_the_break_it_came_from(design):
     rendered = render(design)
     assert "1050-UPDATE-ACCOUNT" in rendered
     assert "TRANCAT-ACCT-ID, line 194" in rendered
+
+
+# --- ADR-0063's shape: the value on the stream, the total on the group -----------------------------
+
+
+def _adr63(design: UnifiedDesign, *, group_also_carries_the_row_value: bool = False) -> UnifiedDesign:
+    """The design as ADR-0063 requires it, rather than as ADR-0027 could express it.
+
+    Two changes, and they are the two that ADR-0062's `computed_fields` made possible. The source
+    stream returns `WS-MONTHLY-INT` itself instead of carrying it inside a `Tran`, and the group
+    item declares `WS-TOTAL-INT` instead of holding a `Tran` whose amount column gets overwritten.
+    `TranWithContext` keeps its `balance` component, because the break key is still a record field.
+    """
+    source = OUTPUT_COMPOSITE.model_copy(
+        update={
+            "components": [c for c in OUTPUT_COMPOSITE.components if c.entity_name != "Tran"],
+            "computed_fields": [
+                ComputedComponent(field_name="monthlyInterest", cobol_field_name="WS-MONTHLY-INT")
+            ],
+        }
+    )
+    group = POSTING.model_copy(
+        update={
+            "components": [c for c in POSTING.components if c.entity_name != "Tran"],
+            "computed_fields": [
+                ComputedComponent(field_name="totalInterest", cobol_field_name="WS-TOTAL-INT"),
+                *(
+                    [ComputedComponent(field_name="monthlyInterest", cobol_field_name="WS-MONTHLY-INT")]
+                    if group_also_carries_the_row_value
+                    else []
+                ),
+            ],
+        }
+    )
+    return design.model_copy(update={"composite_types": [COMPOSITE, source, group]})
+
+
+def test_it_sums_the_value_the_stream_carries_when_no_column_holds_it(design):
+    """`item.monthlyInterest()`, not `item.tran().tranAmt()`.
+
+    This is the whole defect. `aggregation_source` walks back to the nearest stream carrying what it
+    groups by and what it sums, and it asked only for the landing column -- so on a design obeying
+    ADR-0063 it found nothing, returned `None`, and the step fell through to a file reader that
+    correctly refused an in-memory aggregate.
+    """
+    rendered = render(_adr63(design))
+    assert "totals.merge(key, item.monthlyInterest(), BigDecimal::add);" in rendered
+    assert "tranAmt" not in rendered
+
+
+def test_the_total_lands_in_the_group_items_accumulator_and_nothing_is_copied_into_it(design):
+    """`new AccountInterestPosting(first.account(), total)` -- ADR-0027's item, named by ADR-0063.
+
+    The old shape had to overwrite one column of a copied `Tran`, because a composite could carry
+    nothing but records. With the accumulator declared on the group item there is no record to copy
+    and no column to overwrite, so `_carrier` does not run at all.
+    """
+    rendered = render(_adr63(design))
+    assert "first.account()" in rendered
+    assert "total));" in rendered
+    # `_carrier` copies every field of the landing entity; if it had run, these would be here.
+    assert "first.tran()" not in rendered
+
+
+def test_the_javadoc_does_not_claim_a_move_this_render_did_not_use(design):
+    """A sentence about the COBOL has to be true of the reader underneath it.
+
+    The old javadoc always said the value is moved into `TRAN-AMT` and that the sum of a group's
+    `TRAN-AMT` is the accumulator. That is still true of the program and no longer describes what
+    this reader adds up -- which is the same class of wrong sentence as the accumulation javadoc
+    ADR-0063 was written about.
+    """
+    rendered = render(_adr63(design))
+    assert "the stream carries each one, so the sum of a group's WS-MONTHLY-INT" in rendered
+    assert "moves every one of them into TRAN-AMT" not in rendered
+
+
+def test_a_row_grain_computed_field_on_the_group_item_is_refused(design):
+    """Step 51's defect, arriving from the other direction.
+
+    ADR-0063 refuses `WS-TOTAL-INT` on the row item at design time. This is the mirror: a
+    *row-grain* value declared on the group item, where the only honest source would be one
+    record of the group -- a number that looks right and is one row's.
+    """
+    with pytest.raises(UnrenderableAggregationError, match="no row-grain value to put there"):
+        render(_adr63(design, group_also_carries_the_row_value=True))
 
 
 # --- the refusals ----------------------------------------------------------------------------------

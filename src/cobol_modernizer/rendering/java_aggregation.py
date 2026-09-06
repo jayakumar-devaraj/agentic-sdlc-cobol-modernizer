@@ -26,7 +26,12 @@ from cobol_modernizer.core.contracts import (
 )
 from cobol_modernizer.rendering.java_job import staging_class_name
 from cobol_modernizer.rendering.java_names import require_java_identifier
-from cobol_modernizer.rendering.java_reader import UnrenderableReaderError, _entity, _field_width
+from cobol_modernizer.rendering.java_reader import (
+    UnrenderableReaderError,
+    _entity,
+    _field_width,
+    locate_item_field,
+)
 
 _INDENT = " " * 4
 
@@ -49,34 +54,6 @@ def aggregating_reader_class_name(step: BatchStepDesign) -> str:
 
 def _composite(design: UnifiedDesign, name: str) -> CompositeType | None:
     return next((c for c in design.composite_types if c.name == name), None)
-
-
-def _locate(
-    design: UnifiedDesign, type_name: str, cobol_field: str
-) -> tuple[str | None, DomainEntity, str] | None:
-    """Where a COBOL field lives in an item type: `(component, entity, java accessor)`, or `None`.
-
-    One walk, because there were two. The accessor string and the owning entity were computed by
-    separate loops over the same components, which is the shape that drifts -- and it left one of
-    them with a branch nothing could reach, since the caller always asked the other first.
-    """
-    composite = _composite(design, type_name)
-    components = (
-        [(c.field_name, c.entity_name) for c in composite.components]
-        if composite is not None
-        else [(None, type_name)]
-    )
-    for component, entity_name in components:
-        entity = next((e for e in design.domain_entities if e.name == entity_name), None)
-        if entity is None:
-            # A composite naming an entity the design does not have. Walked past rather than
-            # raised on: the caller's own refusal ("cannot reach X") is the useful message.
-            continue
-        field = next((f for f in entity.fields if f.cobol_field_name == cobol_field), None)
-        if field is not None:
-            prefix = f"item.{component}()" if component else "item"
-            return component, entity, f"{prefix}.{field.java_field_name}()"
-    return None
 
 
 def _carrier(
@@ -124,27 +101,41 @@ def render_aggregating_reader(
         raise UnrenderableAggregationError(
             f"step {step.step_name!r} has no control break, so there is nothing to group by"
         )
-    if not control.landing_field:
-        raise UnrenderableAggregationError(
-            f"step {step.step_name!r} accumulates {control.accumulated_from_field!r}, which is never "
-            "moved into a record field -- so the total exists only in a program variable and no "
-            "stream carries it"
-        )
-
     class_name = aggregating_reader_class_name(step)
     require_java_identifier(class_name, source_name=step.step_name, kind="Reader class name")
 
     source_type = source_step.output_type
-    key = _locate(design, source_type, control.break_key_field)
-    landing = _locate(design, source_type, control.landing_field)
-    if key is None or landing is None:
-        missing = control.break_key_field if key is None else control.landing_field
+    key = locate_item_field(design, source_type, control.break_key_field)
+    if key is None:
         raise UnrenderableAggregationError(
-            f"{source_type!r} cannot reach {missing!r}, so a reader over it can neither group nor "
+            f"{source_type!r} cannot reach {control.break_key_field!r}, so a reader over it cannot "
+            "group. Widen that type, or point this step at a stream that carries it"
+        )
+
+    # **What to sum, in the same two forms and the same order as `aggregation_blockers`.** The value
+    # itself where the stream carries it as a computed field (ADR-0062), else the record column it
+    # is moved into. Choosing differently here than the planner did would render a reader for a step
+    # nothing planned, which is the class of defect this pair exists to keep closed.
+    summed_field = control.accumulated_from_field
+    summed = locate_item_field(design, source_type, summed_field)
+    if summed is None and control.landing_field:
+        summed_field = control.landing_field
+        summed = locate_item_field(design, source_type, summed_field)
+    if summed is None:
+        if control.landing_field is None:
+            raise UnrenderableAggregationError(
+                f"step {step.step_name!r} accumulates {control.accumulated_from_field!r}, which "
+                f"{source_type!r} does not carry and which is never moved into a record field -- so "
+                "the total exists only in a program variable and no stream carries it"
+            )
+        raise UnrenderableAggregationError(
+            f"{source_type!r} cannot reach {control.landing_field!r}, so a reader over it cannot "
             "sum. Widen that type, or point this step at a stream that carries it"
         )
-    _key_component, _key_entity, key_accessor = key
-    landing_component, landing_entity, total_accessor = landing
+    total_accessor = summed.accessor
+    landing_entity = summed.entity
+    landing_component = summed.component
+    key_accessor = key.accessor
 
     output = _composite(design, step.input_type)
     if output is None:
@@ -153,12 +144,6 @@ def render_aggregating_reader(
             "composite; an aggregation produces one item per group and needs to know its shape"
         )
 
-    landing_field_java = next(
-        f.java_field_name
-        for f in landing_entity.fields
-        if f.cobol_field_name == control.landing_field
-    )
-
     arguments: list[str] = []
     for component in output.components:
         try:
@@ -166,9 +151,18 @@ def render_aggregating_reader(
         except UnrenderableReaderError as exc:
             raise UnrenderableAggregationError(str(exc)) from exc
 
-        if component.entity_name == landing_entity.name:
+        if landing_entity is not None and component.entity_name == landing_entity.name:
+            # The column the total replaces. Resolved here rather than above because it exists only
+            # where the summed value travels inside a record: a stream carrying the value itself has
+            # no column to replace, and `landing_entity` is `None` in exactly that case.
+            landing_field_java = next(
+                f.java_field_name
+                for f in landing_entity.fields
+                if f.cobol_field_name == summed_field
+            )
             arguments.append(
-                f"{_INDENT * 3}{_carrier(landing_entity, landing_field_java, domain_package, landing_component)}"
+                f"{_INDENT * 3}"
+                f"{_carrier(landing_entity, landing_field_java, domain_package, landing_component)}"
             )
             continue
         source_composite = _composite(design, source_type)
@@ -186,6 +180,33 @@ def render_aggregating_reader(
                 "none, so there is nowhere to take one from"
             )
         arguments.append(f"{_INDENT * 3}first.{holder}()")
+
+    for computed in output.computed_fields:
+        # **Where the total goes when the group item declares it** (ADR-0063). An accumulator is a
+        # property of the group, so the item that may carry it is exactly this one -- and it is
+        # filled by summing rather than by copying, which is the whole difference between this and
+        # `_carrier` above. Any *other* computed field here would be a row-grain value on a
+        # group-grain item, which is the defect ADR-0063 was written about; refused rather than
+        # taken from the group's first record, where it would look right and be one row's number.
+        if computed.cobol_field_name.upper() != control.accumulator_field.upper():
+            raise UnrenderableAggregationError(
+                f"the group item {step.input_type!r} declares computed field "
+                f"{computed.field_name!r} carrying {computed.cobol_field_name!r}, which is not this "
+                f"break's accumulator ({control.accumulator_field!r}). An aggregation produces one "
+                "item per group and has no row-grain value to put there (ADR-0063)"
+            )
+        arguments.append(f"{_INDENT * 3}total")
+
+    # The javadoc states the equality this reader rests on, and there are two of them. Stating the
+    # `MOVE` one over a stream that carries the value directly would be a claim about the COBOL that
+    # this render did not use -- the same class of wrong sentence as the accumulation javadoc
+    # ADR-0063 was written about.
+    equality = (
+        f"moves every one of them into {control.landing_field}, so the sum of a group's "
+        f"{control.landing_field}"
+        if summed_field != control.accumulated_from_field
+        else f"the stream carries each one, so the sum of a group's {summed_field}"
+    )
 
     constructed = ",\n".join(arguments)
     staging = staging_class_name(source_type)
@@ -207,9 +228,8 @@ import org.springframework.batch.infrastructure.item.ItemReader;
  *
  * <p>Rendered from the control break {control.performed_paragraph} runs at
  * ({control.break_key_field}, line {control.test_line}). The COBOL accumulates
- * {control.accumulated_from_field} into {control.accumulator_field} and moves
- * every one of them into {control.landing_field}, so the sum of a group's
- * {control.landing_field} is that accumulator at the break -- which is what makes this a
+ * {control.accumulated_from_field} into {control.accumulator_field} and
+ * {equality} is that accumulator at the break -- which is what makes this a
  * re-ordering of the original rather than a re-implementation (ADR-0027).
  *
  * <p>Groups arrive in key order, matching a program that reads its driving file by key.

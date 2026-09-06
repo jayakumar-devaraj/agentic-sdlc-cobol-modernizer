@@ -29,6 +29,8 @@ guessed the framing per file would be encoding a property of one distribution.
 
 from __future__ import annotations
 
+from typing import NamedTuple
+
 from cobol_modernizer.core.contracts import (
     BatchStepDesign,
     DomainEntity,
@@ -96,6 +98,59 @@ def _entity(design: UnifiedDesign, name: str) -> DomainEntity:
                 f"entity {name!r} field {field.cobol_field_name!r} has no byte offset"
             )
     return entity
+
+
+class ItemField(NamedTuple):
+    """Where a COBOL field is reachable on an item type, and how to read it in Java.
+
+    `entity` and `component` are `None` for a **computed** field, which belongs to the composite
+    itself rather than to any record inside it -- that is the difference the callers branch on, and
+    naming the members is what stops it being a positional third element nobody notices.
+    """
+
+    accessor: str
+    component: str | None
+    entity: DomainEntity | None
+
+
+def locate_item_field(
+    design: UnifiedDesign, type_name: str, cobol_field: str, *, receiver: str = "item"
+) -> ItemField | None:
+    """Where a COBOL field lives on an item type, or `None` when the type cannot reach it.
+
+    **Two places a field can be, and both are declared.** A composite's `components` name records,
+    and their fields come from copybooks; its `computed_fields` name working-storage values the
+    producing step returns (ADR-0062). `WS-MONTHLY-INT` is reachable on `AccruedCategoryInterest`
+    only in the second sense, and a walk over `components` alone reports a type that carries it as
+    a type that does not.
+
+    Entity fields are tried first, so a design that carries a value both ways -- as the column it
+    lands in and as the value itself -- resolves exactly as it did before this function existed.
+
+    `receiver` names the Java expression the accessor hangs off: `item` while iterating a stream,
+    `first` when copying the group's first record.
+    """
+    composite = next((c for c in design.composite_types if c.name == type_name), None)
+    components = (
+        [(c.field_name, c.entity_name) for c in composite.components]
+        if composite is not None
+        else [(None, type_name)]
+    )
+    for component, entity_name in components:
+        entity = next((e for e in design.domain_entities if e.name == entity_name), None)
+        if entity is None:
+            # A composite naming an entity the design does not have. Walked past rather than
+            # raised on: the caller's own refusal ("cannot reach X") is the useful message.
+            continue
+        field = next((f for f in entity.fields if f.cobol_field_name == cobol_field), None)
+        if field is not None:
+            prefix = f"{receiver}.{component}()" if component else receiver
+            return ItemField(f"{prefix}.{field.java_field_name}()", component, entity)
+
+    for computed in composite.computed_fields if composite is not None else []:
+        if computed.cobol_field_name.upper() == cobol_field.upper():
+            return ItemField(f"{receiver}.{computed.field_name}()", None, None)
+    return None
 
 
 def _paths_for(design: UnifiedDesign, program_name: str, entity_name: str) -> FileAccessPath:

@@ -32,6 +32,7 @@ from cobol_modernizer.rendering.java_names import require_java_identifier
 from cobol_modernizer.rendering.java_reader import (
     UnrenderableReaderError,
     _paths_for,
+    locate_item_field,
 )
 from cobol_modernizer.rendering.java_working_set import working_set_class_name
 
@@ -126,10 +127,18 @@ def aggregation_blockers(
     """Which of a control break's fields the upstream item type cannot reach.
 
     A rendered aggregation needs two things from the records it groups: the **break key**, to know
-    where a group ends, and the field the accumulated value **lands in**, to know what to sum. Both
-    have to be present in the type the previous step hands over -- an accumulator like
-    `WS-TOTAL-INT` is a program variable that no generated record has, which is exactly why
-    `landing_field` exists.
+    where a group ends, and **the value to sum**. The first is a record field. The second has two
+    declared forms, and asking for only one of them is what refused a live design:
+
+    - the value **itself**, carried as a `computed_fields` entry (ADR-0062). `AccruedCategoryInterest`
+      returns `WS-MONTHLY-INT` this way, which is the row-grain shape ADR-0063 requires.
+    - the record field it **lands in**, when a `MOVE` puts it in one. `WS-MONTHLY-INT` also reaches
+      `TRAN-AMT`, and summing that column was the only form this function knew.
+
+    Either will do, because they are the same number. Checked in that order so a design carrying it
+    both ways resolves as it always has, and so the nearer observation wins when only one type
+    carries each -- which is exactly the live case: `AccruedCategoryInterest` has the break key and
+    the computed value, `Tran` has the landing column and no account id.
 
     Returns the COBOL field names that are missing, empty when the aggregation is renderable, and
     the break's own names when there is no upstream type at all.
@@ -138,26 +147,27 @@ def aggregation_blockers(
     if break_design is None:
         return []
 
-    wanted = [break_design.break_key_field]
-    if break_design.landing_field:
-        wanted.append(break_design.landing_field)
-
     if upstream_type is None:
+        wanted = [break_design.break_key_field]
+        if break_design.landing_field:
+            wanted.append(break_design.landing_field)
         return wanted
 
-    composite = next((c for c in design.composite_types if c.name == upstream_type), None)
-    entity_names = (
-        [component.entity_name for component in composite.components]
-        if composite is not None
-        else [upstream_type]
-    )
-    reachable = {
-        field.cobol_field_name
-        for entity in design.domain_entities
-        if entity.name in entity_names
-        for field in entity.fields
-    }
-    return [name for name in wanted if name not in reachable]
+    def reaches(cobol_field: str) -> bool:
+        return locate_item_field(design, upstream_type, cobol_field) is not None
+
+    missing: list[str] = []
+    if not reaches(break_design.break_key_field):
+        missing.append(break_design.break_key_field)
+    if not reaches(break_design.accumulated_from_field):
+        if break_design.landing_field is None:
+            # Neither carried nor landed: the value exists only in working storage, and no stream
+            # this step could read has it. Named as the accumulated field rather than as a missing
+            # `landing_field`, because "TRAN-AMT is missing" is not true when there is no TRAN-AMT.
+            missing.append(break_design.accumulated_from_field)
+        elif not reaches(break_design.landing_field):
+            missing.append(break_design.landing_field)
+    return missing
 
 
 def aggregation_source(
