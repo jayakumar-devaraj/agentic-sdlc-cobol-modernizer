@@ -1,6 +1,6 @@
 [project]
 name = "cobol-modernizer"
-version = "0.4.3"
+version = "0.4.4"
 description = "COBOL-to-Java modernization specialist, invoked as a CLI by agentic-sdlc-control-plane."
 requires-python = ">=3.12"
 dependencies = [
