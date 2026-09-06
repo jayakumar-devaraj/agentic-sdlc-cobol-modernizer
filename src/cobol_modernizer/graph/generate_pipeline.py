@@ -74,10 +74,10 @@ from cobol_modernizer.rendering.java_file_bindings import (
 from cobol_modernizer.rendering.java_job import (
     UnrenderableJobError,
     _has_file_sink,
-    _has_file_source,
     aggregation_source,
     configuration_class_name,
     plan_steps,
+    reads_a_file,
     render_job_configuration,
     render_staging,
     staging_class_name,
@@ -364,7 +364,7 @@ def render_job_wiring(
                     ),
                 )
             )
-        elif _has_file_source(step, design, program_name):
+        elif reads_a_file(step, design, program_name, job):
             pending.append(
                 (
                     reader_package,

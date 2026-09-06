@@ -45,9 +45,8 @@ from cobol_modernizer.rendering.java_job import (
     UnrenderableJobError,
     _bean_name,
     _has_file_sink,
-    _has_file_source,
-    aggregation_source,
     plan_steps,
+    reads_a_file,
 )
 from cobol_modernizer.rendering.java_reader import (
     _camel,
@@ -113,10 +112,12 @@ def _reads_a_file(
     `render_job_wiring` has always asked `aggregation_source` before `_has_file_source`. This module
     did not, and a live design put a control break on `postAccountInterest` and refused the whole
     job's wiring for it.
+
+    **Delegated since ADR-0074**, which added the second thing that outranks a file -- the step
+    before this one having produced its input. Three modules were spelling this question out
+    separately and agreeing; keeping the spelling in one place is what ADR-0071 cost.
     """
-    return aggregation_source(job, step, design) is None and _has_file_source(
-        step, design, program_name
-    )
+    return reads_a_file(step, design, program_name, job)
 
 
 def file_binding_properties(
