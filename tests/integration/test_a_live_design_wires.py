@@ -1,4 +1,4 @@
-"""The wiring renders and compiles for a design a *model* produced (ADR-0068).
+"""The wiring renders for a design a *model* produced, and what it renders reaches javac (ADR-0069).
 
 **The gap this closes.** Verification 16 proved `generate` wires a project that builds and runs, and
 every number in it was measured against the hand-written round trip's three-step design --
