@@ -97,6 +97,16 @@ logger = logging.getLogger(__name__)
 
 _NODE_NAME = "solution_architect"
 
+#: v1_5_0 states that a step is ordered where its input exists (ADR-0072). A live design flattened
+#: `1300-B-WRITE-TX` out of the `1300-COMPUTE-INTEREST` that performs it and kept the paragraph
+#: order, which put a step turning an `AccruedCategoryInterest` into a `Tran` between the step
+#: producing that accrued interest and the second step consuming it. Every paragraph was in source
+#: order and the stranded step could not be wired, so the job named nine steps, had beans for eight,
+#: and could not start. Two halves again: stated here, refused by
+#: `_refuse_a_step_ordered_before_its_input_exists` -- and refused only where a move fixes it,
+#: because a model told to reorder a design that cannot be ordered would spend its one repair
+#: attempt on an instruction it cannot follow.
+#:
 #: v1_4_0 states that a step changing its item's type is a processor (ADR-0070). A live design typed
 #: `writeInterestTransaction` and `postAccountInterest` as `"writer"`, which is a fair reading of
 #: paragraphs whose visible purpose is a `WRITE` and a `REWRITE` -- and `generate` renders a body for
@@ -124,7 +134,7 @@ _NODE_NAME = "solution_architect"
 #: COBOL-style `1300-COMPUTE-INTEREST` was following the prompt it was given, and failing at
 #: `generate` time an approval later. Enforcing the rule without stating it would have been the
 #: worse half of the fix on its own.
-PROMPT_VERSION = "v1_4_0"
+PROMPT_VERSION = "v1_5_0"
 
 #: Rank for picking the highest tier across a run's programs. `ComplexityTier` is a `str` Enum, so
 #: it sorts alphabetically by default -- which would put "complex" below "moderate" and silently
@@ -910,6 +920,8 @@ def _parse_unified_design_response(
     raw_response: str,
     domain_entities: list[DomainEntity],
     programs: list[ProgramDesignEntry],
+    worktree_root: Path,
+    file_access_paths: list[FileAccessPath],
     computed_values: list[ComputedValue] | None = None,
     accumulator_paragraphs: dict[str, str] | None = None,
 ) -> tuple[list[BatchJobDesign], list[RestEndpointDesign], list[CompositeType]]:
@@ -1087,6 +1099,19 @@ def _parse_unified_design_response(
     _refuse_undeliverable_computed_values(
         batch_jobs, composite_types, domain_entities, computed_values or [], accumulator_paragraphs
     )
+    # Last of the three, and the order is deliberate: it plans the job the way `generate` will, so
+    # it should not be the one to report a design that is wrong about a role or a computed value.
+    # Both of those change which steps carry an item, and a step ordering reported against the
+    # wrong chain would name a move that fixes nothing.
+    _refuse_a_step_ordered_before_its_input_exists(
+        batch_jobs,
+        composite_types,
+        domain_entities,
+        computed_values or [],
+        file_access_paths,
+        worktree_root,
+        programs,
+    )
 
     return batch_jobs, rest_endpoints, composite_types
 
@@ -1193,6 +1218,142 @@ def _refuse_undeliverable_computed_values(
             )
 
 
+def _refuse_a_step_ordered_before_its_input_exists(
+    batch_jobs: list[BatchJobDesign],
+    composite_types: list[CompositeType],
+    domain_entities: list[DomainEntity],
+    computed_values: list[ComputedValue],
+    file_access_paths: list[FileAccessPath],
+    worktree_root: Path,
+    programs: list[ProgramDesignEntry],
+) -> None:
+    """Refuse a chunk step placed where nothing supplies its input, when moving it would fix it.
+
+    **A chain is an order, and the COBOL's order is not always the chain's.** `CBACT04C` performs
+    `1300-COMPUTE-INTEREST` and then `1400-COMPUTE-FEES` under one `IF DIS-INT-RATE NOT = 0`, and
+    `1300-B-WRITE-TX` is a *nested* PERFORM inside the first of those. A live design flattened that
+    nesting into three sibling steps and kept the paragraph order, which put
+    `writeInterestTransaction` -- `AccruedCategoryInterest` in, `Tran` out -- between
+    `computeMonthlyInterest` and the step that also consumes an `AccruedCategoryInterest`. In the
+    COBOL both consume the same working storage and the order between them says nothing. In a typed
+    chain it says everything: **among the steps consuming one type, the step that changes it must
+    come last.**
+
+    `plan_steps` then correctly declines to render the stranded step, `STEP_NAMES` correctly names
+    it anyway (ADR-0032), and the job cannot start -- an approval and a `generate` after the design
+    a human signed off on. The question is decidable from the design alone, which is why it belongs
+    here.
+
+    **Refused only when a single move fixes it**, and that restraint is the point. A design whose
+    steps cannot be ordered at all has a genuine fan-out the chain cannot express, and telling a
+    model to "reorder" it would spend ADR-0054's one repair attempt on an instruction it cannot
+    follow. Where no order exists the run proceeds and fails loudly at startup, which is what
+    ADR-0032 is for.
+
+    **The oracle is `plan_steps` itself**, not a second implementation of its question. ADR-0071 is
+    what two functions answering "is this a chunk step?" differently cost, and this is that lesson
+    spent in advance: a rule checked here by other means would drift from the renderer the first
+    time either moved.
+
+    Reached through `parse_with_repair`, so the message names the move rather than only the fault.
+    """
+    # Local, matching `java_job._has_file_source`'s own import of `java_reader`: a design node
+    # reaching into a renderer is the unusual direction, and keeping it off the module surface says
+    # this is a question borrowed from `generate`, not a dependency of designing.
+    from cobol_modernizer.rendering.java_job import UnrenderableJobError, plan_steps
+
+    for job in batch_jobs:
+        # **The design the *renderer* will see, not the one parsed so far.** `attach_control_breaks`
+        # and `build_file_access_paths` both run after `parse_with_repair`, so a step's
+        # `control_break` is `None` here and `aggregation_source` -- the path that makes a control
+        # break's owner renderable at all -- would answer for every step that it has no source.
+        # Checked against the unattached design, this refuses `postAccountInterest` on a design that
+        # renders. `contracts.py`'s `accumulator_owners` records a first version making exactly this
+        # mistake, and unit tests that built the post-attachment state passing over it.
+        attached = attach_control_breaks(worktree_root, [job], programs)
+        design = UnifiedDesign(
+            domain_entities=domain_entities,
+            batch_jobs=attached,
+            rest_endpoints=[],
+            composite_types=composite_types,
+            computed_values=computed_values,
+            file_access_paths=file_access_paths,
+        )
+        planned = attached[0]
+
+        try:
+            _renderable, skipped, _staged = plan_steps(planned, design, planned.program_name)
+        except UnrenderableJobError:
+            # A job with no steps at all, which is a different refusal's subject.
+            continue
+
+        if not skipped:
+            continue
+
+        move = _a_move_that_strands_no_step(planned, design, [step for step, _why in skipped])
+        if move is None:
+            continue
+
+        step_name, before_name, input_type = move
+        raise SolutionArchitectParseError(
+            f"solution_architect job {planned.job_name!r} orders step {step_name!r} where nothing "
+            f"supplies its input {input_type!r}: the step before it in the chain produces a "
+            f"different type, so the item {step_name!r} expects no longer exists by the time the "
+            f"chain reaches it. A step's input must be readable from a declared file or be the "
+            f"output of the step immediately before it. Move {step_name!r} so it runs before "
+            f"{before_name!r}, which is where its input still exists. This is an ordering fault "
+            f"and not a typing one -- keep every step's input_type, output_type, role and "
+            f"source_paragraphs exactly as they are, and change only the position of "
+            f"{step_name!r} in the steps list. Where two steps consume the same type, the one "
+            f"that changes it must come last, whatever order their COBOL paragraphs appear in."
+        )
+
+
+def _a_move_that_strands_no_step(
+    job: BatchJobDesign, design: UnifiedDesign, stranded: list[BatchStepDesign]
+) -> tuple[str, str, str] | None:
+    """The single step move, if there is one, after which `plan_steps` skips nothing.
+
+    Returns `(step to move, step it must precede, the input it needs)`. `None` when no one move
+    fixes the job -- see the caller for why that is a silence rather than a different message.
+
+    Only the stranded steps are candidates for moving. A design is refused for where *it* put the
+    step that cannot be supplied, and proposing to move some other step to accommodate it would be
+    choosing between two readings of the design rather than reporting the one fault found.
+    """
+    from cobol_modernizer.rendering.java_job import UnrenderableJobError, is_chunk_step, plan_steps
+
+    for step in stranded:
+        others = [other for other in job.steps if other.step_name != step.step_name]
+        for position in range(len(others) + 1):
+            candidate = job.model_copy(
+                update={"steps": others[:position] + [step] + others[position:]}
+            )
+            try:
+                _renderable, skipped, _staged = plan_steps(
+                    candidate, design, candidate.program_name
+                )
+            except UnrenderableJobError:
+                continue
+            if skipped:
+                continue
+
+            # The step it now precedes, named because a position index is not something a model can
+            # act on and a neighbouring step name is.
+            following = next(
+                (
+                    other
+                    for other in candidate.steps[position + 1 :]
+                    if is_chunk_step(other)
+                ),
+                None,
+            )
+            if following is None:
+                continue
+            return step.step_name, following.step_name, step.input_type
+    return None
+
+
 #: `(model, system_prompt, user_content) -> raw response text`. Injected so `design_solution`'s
 #: tests exercise every deterministic step above without a live model credential.
 ArchitectFn = Callable[[RoutingDecision, str, str], str]
@@ -1247,6 +1408,11 @@ def design_solution(
     domain_entities = build_domain_entities(worktree_root, programs)
     computed_values = build_computed_values(worktree_root, programs)
     accumulators = build_accumulator_paragraphs(worktree_root, programs)
+    # Built here rather than after the call, because validation needs it: whether a step's input is
+    # readable from a file is half of "can this step run where it sits", and the other half is the
+    # chain. Deterministic and independent of the response, so building it once serves both the
+    # check below and the design returned at the end.
+    file_access_paths = build_file_access_paths(worktree_root, programs)
     user_content = build_architect_prompt(
         domain_entities, programs, computed_values, accumulators
     )
@@ -1271,7 +1437,13 @@ def design_solution(
         _NODE_NAME,
         raw_response,
         lambda text: _parse_unified_design_response(
-            text, domain_entities, programs, computed_values, accumulators
+            text,
+            domain_entities,
+            programs,
+            worktree_root,
+            file_access_paths,
+            computed_values,
+            accumulators,
         ),
         lambda instruction: architect(routing, system_prompt, f"{user_content}\n\n{instruction}"),
         on=SolutionArchitectParseError,
@@ -1284,9 +1456,9 @@ def design_solution(
         batch_jobs=attach_control_breaks(worktree_root, batch_jobs, programs),
         rest_endpoints=rest_endpoints,
         composite_types=composite_types,
-        # Deterministic, and built here rather than asked of the model above: the architect decides
-        # the step chain, the COBOL decides how data is reached (G31, ADR-0030).
-        file_access_paths=build_file_access_paths(worktree_root, programs),
+        # Deterministic, and built above rather than asked of the model: the architect decides the
+        # step chain, the COBOL decides how data is reached (G31, ADR-0030).
+        file_access_paths=file_access_paths,
         # Deterministic for the same reason, and for one more: a `COMPUTE`'s target precision and
         # scale are numbers a wrong answer to looks exactly like a right one (ADR-0062).
         computed_values=computed_values,

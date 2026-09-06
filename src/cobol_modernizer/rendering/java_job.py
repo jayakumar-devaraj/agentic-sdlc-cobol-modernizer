@@ -81,9 +81,19 @@ def _bean_name(class_name: str) -> str:
     return class_name[:1].lower() + class_name[1:]
 
 
-def staging_class_name(type_name: str) -> str:
-    """`TranWithContext` -> `TranWithContextStaging`."""
-    return f"{type_name}Staging"
+def staging_class_name(producer: BatchStepDesign) -> str:
+    """`computeMonthlyInterest` -> `ComputeMonthlyInterestStaging`.
+
+    **Keyed by the step that produces the staged items, not by their type** (ADR-0073). A store
+    carries one edge of the chain, and an edge is identified by its producer; a type identifies it
+    only for as long as no type appears on two consecutive edges. `computeCategoryFees` is a
+    passthrough -- `AccruedCategoryInterest` in and out -- so the edge into it and the edge out of it
+    carry the same type. Keyed by type, both resolved to one bean: the step bean declared it twice
+    and did not compile, and deduplicating the parameter would have handed the step a store it both
+    drains and fills, which `render_staging`'s cursor turns into a job that never terminates.
+    """
+    base = producer.step_name[:1].upper() + producer.step_name[1:]
+    return f"{base}Staging"
 
 
 def _has_file_source(step: BatchStepDesign, design: UnifiedDesign, program_name: str) -> bool:
@@ -265,10 +275,10 @@ def is_chunk_step(step: BatchStepDesign) -> bool:
 
 def plan_steps(
     job: BatchJobDesign, design: UnifiedDesign, program_name: str
-) -> tuple[list[BatchStepDesign], list[tuple[BatchStepDesign, str]], list[str]]:
+) -> tuple[list[BatchStepDesign], list[tuple[BatchStepDesign, str]], list[BatchStepDesign]]:
     """Split a job's steps into what can be rendered, what cannot, and the types needing staging.
 
-    Returns `(renderable, [(step, why not)], staged type names)`.
+    Returns `(renderable, [(step, why not)], the steps whose output needs a store)`.
 
     A step is renderable when its input can be obtained -- from a file, or from the step before it --
     and its output can be put somewhere: a file, or the step after it. Anything else is reported with
@@ -282,7 +292,11 @@ def plan_steps(
 
     renderable: list[BatchStepDesign] = []
     skipped: list[tuple[BatchStepDesign, str]] = []
-    staged: list[str] = []
+    #: The steps whose output crosses a boundary, each needing one store. **Producing steps rather
+    #: than type names** (ADR-0073): a passthrough puts one type on two consecutive edges, and a
+    #: list of types cannot tell those apart.
+    staged: list[BatchStepDesign] = []
+    staged_names: set[str] = set()
 
     #: The steps that carry an item. The others are dropped from the chain as well as from the plan:
     #: the step after a file open takes its input from the step before it, not from the open. They
@@ -305,8 +319,9 @@ def plan_steps(
                 # and what it sums. Renderable, and staged from the step it reads rather than from
                 # the one that happens to precede it in the chain.
                 renderable.append(step)
-                if source.output_type not in staged:
-                    staged.append(source.output_type)
+                if source.step_name not in staged_names:
+                    staged.append(source)
+                    staged_names.add(source.step_name)
                 continue
 
             upstream = previous.output_type if previous else None
@@ -342,15 +357,20 @@ def plan_steps(
             continue
 
         renderable.append(step)
-        if to_chain and not to_file and step.output_type not in staged:
-            staged.append(step.output_type)
+        if to_chain and not to_file and step.step_name not in staged_names:
+            staged.append(step)
+            staged_names.add(step.step_name)
 
     return renderable, skipped, staged
 
 
-def render_staging(type_name: str, *, package: str, domain_package: str) -> str:
-    """The in-memory handoff for a chain the design declares no store for (ADR-0032, finding F3)."""
-    class_name = staging_class_name(type_name)
+def render_staging(producer: BatchStepDesign, *, package: str, domain_package: str) -> str:
+    """The in-memory handoff for a chain the design declares no store for (ADR-0032, finding F3).
+
+    One store per producing step (ADR-0073), carrying that step's `output_type`.
+    """
+    type_name = producer.output_type
+    class_name = staging_class_name(producer)
     qualified = f"{domain_package}.{type_name}"
     return f"""package {package};
 
@@ -395,6 +415,25 @@ public class {class_name} implements ItemWriter<{qualified}>, ItemReader<{qualif
 """
 
 
+def _produces_the_input_of(
+    step: BatchStepDesign, job: BatchJobDesign | None
+) -> BatchStepDesign | None:
+    """The chunk step immediately before `step`, whose store carries what `step` reads.
+
+    `None` when there is no job to ask or `step` is the first chunk step in it -- either way there
+    is no store to read from, and the caller says so rather than naming one that does not exist.
+    """
+    if job is None:
+        return None
+    items = [other for other in job.steps if is_chunk_step(other)]
+    index = next(
+        (i for i, other in enumerate(items) if other.step_name == step.step_name), None
+    )
+    if index is None or index == 0:
+        return None
+    return items[index - 1]
+
+
 def _step_bean(
     step: BatchStepDesign,
     design: UnifiedDesign,
@@ -425,7 +464,7 @@ def _step_bean(
         # A control-break step reads a *rendered aggregation* over an earlier step's staged output,
         # not the stream that happens to precede it. Constructed here rather than injected because
         # it needs no path: everything it groups and sums is already in memory.
-        staging = staging_class_name(aggregates_from.output_type)
+        staging = staging_class_name(aggregates_from)
         reader_parameter = f"{staging} {_bean_name(staging)}"
         reader_expression = (
             f"new {reader_package}.{aggregating_reader_class_name(step)}"
@@ -435,7 +474,16 @@ def _step_bean(
         reader_parameter = f"ItemReader<{input_type}> reader"
         reader_expression = "reader"
     else:
-        staging = staging_class_name(step.input_type)
+        # **The store belongs to the step that filled it** (ADR-0073), which is the chunk step
+        # before this one -- resolved through `is_chunk_step`, the same predicate `plan_steps`
+        # walks the chain with, so the two cannot disagree about which step that is.
+        producer = _produces_the_input_of(step, job)
+        if producer is None:
+            raise UnrenderableJobError(
+                f"step {step.step_name!r} takes its input from the step before it, and this job "
+                "names no chunk step before it -- `plan_steps` should not have planned it"
+            )
+        staging = staging_class_name(producer)
         reader_parameter = f"{staging} {_bean_name(staging)}"
         reader_expression = _bean_name(staging)
 
@@ -443,7 +491,7 @@ def _step_bean(
         writer_parameter = f"ItemWriter<{output_type}> writer"
         writer_expression = "writer"
     else:
-        staging = staging_class_name(step.output_type)
+        staging = staging_class_name(step)
         writer_parameter = f"{staging} {_bean_name(staging)}"
         writer_expression = _bean_name(staging)
 
@@ -542,10 +590,11 @@ def render_job_configuration(
     )
     staging_beans = "\n\n".join(
         f"{_INDENT}@Bean\n"
-        f"{_INDENT}{staging_class_name(name)} {_bean_name(staging_class_name(name))}() {{\n"
-        f"{_INDENT * 2}return new {staging_class_name(name)}();\n"
+        f"{_INDENT}{staging_class_name(producer)} "
+        f"{_bean_name(staging_class_name(producer))}() {{\n"
+        f"{_INDENT * 2}return new {staging_class_name(producer)}();\n"
         f"{_INDENT}}}"
-        for name in staged
+        for producer in staged
     )
     # **Every chunk step, and only those.** ADR-0032 has the job name a step it does not render so a
     # missing bean fails loudly rather than leaving a shorter job that looks like it ran -- and that

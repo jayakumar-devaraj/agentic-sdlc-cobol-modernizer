@@ -20,19 +20,26 @@ from cobol_modernizer.core.contracts import (
     BatchStepDesign,
     CompositeComponent,
     CompositeType,
+    DesignDocument,
     ProgramDesignEntry,
 )
 from cobol_modernizer.nodes.solution_architect import (
     SolutionArchitectParseError,
+    _a_move_that_strands_no_step,
     _derive_entity_name,
+    _refuse_a_step_ordered_before_its_input_exists,
     _to_camel_case,
+    attach_control_breaks,
     build_architect_prompt,
+    build_computed_values,
     build_domain_entities,
+    build_file_access_paths,
     design_solution,
     unreachable_entities,
 )
 from cobol_modernizer.nodes.spec_critic import critique_spec
 from cobol_modernizer.nodes.spec_extractor import extract_spec
+from cobol_modernizer.rendering.java_job import is_chunk_step, plan_steps
 from cobol_modernizer.tools.tenant_repo import resolve_program
 
 FIXTURE_ROOT = Path(__file__).parent.parent / "fixtures" / "tenant_repo_sample"
@@ -689,3 +696,160 @@ def test_a_step_is_never_excluded_from_its_own_paragraphs(entities, cbact04c_sou
         composites=[_composite(*_BALANCE_AND_RATE)],
         owned_elsewhere=owned,
     ) == ["Account", "CardXref"], "a step must still read its own paragraphs"
+
+
+# --- ADR-0072: a step is ordered where its input exists ------------------------------------------
+#
+# Anchored on the design a model actually wrote, for ADR-0069's reason: the fault is one no fixture
+# this repository designs would contain, because a fixture is written to the rule it is testing.
+
+LIVE_DESIGN = (
+    Path(__file__).parent.parent / "fixtures" / "live_designs" / "cbact04c-design.json"
+)
+
+
+def _live_job_as_validated():
+    """`CBACT04C`'s live job in the state `_parse_unified_design_response` sees it.
+
+    **Control breaks stripped**, which is not a contrivance: `attach_control_breaks` runs *after*
+    `parse_with_repair`, so at validation time no step carries one. The saved `design.json` is the
+    post-attachment artifact, so using it as-is would test the refusal against a design it never
+    meets. `contracts.py`'s `accumulator_owners` records a first version of another rule making
+    exactly this mistake, its unit tests passing over it.
+    """
+    document = DesignDocument.model_validate_json(LIVE_DESIGN.read_text(encoding="utf-8"))
+    job = document.unified_design.batch_jobs[0]
+    return document.unified_design, job.model_copy(
+        update={"steps": [step.model_copy(update={"control_break": None}) for step in job.steps]}
+    )
+
+
+def _moved_before(job, step_name: str, before: str):
+    """`job` with `step_name` lifted out and reinserted immediately ahead of `before`."""
+    others = [step for step in job.steps if step.step_name != step_name]
+    step = next(s for s in job.steps if s.step_name == step_name)
+    at = [s.step_name for s in others].index(before)
+    return job.model_copy(update={"steps": others[:at] + [step] + others[at:]})
+
+
+def _refuse_live(job, design, all_program_entries):
+    _refuse_a_step_ordered_before_its_input_exists(
+        [job],
+        design.composite_types,
+        design.domain_entities,
+        build_computed_values(FIXTURE_ROOT, all_program_entries),
+        build_file_access_paths(FIXTURE_ROOT, all_program_entries),
+        FIXTURE_ROOT,
+        all_program_entries,
+    )
+
+
+def test_a_step_ordered_before_its_input_exists_is_refused(all_program_entries):
+    """ADR-0072, against the design that produced the defect.
+
+    `CBACT04C` performs `1300-COMPUTE-INTEREST` then `1400-COMPUTE-FEES` under one guard, and
+    `1300-B-WRITE-TX` is a nested PERFORM inside the first. Flattened into three sibling steps in
+    paragraph order, the step turning an `AccruedCategoryInterest` into a `Tran` lands between the
+    step producing that accrued interest and the second step consuming it -- and that last step
+    cannot be wired. The job named it in `STEP_NAMES` (ADR-0032, correctly) with no bean behind it
+    and could not start, an approval and a `generate` after a human signed the design off.
+    """
+    design, job = _live_job_as_validated()
+    with pytest.raises(SolutionArchitectParseError) as raised:
+        _refuse_live(job, design, all_program_entries)
+
+    message = str(raised.value)
+    # The move, not only the fault. A model told a step is misplaced and not told where it goes has
+    # every other position left to choose from -- the same reason ADR-0070's message names the role.
+    assert "Move 'computeCategoryFees' so it runs before 'writeInterestTransaction'" in message
+    assert "AccruedCategoryInterest" in message
+
+
+def test_the_same_design_reordered_is_accepted(all_program_entries):
+    """The other half. Without it the refusal above would keep passing if the rule had become
+    "a step whose input differs from its predecessor's output is refused", which is every
+    aggregating step in every design -- including `postAccountInterest` in this very job."""
+    design, job = _live_job_as_validated()
+    _refuse_live(
+        _moved_before(job, "computeCategoryFees", "writeInterestTransaction"),
+        design,
+        all_program_entries,
+    )
+
+
+def test_the_move_the_refusal_names_is_the_one_that_renders(all_program_entries):
+    """The move the message names leaves `plan_steps` with nothing to skip.
+
+    **This is necessary and not sufficient, and the gap is recorded rather than implied.** As first
+    written this test was the whole check on the instruction, and it passed while the design it
+    names did not compile: `plan_steps` is the oracle the refusal consults, so asking it whether the
+    move works is asking the refusal to mark its own paper. The staging collision behind that
+    (ADR-0073) is invisible from here. `test_the_named_move_compiles` in
+    `tests/integration/test_a_live_design_wires.py` renders and builds the moved design, which is
+    what actually holds ADR-0072's claim up.
+    """
+    design, job = _live_job_as_validated()
+    moved = _moved_before(job, "computeCategoryFees", "writeInterestTransaction")
+    attached = attach_control_breaks(FIXTURE_ROOT, [moved], all_program_entries)
+    resolved = design.model_copy(
+        update={
+            "batch_jobs": attached,
+            "computed_values": build_computed_values(FIXTURE_ROOT, all_program_entries),
+            "file_access_paths": build_file_access_paths(FIXTURE_ROOT, all_program_entries),
+        }
+    )
+    renderable, skipped, _staged = plan_steps(attached[0], resolved, "CBACT04C")
+
+    assert skipped == []
+    named = [step.step_name for step in attached[0].steps if is_chunk_step(step)]
+    assert named == [step.step_name for step in renderable]
+    assert "computeCategoryFees" in named
+
+
+def test_the_refusal_is_silent_when_no_single_move_would_wire_the_job(all_program_entries):
+    """Restraint, and it is load-bearing rather than defensive.
+
+    A design that cannot be ordered has a real fan-out the chain cannot express, and ADR-0054 gives
+    one repair attempt: spending it on "reorder this" that no reordering satisfies buys nothing and
+    loses the attempt. `postAccountInterest` aggregates, so no position in the chain supplies its
+    input -- with `computeCategoryFees` *also* stranded, no single move empties the skip list.
+    """
+    design, job = _live_job_as_validated()
+    resolved = design.model_copy(
+        update={
+            "batch_jobs": [job],
+            "computed_values": build_computed_values(FIXTURE_ROOT, all_program_entries),
+            "file_access_paths": build_file_access_paths(FIXTURE_ROOT, all_program_entries),
+        }
+    )
+    _renderable, skipped, _staged = plan_steps(job, resolved, "CBACT04C")
+
+    # Both, precisely because the control breaks are stripped here.
+    assert [step.step_name for step, _why in skipped] == [
+        "computeCategoryFees",
+        "postAccountInterest",
+    ]
+    assert _a_move_that_strands_no_step(job, resolved, [s for s, _ in skipped]) is None
+
+
+def test_attaching_control_breaks_is_what_lets_the_refusal_fire(all_program_entries):
+    """The guard above the refusal, asserted as the thing it is: without it, nothing ever fires.
+
+    `aggregation_source` reads `step.control_break`, and at validation time no step carries one, so
+    an aggregating step reads as stranded. The test above shows the pair of stranded steps admits no
+    single move -- so a refusal checked against the unattached design would return `None` for every
+    live design ever written and never raise. That is a check that cannot fail, which this
+    repository has shipped once already (verification 18) and does not intend to ship again.
+
+    The two assertions are the same design one function apart, which is the whole claim.
+    """
+    design, job = _live_job_as_validated()
+    assert all(step.control_break is None for step in job.steps)
+
+    attached = attach_control_breaks(FIXTURE_ROOT, [job], all_program_entries)
+    assert [step.step_name for step in attached[0].steps if step.control_break] == [
+        "postAccountInterest"
+    ]
+
+    with pytest.raises(SolutionArchitectParseError):
+        _refuse_live(job, design, all_program_entries)
