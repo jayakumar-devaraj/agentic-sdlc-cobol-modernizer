@@ -196,6 +196,38 @@ def aggregation_source(
     return None
 
 
+#: Why a step of this role is never planned as a chunk step, keyed by the role.
+#:
+#: **`role` is a fact the design has carried since the first version of this contract, and this
+#: module never consulted it.** `unobtainable_inputs` states both limits already, in the same
+#: sentence -- *"a reader's and a writer's outputs are bound by `READ ... INTO` and `WRITE ... FROM`,
+#: and a tasklet has no item at all"* -- and names this exact shape, the open/close tasklets of
+#: `CBACT01C` and `CBCUS01C`.
+#:
+#: **What planning one anyway cost.** A live `CBACT04C` design decomposes the program the way the
+#: COBOL is written: a tasklet of five file OPENs and a reader of `1000-TCATBALF-GET-NEXT`, both
+#: typed `TranCatBal -> TranCatBal`, around the steps that do the work. Planned as chunk steps, each
+#: demanded its own `ItemReader<TranCatBal>` bean beside the step that actually drives the file --
+#: an ambiguity `render_file_bindings` refuses by refusing the whole job's wiring. Its message named
+#: the two colliding steps and could not name the reason they were both there.
+#:
+#: Skipped rather than refused, because nothing is lost and the design is not wrong. Opening a file
+#: and reading its next record are real COBOL; in Spring Batch they are the item reader's own
+#: lifecycle rather than steps, so the step that consumes the records drives the file directly.
+_NOT_A_CHUNK_STEP = {
+    "tasklet": (
+        "its role is 'tasklet', which has no item -- a chunk-oriented step reads one and writes "
+        "one, and opening or closing a file is the item reader's lifecycle rather than a step of "
+        "its own"
+    ),
+    "reader": (
+        "its role is 'reader', whose output is bound to what it read -- in Spring Batch that is "
+        "the ItemReader itself rather than a step, and the step consuming these records reads the "
+        "file directly"
+    ),
+}
+
+
 def plan_steps(
     job: BatchJobDesign, design: UnifiedDesign, program_name: str
 ) -> tuple[list[BatchStepDesign], list[tuple[BatchStepDesign, str]], list[str]]:
@@ -206,17 +238,30 @@ def plan_steps(
     A step is renderable when its input can be obtained -- from a file, or from the step before it --
     and its output can be put somewhere: a file, or the step after it. Anything else is reported with
     the reason rather than rendered, because the alternative is a step bean wired to nothing.
+
+    **A reader and a tasklet are none of those questions**, and asking them of one is what this
+    function did until a live design refused. See `_NOT_A_CHUNK_STEP`.
     """
     if not job.steps:
         raise UnrenderableJobError(f"job {job.job_name!r} declares no steps")
 
     renderable: list[BatchStepDesign] = []
-    skipped: list[tuple[BatchStepDesign, str]] = []
+    #: Reported before anything else, so a reader of the skip list meets the structural answer
+    #: ("this is not a chunk step") before the per-step ones.
+    skipped: list[tuple[BatchStepDesign, str]] = [
+        (step, _NOT_A_CHUNK_STEP[step.role])
+        for step in job.steps
+        if step.role in _NOT_A_CHUNK_STEP
+    ]
     staged: list[str] = []
 
-    for index, step in enumerate(job.steps):
-        previous = job.steps[index - 1] if index else None
-        following = job.steps[index + 1] if index + 1 < len(job.steps) else None
+    #: The steps that carry an item. The others are dropped from the chain as well as from the plan:
+    #: the step after a file open takes its input from the step before it, not from the open.
+    items = [step for step in job.steps if step.role not in _NOT_A_CHUNK_STEP]
+
+    for index, step in enumerate(items):
+        previous = items[index - 1] if index else None
+        following = items[index + 1] if index + 1 < len(items) else None
 
         from_file = _has_file_source(step, design, program_name)
         from_chain = previous is not None and previous.output_type == step.input_type

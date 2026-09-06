@@ -141,6 +141,53 @@ def test_the_refusal_still_says_what_is_missing_when_the_break_key_is_out_of_rea
     assert "widen that type" in reason
 
 
+def test_the_file_lifecycle_steps_a_live_design_declares_are_not_chunk_steps(design):
+    """A live `CBACT04C` design decomposes the program the way the COBOL is written.
+
+    Five file OPENs as a `tasklet` and `1000-TCATBALF-GET-NEXT` as a `reader`, both typed
+    `TranCatBal -> TranCatBal`, wrapped around the steps that do the work. Planned as chunk steps
+    each demanded its own `ItemReader<TranCatBal>` bean beside the step actually driving the file,
+    and `render_file_bindings` refused the whole job's wiring for the collision.
+
+    They are skipped with the role in the reason, not refused: the design is recording real COBOL,
+    and in Spring Batch both are the item reader's own lifecycle.
+    """
+    opens = STEP.model_copy(
+        update={
+            "step_name": "openInterestFiles",
+            "role": "tasklet",
+            "source_paragraphs": ["0000-TCATBALF-OPEN"],
+            "input_type": "TranCatBal",
+            "output_type": "TranCatBal",
+        }
+    )
+    reads = STEP.model_copy(
+        update={
+            "step_name": "readTranCatBalance",
+            "role": "reader",
+            "source_paragraphs": ["1000-TCATBALF-GET-NEXT"],
+            "input_type": "TranCatBal",
+            "output_type": "TranCatBal",
+        }
+    )
+    job = design.batch_jobs[0]
+    wrapped = job.model_copy(update={"steps": [opens, reads, *job.steps]})
+
+    renderable, skipped, staged = plan_steps(wrapped, design, "CBACT04C")
+
+    assert [step.step_name for step in renderable] == [
+        "computeInterest",
+        "completeTransaction",
+        "postAccountInterest",
+    ], "the work steps plan exactly as they do without the lifecycle steps around them"
+    assert [step.step_name for step, _ in skipped] == ["openInterestFiles", "readTranCatBalance"]
+    assert "role is 'tasklet'" in skipped[0][1]
+    assert "role is 'reader'" in skipped[1][1]
+    # Dropped from the chain as well as from the plan. If `previous` were still the raw preceding
+    # step, `computeInterest` would read `TranCatBal` from a reader that is not being rendered.
+    assert staged == ["TranWithContext"]
+
+
 def test_a_job_with_no_steps_is_refused(design):
     empty = design.batch_jobs[0].model_copy(update={"steps": []})
     with pytest.raises(UnrenderableJobError, match="declares no steps"):
