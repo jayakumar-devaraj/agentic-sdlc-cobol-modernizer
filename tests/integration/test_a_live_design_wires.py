@@ -34,13 +34,20 @@ so nothing about the generated logic is claimed and the differential stays where
 scripting it is what keeps this module free of a model call.
 
 **This project compiles, and its job still cannot start.** `computeCategoryFees` is ordered after
-`writeInterestTransaction`, whose output is a `Tran`, so nothing supplies the
-`AccruedCategoryInterest` it consumes. It is named in `STEP_NAMES` with no bean behind it, which is
-ADR-0032 working exactly as written: business logic the design gives nowhere to come from fails
-loudly rather than leaving a shorter job that looks like it ran. Its COBOL happens to be
-`* To be implemented` / `EXIT.`, so nothing is really lost -- but the pipeline cannot know that, and
-inferring it would be the kind of guess this repository refuses everywhere else. The remaining gap
-is a design-ordering one, not a renderer one.
+`writeInterestTransaction`, and by the time the chain reaches it the item is a `Tran`. It is named
+in `STEP_NAMES` with no bean behind it, which is ADR-0032 working exactly as written: business logic
+the design gives nowhere to come from fails loudly rather than leaving a shorter job that looks like
+it ran. Its COBOL happens to be `* To be implemented` / `EXIT.`, so nothing is really lost -- but the
+pipeline cannot know that, and inferring it would be the kind of guess this repository refuses
+everywhere else.
+
+**ADR-0072 corrects one word of that, and the correction is why the gap closed.** This module and
+ADR-0071 both said *nothing* supplies the step's `AccruedCategoryInterest`. `computeMonthlyInterest`
+supplies it three steps back; `writeInterestTransaction` consumes it and returns a `Tran`. It is a
+fan-out, not a missing producer -- so a valid order exists one move away, and `solution_architect`
+now refuses the design and names that move (`v1_5_0`). What this module renders is unchanged: the
+design stays pinned exactly as the model wrote it, because a fixture corrected to the rule it tests
+would test nothing.
 
 That distinction is why `test_the_rendered_project_compiles` is not the last word here: compilation
 is necessary and not sufficient, and a green build gave exactly that false comfort once already.
@@ -90,9 +97,11 @@ LIFECYCLE_STEPS = [
 ]
 
 #: The one step whose *business logic* this design gives nowhere to come from: it is ordered after
-#: `writeInterestTransaction`, whose output is a `Tran`, so nothing supplies its
-#: `AccruedCategoryInterest`. Its COBOL is `* To be implemented` / `EXIT.`, so nothing is lost --
-#: but the pipeline cannot know that, and ADR-0032 requires it to be named rather than dropped.
+#: `writeInterestTransaction`, so the item reaching it is a `Tran` rather than the
+#: `AccruedCategoryInterest` it consumes. Its COBOL is `* To be implemented` / `EXIT.`, so nothing is
+#: lost -- but the pipeline cannot know that, and ADR-0032 requires it to be named rather than
+#: dropped. Refused at design time since ADR-0072; what the renderer does with one that arrives
+#: anyway is this module's subject and has not changed.
 UNWIRABLE_STEP = "computeCategoryFees"
 
 
