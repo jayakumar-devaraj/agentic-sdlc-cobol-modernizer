@@ -207,24 +207,33 @@ def aggregation_source(
     return None
 
 
-#: Why a step of this role is never planned as a chunk step, keyed by the role.
+#: Why a step of this role is not a chunk step, keyed by the role.
 #:
-#: **`role` is a fact the design has carried since the first version of this contract, and this
-#: module never consulted it.** `unobtainable_inputs` states both limits already, in the same
-#: sentence -- *"a reader's and a writer's outputs are bound by `READ ... INTO` and `WRITE ... FROM`,
-#: and a tasklet has no item at all"* -- and names this exact shape, the open/close tasklets of
-#: `CBACT01C` and `CBCUS01C`.
+#: **A chunk step is a processor step, and ADR-0070 is what makes that true rather than convenient.**
+#: A Spring Batch chunk step reads an item, transforms it and writes it, and only the processor
+#: transforms. ADR-0070 requires every step whose input and output types differ to be a `processor`,
+#: so a step carrying any other role necessarily transforms nothing -- it is the reader's, the
+#: writer's or the job's own lifecycle. `unobtainable_inputs` states the same limit in the same
+#: sentence: *"a reader's and a writer's outputs are bound by `READ ... INTO` and `WRITE ... FROM`,
+#: and a tasklet has no item at all"*.
 #:
 #: **What planning one anyway cost.** A live `CBACT04C` design decomposes the program the way the
 #: COBOL is written: a tasklet of five file OPENs and a reader of `1000-TCATBALF-GET-NEXT`, both
 #: typed `TranCatBal -> TranCatBal`, around the steps that do the work. Planned as chunk steps, each
 #: demanded its own `ItemReader<TranCatBal>` bean beside the step that actually drives the file --
-#: an ambiguity `render_file_bindings` refuses by refusing the whole job's wiring. Its message named
-#: the two colliding steps and could not name the reason they were both there.
+#: an ambiguity `render_file_bindings` refuses by refusing the whole job's wiring.
 #:
-#: Skipped rather than refused, because nothing is lost and the design is not wrong. Opening a file
-#: and reading its next record are real COBOL; in Spring Batch they are the item reader's own
-#: lifecycle rather than steps, so the step that consumes the records drives the file directly.
+#: `writer` is here for the reason the other two are, and it closes a hole rather than adding a
+#: case: a planned step takes a `<Step>Processor`, `generate` renders a body for a processor and
+#: nothing else, so a planned `writer` wires the job to a class that will never exist. That is the
+#: defect ADR-0070 refuses at design time; excluding the role here means a design that somehow
+#: carries one still cannot produce an unstartable job.
+#:
+#: Not reported as *skipped*, because nothing is missing: `steps_not_generated` already counts a
+#: step this pipeline never renders **by role**, with the role and the paragraphs in its reason, and
+#: `skipped_steps` means business logic that is absent from the generated project. Putting these
+#: there said a file open was missing business logic, which is false and is exactly the misreading
+#: that field's own docstring warns about.
 _NOT_A_CHUNK_STEP = {
     "tasklet": (
         "its role is 'tasklet', which has no item -- a chunk-oriented step reads one and writes "
@@ -236,7 +245,22 @@ _NOT_A_CHUNK_STEP = {
         "the ItemReader itself rather than a step, and the step consuming these records reads the "
         "file directly"
     ),
+    "writer": (
+        "its role is 'writer', which writes what it was given -- in Spring Batch that is the "
+        "ItemWriter rather than a step. A step that transforms its item is a processor (ADR-0070)"
+    ),
 }
+
+
+def is_chunk_step(step: BatchStepDesign) -> bool:
+    """Whether this step is one of the job's chunk-oriented steps.
+
+    The one question `plan_steps` and `render_job_configuration` must answer the same way. They did
+    not: the planner learned to exclude a role and the configuration went on naming every declared
+    step in `STEP_NAMES`, so the rendered job required beans for steps nothing was rendering and
+    threw at startup naming the first of them.
+    """
+    return step.role not in _NOT_A_CHUNK_STEP
 
 
 def plan_steps(
@@ -257,18 +281,13 @@ def plan_steps(
         raise UnrenderableJobError(f"job {job.job_name!r} declares no steps")
 
     renderable: list[BatchStepDesign] = []
-    #: Reported before anything else, so a reader of the skip list meets the structural answer
-    #: ("this is not a chunk step") before the per-step ones.
-    skipped: list[tuple[BatchStepDesign, str]] = [
-        (step, _NOT_A_CHUNK_STEP[step.role])
-        for step in job.steps
-        if step.role in _NOT_A_CHUNK_STEP
-    ]
+    skipped: list[tuple[BatchStepDesign, str]] = []
     staged: list[str] = []
 
     #: The steps that carry an item. The others are dropped from the chain as well as from the plan:
-    #: the step after a file open takes its input from the step before it, not from the open.
-    items = [step for step in job.steps if step.role not in _NOT_A_CHUNK_STEP]
+    #: the step after a file open takes its input from the step before it, not from the open. They
+    #: are not reported as *skipped* -- see `_NOT_A_CHUNK_STEP` for which field says what about them.
+    items = [step for step in job.steps if is_chunk_step(step)]
 
     for index, step in enumerate(items):
         previous = items[index - 1] if index else None
@@ -528,7 +547,13 @@ def render_job_configuration(
         f"{_INDENT}}}"
         for name in staged
     )
-    names = ", ".join(f'"{step.step_name}"' for step in job.steps)
+    # **Every chunk step, and only those.** ADR-0032 has the job name a step it does not render so a
+    # missing bean fails loudly rather than leaving a shorter job that looks like it ran -- and that
+    # is right for a step whose *business logic* could not be wired. A role-excluded step is a
+    # different thing: it is not a step at all in Spring Batch, so naming it does not make it
+    # impossible to forget, it makes the job impossible to start. A live run's job named nine steps,
+    # had beans for five, and threw on the first file-open tasklet.
+    names = ", ".join(f'"{step.step_name}"' for step in job.steps if is_chunk_step(step))
     profile_annotation = f'\n@Profile("{profile}")' if profile else ""
     profile_import = (
         "import org.springframework.context.annotation.Profile;\n" if profile else ""

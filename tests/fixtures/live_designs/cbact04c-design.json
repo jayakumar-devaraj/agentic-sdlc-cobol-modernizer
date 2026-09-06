@@ -1,6 +1,6 @@
 {
   "schema_version": "3.10.0",
-  "generated_at": "2026-09-05T21:20:11.481601Z",
+  "generated_at": "2026-09-06T14:15:14.386498Z",
   "programs": [
     {
       "program_name": "CBACT04C",
@@ -1205,7 +1205,7 @@
           }
         ],
         "injection_flags": [],
-        "spec_markdown": "# CBACT04C — Program Specification\n\n## Overview\n\nCBACT04C is a batch interest calculator for the CardDemo credit-card application. It reads the transaction-category balance file (`TCATBAL-FILE`) in key sequence — one record per account / transaction-type / transaction-category combination — and for each record looks up the owning account, its card cross-reference, and the interest rate that applies to that account's disclosure group for that transaction type and category. Where a non-zero rate applies, it computes one month's interest on that category balance, writes an interest transaction record to the output transaction file, and accumulates the interest into a running per-account total. When the account number changes from one input record to the next, the accumulated interest for the *previous* account is added to that account's current balance and the account record is rewritten with its current-cycle credit and debit amounts reset to zero. The driver logic sits directly in the `PROCEDURE DIVISION` body (there is no named `MAIN` paragraph): it opens all five files, runs a `PERFORM UNTIL END-OF-FILE = 'Y'` loop over the balance file, then closes all five files and returns via `GOBACK`. The program is invoked with a linkage parameter (`EXTERNAL-PARMS`) whose `PARM-DATE` supplies the prefix of every generated transaction ID.\n\n## Paragraph flow\n\n### 0000-TCATBALF-OPEN\nCalled first by the driver. Sets `APPL-RESULT` to 8, opens `TCATBAL-FILE` for INPUT, and sets `APPL-RESULT` to 0 when `TCATBALF-STATUS = '00'`, otherwise 12. If the result is not the \"AOK\" condition (`APPL-RESULT = 0`), it displays `'ERROR OPENING TRANSACTION CATEGORY BALANCE'`, moves the file status into `IO-STATUS`, and calls `9910-DISPLAY-IO-STATUS` then `9999-ABEND-PROGRAM`. Calls: `9910-DISPLAY-IO-STATUS`, `9999-ABEND-PROGRAM`.\n\n### 0100-XREFFILE-OPEN\nSame open-and-check pattern for `XREF-FILE` (OPEN INPUT). On failure displays `'ERROR OPENING CROSS REF FILE'` together with `XREFFILE-STATUS`, then calls `9910-DISPLAY-IO-STATUS` and `9999-ABEND-PROGRAM`.\n\n### 0200-DISCGRP-OPEN\nSame pattern for `DISCGRP-FILE` (OPEN INPUT). On failure displays `'ERROR OPENING DALY REJECTS FILE'` — the message text does not match the file being opened, which is a cosmetic defect in the legacy source, not a behavioural one. Calls: `9910-DISPLAY-IO-STATUS`, `9999-ABEND-PROGRAM`.\n\n### 0300-ACCTFILE-OPEN\nOpens `ACCOUNT-FILE` **I-O** (read/update), not INPUT, because the program rewrites account records later. Same status check; on failure displays `'ERROR OPENING ACCOUNT MASTER FILE'` and calls `9910-DISPLAY-IO-STATUS` then `9999-ABEND-PROGRAM`.\n\n### 0400-TRANFILE-OPEN\nOpens `TRANSACT-FILE` **OUTPUT** — the transaction file is created fresh on every run, so any prior contents are replaced. Same status check; on failure displays `'ERROR OPENING TRANSACTION FILE'` and calls `9910-DISPLAY-IO-STATUS` then `9999-ABEND-PROGRAM`.\n\n### 1000-TCATBALF-GET-NEXT\nSequentially reads the next transaction-category balance record into `TRAN-CAT-BAL-RECORD`. Status `'00'` sets `APPL-RESULT` to 0; status `'10'` (end of file) sets it to 16, which satisfies the `APPL-EOF` condition and causes `'Y'` to be moved to `END-OF-FILE`; any other status sets 12 and produces `'ERROR READING TRANSACTION CATEGORY FILE'` followed by `9910-DISPLAY-IO-STATUS` and `9999-ABEND-PROGRAM`. Called from the driver loop; on a successful read the driver adds 1 to `WS-RECORD-COUNT` and displays the whole `TRAN-CAT-BAL-RECORD`.\n\n### 1050-UPDATE-ACCOUNT\nPosts the accumulated interest to the account currently held in `ACCOUNT-RECORD`:\n\n```\nADD WS-TOTAL-INT  TO ACCT-CURR-BAL\nMOVE 0 TO ACCT-CURR-CYC-CREDIT\nMOVE 0 TO ACCT-CURR-CYC-DEBIT\nREWRITE FD-ACCTFILE-REC FROM  ACCOUNT-RECORD\n```\n\nIn plain English: the total interest computed for all of that account's category balances is added to the account's current balance, and both current-cycle credit and debit accumulators are zeroed, then the account record is rewritten in place. A rewrite status other than `'00'` produces `'ERROR RE-WRITING ACCOUNT FILE'` and calls `9910-DISPLAY-IO-STATUS` then `9999-ABEND-PROGRAM`. Called from the driver when the account ID on the newly-read record differs from `WS-LAST-ACCT-NUM` and this is not the first record of the run.\n\n### 1100-GET-ACCT-DATA\nRandom-reads `ACCOUNT-FILE` on key `FD-ACCT-ID` (which the driver has just loaded from `TRANCAT-ACCT-ID`) into `ACCOUNT-RECORD`. An `INVALID KEY` branch displays `'ACCOUNT NOT FOUND: '` with the key, but execution then falls into the status check, where any status other than `'00'` displays `'ERROR READING ACCOUNT FILE'` and calls `9910-DISPLAY-IO-STATUS` then `9999-ABEND-PROGRAM` — so a missing account aborts the run rather than being skipped.\n\n### 1110-GET-XREF-DATA\nRandom-reads `XREF-FILE` into `CARD-XREF-RECORD` using the alternate key `FD-XREF-ACCT-ID` to obtain the card number for the account. Same `INVALID KEY` display (`'ACCOUNT NOT FOUND: '`) followed by the same abort-on-non-`'00'` status check with message `'ERROR READING XREF FILE'`. Called by the driver immediately after `1100-GET-ACCT-DATA` whenever the account changes.\n\n### 1200-GET-INTEREST-RATE\nRandom-reads `DISCGRP-FILE` into `DIS-GROUP-RECORD` using the key built by the driver from `ACCT-GROUP-ID`, `TRANCAT-TYPE-CD` and `TRANCAT-CD`. `INVALID KEY` displays `'DISCLOSURE GROUP RECORD MISSING'` and `'TRY WITH DEFAULT GROUP CODE'`. Statuses `'00'` **or** `'23'` (record not found) are both treated as acceptable (`APPL-RESULT` 0); anything else displays `'ERROR READING DISCLOSURE GROUP FILE'` and aborts via `9910-DISPLAY-IO-STATUS` / `9999-ABEND-PROGRAM`. When the status was `'23'`, it moves the literal `'DEFAULT'` into `FD-DIS-ACCT-GROUP-ID` and performs `1200-A-GET-DEFAULT-INT-RATE`. Calls: `1200-A-GET-DEFAULT-INT-RATE`, `9910-DISPLAY-IO-STATUS`, `9999-ABEND-PROGRAM`.\n\n### 1200-A-GET-DEFAULT-INT-RATE\nRe-reads `DISCGRP-FILE` into `DIS-GROUP-RECORD` with the group ID now set to `'DEFAULT'` (transaction type and category unchanged). Here only status `'00'` is acceptable; any other status displays `'ERROR READING DEFAULT DISCLOSURE GROUP'` and calls `9910-DISPLAY-IO-STATUS` then `9999-ABEND-PROGRAM`. In other words, a missing account-specific rate falls back to the DEFAULT group, but a missing DEFAULT-group rate is fatal.\n\n### 1300-COMPUTE-INTEREST\nComputes one month's interest on the current category balance:\n\n```\nCOMPUTE WS-MONTHLY-INT\n = ( TRAN-CAT-BAL * DIS-INT-RATE) / 1200\n\nADD WS-MONTHLY-INT  TO WS-TOTAL-INT\n```\n\nIn plain English: the category balance is multiplied by the annual percentage rate and divided by 1200 — 100 to convert the percentage to a fraction, 12 to convert the annual rate to a monthly one — giving the month's interest, which is then accumulated into the per-account running total. There is no `ROUNDED` phrase, so the result is truncated to the two decimal places of `WS-MONTHLY-INT` (`S9(09)V99`, BigDecimal precision 11 scale 2). Then performs `1300-B-WRITE-TX`. Called by the driver only when `DIS-INT-RATE NOT = 0`.\n\n### 1300-B-WRITE-TX\nBuilds and writes one interest transaction record. It adds 1 to `WS-TRANID-SUFFIX` and builds the transaction ID by concatenation:\n\n```\nSTRING PARM-DATE,\n       WS-TRANID-SUFFIX\n  DELIMITED BY SIZE\n  INTO TRAN-ID\n```\n\n— the 10-character run date from the linkage parameter followed by the 6-digit sequence number, exactly filling `TRAN-ID` (`X(16)`). It then sets `TRAN-TYPE-CD` to `'01'`, `TRAN-CAT-CD` to `'05'`, `TRAN-SOURCE` to `'System'`, and builds the description by concatenating the literal `'Int. for a/c '` with `ACCT-ID`. `WS-MONTHLY-INT` is moved to `TRAN-AMT`, merchant ID is set to 0 and the three merchant text fields to spaces, `XREF-CARD-NUM` (from the cross-reference read) is moved to `TRAN-CARD-NUM`, and `Z-GET-DB2-FORMAT-TIMESTAMP` is performed so that the resulting `DB2-FORMAT-TS` can be moved into both `TRAN-ORIG-TS` and `TRAN-PROC-TS` (origin and processing timestamps are therefore always identical). The record is written with `WRITE FD-TRANFILE-REC FROM TRAN-RECORD`; a status other than `'00'` displays `'ERROR WRITING TRANSACTION RECORD'` and calls `9910-DISPLAY-IO-STATUS` then `9999-ABEND-PROGRAM`. Calls: `Z-GET-DB2-FORMAT-TIMESTAMP`, `9910-DISPLAY-IO-STATUS`, `9999-ABEND-PROGRAM`.\n\n### 1400-COMPUTE-FEES\nA stub. Its entire body is the comment `* To be implemented` followed by `EXIT.` It is performed by the driver immediately after `1300-COMPUTE-INTEREST` whenever the rate is non-zero, but does nothing. A Java implementation should reproduce it as an empty extension point, not invent fee logic.\n\n### 9000-TCATBALF-CLOSE\nSets `APPL-RESULT` to 8, closes `TCATBAL-FILE`, sets 0 on status `'00'` else 12, and on failure displays `'ERROR CLOSING TRANSACTION BALANCE FILE'` then calls `9910-DISPLAY-IO-STATUS` and `9999-ABEND-PROGRAM`.\n\n### 9100-XREFFILE-CLOSE\nSame close-and-check pattern for `XREF-FILE`; failure message `'ERROR CLOSING CROSS REF FILE'`.\n\n### 9200-DISCGRP-CLOSE\nSame pattern for `DISCGRP-FILE`; failure message `'ERROR CLOSING DISCLOSURE GROUP FILE'`.\n\n### 9300-ACCTFILE-CLOSE\nSame pattern for `ACCOUNT-FILE`; failure message `'ERROR CLOSING ACCOUNT FILE'`.\n\n### 9400-TRANFILE-CLOSE\nSame pattern for `TRANSACT-FILE`; failure message `'ERROR CLOSING TRANSACTION FILE'`. After this the driver displays `'END OF EXECUTION OF PROGRAM CBACT04C'` and issues `GOBACK`.\n\n### Z-GET-DB2-FORMAT-TIMESTAMP\nMoves `FUNCTION CURRENT-DATE` into the `COBOL-TS` structure, then copies the year, month, day, hour, minute, second and hundredths components into the corresponding positions of `DB2-FORMAT-TS`, moves `'0000'` into `DB2-REST`, and inserts `'-'` into the three date separators and `'.'` into the three time separators — producing a 26-character DB2-style timestamp of the shape `YYYY-MM-DD-HH.MM.SS.HH0000`. Note that the target subfields of `DB2-FORMAT-TS` are defined through a `REDEFINES` and are therefore flagged for human review below; a Java implementation must reproduce the exact 26-character layout, including the trailing `'0000'` padding on the fractional seconds. Called from `1300-B-WRITE-TX`.\n\n### 9999-ABEND-PROGRAM\nDisplays `'ABENDING PROGRAM'`, moves 0 to `TIMING` and 999 to `ABCODE`, and issues `CALL 'CEE3ABD' USING ABCODE, TIMING` — a Language Environment abend with user code 999 and immediate timing. In Java this is an immediate, non-recoverable termination of the batch job, not a caught exception.\n\n### 9910-DISPLAY-IO-STATUS\nFormats and displays a four-character file status. If `IO-STATUS` is not numeric or `IO-STAT1 = '9'`, it puts `IO-STAT1` into the first byte of `IO-STATUS-04`, zeroes `TWO-BYTES-BINARY`, moves `IO-STAT2` into `TWO-BYTES-RIGHT` (the low-order byte of the binary halfword via the `REDEFINES`), and moves the resulting binary value into `IO-STATUS-0403` — i.e. it renders the second status byte as its numeric character-code value. Otherwise it moves `'0000'` into `IO-STATUS-04` and overlays the two-character status at positions 3–4. Either branch displays `'FILE STATUS IS: NNNN'` followed by `IO-STATUS-04`. This paragraph depends on `TWO-BYTES-RIGHT`, which is a flagged `REDEFINES` field.\n\n## Business rules\n\n- **Driver loop:** the balance file is processed sequentially until `END-OF-FILE = 'Y'`. Every successfully read record increments `WS-RECORD-COUNT` and is echoed with `DISPLAY TRAN-CAT-BAL-RECORD`.\n- **Account-break detection:** when `TRANCAT-ACCT-ID NOT= WS-LAST-ACCT-NUM`, the program (a) posts the previous account via `1050-UPDATE-ACCOUNT` — unless `WS-FIRST-TIME = 'Y'`, in which case it only flips `WS-FIRST-TIME` to `'N'` and posts nothing; (b) resets `WS-TOTAL-INT` to 0; (c) records the new account in `WS-LAST-ACCT-NUM`; and (d) re-reads the account record and cross-reference record for the new account. This break logic assumes the input file is in account-ID order, which the indexed sequential read guarantees.\n- **Comparison type mismatch (observation):** `WS-LAST-ACCT-NUM` is `X(11)` while `TRANCAT-ACCT-ID` is `9(11)`; the break test is therefore an alphanumeric comparison of the digit characters. Its initial value is `SPACES`, so the very first record always registers as a break. A Java implementation must reproduce the same \"first record always breaks\" behaviour.\n- **Rate lookup key:** the disclosure-group key is built each iteration from `ACCT-GROUP-ID` (from the account record), `TRANCAT-CD` and `TRANCAT-TYPE-CD` (from the current balance record) — so the group ID is refreshed only on an account break, while type and category are refreshed on every record.\n- **Missing rate falls back to DEFAULT:** disclosure-group status `'23'` is not an error; the lookup is retried with group ID `'DEFAULT'`. A failed DEFAULT lookup is fatal (abend).\n- **Zero-rate short circuit:** interest is computed and a transaction written **only** when `DIS-INT-RATE NOT = 0`. A zero rate produces no transaction record and contributes nothing to `WS-TOTAL-INT`. `1400-COMPUTE-FEES` is likewise only reached on a non-zero rate.\n- **Interest formula, verbatim:** `COMPUTE WS-MONTHLY-INT = ( TRAN-CAT-BAL * DIS-INT-RATE) / 1200`. No `ROUNDED` clause, so the result is **truncated** (not rounded) to two decimals when stored into `WS-MONTHLY-INT` (`S9(09)V99`). Java must use a truncating scale-2 operation (`RoundingMode.DOWN`), not half-up rounding, and must not round the intermediate product before the division.\n- **Posting:** `ADD WS-TOTAL-INT TO ACCT-CURR-BAL`, then `ACCT-CURR-CYC-CREDIT` and `ACCT-CURR-CYC-DEBIT` are both set to 0 before the account record is rewritten. Cycle accumulators are cleared unconditionally as part of the posting step.\n- **Transaction record content:** type code `'01'`, category code `'05'`, source `'System'`, description `'Int. for a/c '` + `ACCT-ID`, amount `WS-MONTHLY-INT`, merchant ID 0, merchant name/city/zip spaces, card number from the cross-reference record, and both timestamps set to the same generated DB2-format value.\n- **Transaction ID generation:** `PARM-DATE` (10 chars, supplied by the caller) concatenated with a 6-digit counter that increments once per written transaction across the whole run, starting from 000001. IDs are therefore unique within a run only if `PARM-DATE` differs between runs.\n- **Output file is recreated:** `TRANSACT-FILE` is opened `OUTPUT`, so each run replaces the file rather than appending.\n- **End-of-file handling (observation — the last account is not posted):** the loop is `PERFORM UNTIL END-OF-FILE = 'Y'` and the `ELSE PERFORM 1050-UPDATE-ACCOUNT` branch is guarded by `IF END-OF-FILE = 'N'`. Because the loop condition is retested before the body re-executes, once `1000-TCATBALF-GET-NEXT` sets `END-OF-FILE` to `'Y'` the loop terminates and that `ELSE` branch is never reached. The consequence is that the accumulated `WS-TOTAL-INT` for the **final** account in the file is never added to `ACCT-CURR-BAL` — its interest transactions are written to the transaction file, but the account balance is not updated. This is behaviour of the existing program, not a suggestion; a faithful Java port must decide deliberately whether to reproduce it, and the choice should be raised with a human.\n- **Error handling is uniformly fatal:** every I/O status check that fails displays a message, formats the status via `9910-DISPLAY-IO-STATUS`, and abends with user code 999. There is no record-level skip-and-continue anywhere in the program — including for a not-found account or cross-reference record, where the `INVALID KEY` display is immediately followed by the fatal status check.\n\n## Field reference\n\nRestated from the deterministic `pic_mapper` output; not re-derived.\n\n| Field | PIC | Java type | Precision | Scale | Signed |\n|---|---|---|---|---|---|\n| FD-TRANCAT-ACCT-ID | 9(11) | BigDecimal | 11 | 0 | False |\n| FD-TRANCAT-TYPE-CD | X(02) | String | - | - | False |\n| FD-TRANCAT-CD | 9(04) | BigDecimal | 4 | 0 | False |\n| FD-FD-TRAN-CAT-DATA | X(33) | String | - | - | False |\n| FD-XREF-CARD-NUM | X(16) | String | - | - | False |\n| FD-XREF-CUST-NUM | 9(09) | BigDecimal | 9 | 0 | False |\n| FD-XREF-ACCT-ID | 9(11) | BigDecimal | 11 | 0 | False |\n| FD-XREF-FILLER | X(14) | String | - | - | False |\n| FD-DIS-ACCT-GROUP-ID | X(10) | String | - | - | False |\n| FD-DIS-TRAN-TYPE-CD | X(02) | String | - | - | False |\n| FD-DIS-TRAN-CAT-CD | 9(04) | BigDecimal | 4 | 0 | False |\n| FD-DISCGRP-DATA | X(34) | String | - | - | False |\n| FD-ACCT-ID | 9(11) | BigDecimal | 11 | 0 | False |\n| FD-ACCT-DATA | X(289) | String | - | - | False |\n| FD-TRANS-ID | X(16) | String | - | - | False |\n| FD-ACCT-DATA | X(334) | String | - | - | False |\n| TCATBALF-STAT1 | X | String | - | - | False |\n| TCATBALF-STAT2 | X | String | - | - | False |\n| XREFFILE-STAT1 | X | String | - | - | False |\n| XREFFILE-STAT2 | X | String | - | - | False |\n| DISCGRP-STAT1 | X | String | - | - | False |\n| DISCGRP-STAT2 | X | String | - | - | False |\n| ACCTFILE-STAT1 | X | String | - | - | False |\n| ACCTFILE-STAT2 | X | String | - | - | False |\n| TRANFILE-STAT1 | X | String | - | - | False |\n| TRANFILE-STAT2 | X | String | - | - | False |\n| IO-STAT1 | X | String | - | - | False |\n| IO-STAT2 | X | String | - | - | False |\n| TWO-BYTES-BINARY | 9(4) | BigDecimal | 4 | 0 | False |\n| IO-STATUS-0401 | 9 | BigDecimal | 1 | 0 | False |\n| IO-STATUS-0403 | 999 | BigDecimal | 3 | 0 | False |\n| APPL-RESULT | S9(9) | BigDecimal | 9 | 0 | True |\n| END-OF-FILE | X(01) | String | - | - | False |\n| ABCODE | S9(9) | BigDecimal | 9 | 0 | True |\n| TIMING | S9(9) | BigDecimal | 9 | 0 | True |\n| COB-YYYY | X(04) | String | - | - | False |\n| COB-MM | X(02) | String | - | - | False |\n| COB-DD | X(02) | String | - | - | False |\n| COB-HH | X(02) | String | - | - | False |\n| COB-MIN | X(02) | String | - | - | False |\n| COB-SS | X(02) | String | - | - | False |\n| COB-MIL | X(02) | String | - | - | False |\n| COB-REST | X(05) | String | - | - | False |\n| DB2-FORMAT-TS | X(26) | String | - | - | False |\n| WS-LAST-ACCT-NUM | X(11) | String | - | - | False |\n| WS-MONTHLY-INT | S9(09)V99 | BigDecimal | 11 | 2 | True |\n| WS-TOTAL-INT | S9(09)V99 | BigDecimal | 11 | 2 | True |\n| WS-FIRST-TIME | X(01) | String | - | - | False |\n| WS-RECORD-COUNT | 9(09) | BigDecimal | 9 | 0 | False |\n| WS-TRANID-SUFFIX | 9(06) | BigDecimal | 6 | 0 | False |\n| PARM-LENGTH | S9(04) | BigDecimal | 4 | 0 | True |\n| PARM-DATE | X(10) | String | - | - | False |\n| TRANCAT-ACCT-ID | 9(11) | BigDecimal | 11 | 0 | False |\n| TRANCAT-TYPE-CD | X(02) | String | - | - | False |\n| TRANCAT-CD | 9(04) | BigDecimal | 4 | 0 | False |\n| TRAN-CAT-BAL | S9(09)V99 | BigDecimal | 11 | 2 | True |\n| FILLER | X(22) | String | - | - | False |\n| XREF-CARD-NUM | X(16) | String | - | - | False |\n| XREF-CUST-ID | 9(09) | BigDecimal | 9 | 0 | False |\n| XREF-ACCT-ID | 9(11) | BigDecimal | 11 | 0 | False |\n| FILLER | X(14) | String | - | - | False |\n| DIS-ACCT-GROUP-ID | X(10) | String | - | - | False |\n| DIS-TRAN-TYPE-CD | X(02) | String | - | - | False |\n| DIS-TRAN-CAT-CD | 9(04) | BigDecimal | 4 | 0 | False |\n| DIS-INT-RATE | S9(04)V99 | BigDecimal | 6 | 2 | True |\n| FILLER | X(28) | String | - | - | False |\n| ACCT-ID | 9(11) | BigDecimal | 11 | 0 | False |\n| ACCT-ACTIVE-STATUS | X(01) | String | - | - | False |\n| ACCT-CURR-BAL | S9(10)V99 | BigDecimal | 12 | 2 | True |\n| ACCT-CREDIT-LIMIT | S9(10)V99 | BigDecimal | 12 | 2 | True |\n| ACCT-CASH-CREDIT-LIMIT | S9(10)V99 | BigDecimal | 12 | 2 | True |\n| ACCT-OPEN-DATE | X(10) | String | - | - | False |\n| ACCT-EXPIRAION-DATE | X(10) | String | - | - | False |\n| ACCT-REISSUE-DATE | X(10) | String | - | - | False |\n| ACCT-CURR-CYC-CREDIT | S9(10)V99 | BigDecimal | 12 | 2 | True |\n| ACCT-CURR-CYC-DEBIT | S9(10)V99 | BigDecimal | 12 | 2 | True |\n| ACCT-ADDR-ZIP | X(10) | String | - | - | False |\n| ACCT-GROUP-ID | X(10) | String | - | - | False |\n| FILLER | X(178) | String | - | - | False |\n| TRAN-ID | X(16) | String | - | - | False |\n| TRAN-TYPE-CD | X(02) | String | - | - | False |\n| TRAN-CAT-CD | 9(04) | BigDecimal | 4 | 0 | False |\n| TRAN-SOURCE | X(10) | String | - | - | False |\n| TRAN-DESC | X(100) | String | - | - | False |\n| TRAN-AMT | S9(09)V99 | BigDecimal | 11 | 2 | True |\n| TRAN-MERCHANT-ID | 9(09) | BigDecimal | 9 | 0 | False |\n| TRAN-MERCHANT-NAME | X(50) | String | - | - | False |\n| TRAN-MERCHANT-CITY | X(50) | String | - | - | False |\n| TRAN-MERCHANT-ZIP | X(10) | String | - | - | False |\n| TRAN-CARD-NUM | X(16) | String | - | - | False |\n| TRAN-ORIG-TS | X(26) | String | - | - | False |\n| TRAN-PROC-TS | X(26) | String | - | - | False |\n| FILLER | X(20) | String | - | - | False |\n\nTwo distinct fields share the name `FD-ACCT-DATA` (`X(289)` in the account FD, `X(334)` in the transaction FD); Java naming must disambiguate them by record. Note also that `ACCT-GROUP-ID` is `X(10)` while `DIS-ACCT-GROUP-ID` is `X(10)` — the `'DEFAULT'` literal moved into `FD-DIS-ACCT-GROUP-ID` is space-padded to 10 characters.\n\n## Flagged for human review\n\nThese fields were deliberately not mapped, per `docs/adr/0002-a-hand-rolled-parser-for-a-deliberately-bounded-grammar.md`. No Java shape is proposed for any of them.\n\n- **`TWO-BYTES-LEFT`** — declared under `01 TWO-BYTES-ALPHA REDEFINES TWO-BYTES-BINARY`; an alphanumeric overlay of a binary halfword, whose meaning depends on machine byte order and cannot be mapped safely.\n- **`TWO-BYTES-RIGHT`** — same `REDEFINES` overlay; used by `9910-DISPLAY-IO-STATUS` to reinterpret a status byte as a numeric value, so the display formatting cannot be reproduced until a human decides the byte-level semantics.\n- **`DB2-YYYY`** — declared under `01 FILLER REDEFINES DB2-FORMAT-TS`; a positional overlay of the 26-character timestamp string.\n- **`DB2-MIN`** — same `REDEFINES` overlay of `DB2-FORMAT-TS`.\n- **`DB2-DOT-2`** — same `REDEFINES` overlay; a separator position within the timestamp.\n- **`DB2-SS`** — same `REDEFINES` overlay of `DB2-FORMAT-TS`.\n- **`DB2-DOT-3`** — same `REDEFINES` overlay; a separator position within the timestamp.\n- **`DB2-MIL`** — same `REDEFINES` overlay; numeric `PIC 9(002)` over a slice of an alphanumeric field.\n- **`DB2-REST`** — same `REDEFINES` overlay; the trailing four characters of the timestamp, always set to `'0000'`.\n\nAll nine flagged fields are consumed by `Z-GET-DB2-FORMAT-TIMESTAMP` or `9910-DISPLAY-IO-STATUS`. Because the timestamp overlay drives both `TRAN-ORIG-TS` and `TRAN-PROC-TS` on every written transaction record, a human must resolve the timestamp layout before those paragraphs can be ported.",
+        "spec_markdown": "# CBACT04C — Interest Calculator (Batch)\n\n## Overview\n\nCBACT04C is the monthly interest posting batch job for the CardDemo card-account system. It walks the transaction-category balance file (`TCATBALF`) in key order — one record per account / transaction-type / transaction-category combination — and for each balance it looks up the interest rate that applies to that account's disclosure group and category. Where a non-zero rate applies, it computes one month's interest on that category balance, accumulates it into a running per-account total, and writes a new system-generated interest transaction into the output transaction file (`TRANSACT`). When the account number changes (and again at end of file), it posts the accumulated interest to the account master record: the total interest is added to the current balance and both current-cycle credit and debit counters are reset to zero. The program also resolves the account's card number via the card cross-reference file so the generated transaction carries a card number, and it stamps each generated transaction with a DB2-format timestamp. A fee-computation step exists but is an empty stub.\n\n## Paragraph flow\n\nThe `PROCEDURE DIVISION` receives `EXTERNAL-PARMS` (`PARM-LENGTH`, `PARM-DATE`) from the caller. The mainline displays a start banner, opens all five files, then loops `UNTIL END-OF-FILE = 'Y'`:\n\n- While not at end of file, it performs `1000-TCATBALF-GET-NEXT`. If that read did not hit end of file, it increments `WS-RECORD-COUNT`, displays the record, and checks whether `TRANCAT-ACCT-ID` differs from `WS-LAST-ACCT-NUM`.\n- On an account break: if `WS-FIRST-TIME` is not `'Y'` it performs `1050-UPDATE-ACCOUNT` for the *previous* account; otherwise it just sets `WS-FIRST-TIME` to `'N'`. Either way it then zeroes `WS-TOTAL-INT`, saves the new account id into `WS-LAST-ACCT-NUM` and into `FD-ACCT-ID`, performs `1100-GET-ACCT-DATA`, moves the account id into `FD-XREF-ACCT-ID`, and performs `1110-GET-XREF-DATA`.\n- For every record (break or not) it builds the disclosure-group key from `ACCT-GROUP-ID`, `TRANCAT-CD` and `TRANCAT-TYPE-CD`, performs `1200-GET-INTEREST-RATE`, and — only `IF DIS-INT-RATE NOT = 0` — performs `1300-COMPUTE-INTEREST` and then `1400-COMPUTE-FEES`.\n- When the read sets `END-OF-FILE` to `'Y'`, the next pass through the loop takes the `ELSE` branch and performs `1050-UPDATE-ACCOUNT` one final time, flushing the last account's accumulated interest.\n\nAfter the loop it closes all five files, displays an end banner, and issues `GOBACK`.\n\n### 0000-TCATBALF-OPEN\nSets `APPL-RESULT` to 8, opens `TCATBAL-FILE` for input. Status `'00'` sets `APPL-RESULT` to 0, anything else sets it to 12. If `APPL-AOK` (value 0) is not true, it displays `'ERROR OPENING TRANSACTION CATEGORY BALANCE'`, copies the file status into `IO-STATUS`, and calls `9910-DISPLAY-IO-STATUS` then `9999-ABEND-PROGRAM`.\n\n### 0100-XREFFILE-OPEN\nSame pattern for `XREF-FILE` (`OPEN INPUT`). On failure it displays `'ERROR OPENING CROSS REF FILE'` together with `XREFFILE-STATUS`, then performs `9910-DISPLAY-IO-STATUS` and `9999-ABEND-PROGRAM`.\n\n### 0200-DISCGRP-OPEN\nSame pattern for `DISCGRP-FILE` (`OPEN INPUT`). The failure message reads `'ERROR OPENING DALY REJECTS FILE'` — a copy-paste artifact; the file being opened is the disclosure-group file, not a rejects file. Calls `9910-DISPLAY-IO-STATUS` and `9999-ABEND-PROGRAM` on failure.\n\n### 0300-ACCTFILE-OPEN\nOpens `ACCOUNT-FILE` `I-O` (read/update), because the account master is rewritten in place later. Failure path displays `'ERROR OPENING ACCOUNT MASTER FILE'` and abends via the same two paragraphs.\n\n### 0400-TRANFILE-OPEN\nOpens `TRANSACT-FILE` `OUTPUT` — the transaction file is created fresh each run, so any prior content is replaced. Failure path displays `'ERROR OPENING TRANSACTION FILE'` and abends.\n\n### 1000-TCATBALF-GET-NEXT\n`READ TCATBAL-FILE INTO TRAN-CAT-BAL-RECORD` — a sequential read of the indexed balance file. Status `'00'` → `APPL-RESULT` 0; status `'10'` (end of file) → `APPL-RESULT` 16, which satisfies the `APPL-EOF` condition and moves `'Y'` to `END-OF-FILE`; any other status → `APPL-RESULT` 12, which displays `'ERROR READING TRANSACTION CATEGORY FILE'` and abends.\n\n### 1050-UPDATE-ACCOUNT\nPosts the accumulated interest to the account currently held in `ACCOUNT-RECORD`:\n\n```\nADD WS-TOTAL-INT  TO ACCT-CURR-BAL\nMOVE 0 TO ACCT-CURR-CYC-CREDIT\nMOVE 0 TO ACCT-CURR-CYC-DEBIT\n```\n\nThe running total interest is added to the account's current balance, and both current-cycle credit and debit totals are cleared to zero. It then does `REWRITE FD-ACCTFILE-REC FROM ACCOUNT-RECORD`; status other than `'00'` displays `'ERROR RE-WRITING ACCOUNT FILE'` and abends.\n\n### 1100-GET-ACCT-DATA\nRandom-reads `ACCOUNT-FILE INTO ACCOUNT-RECORD` on the key `FD-ACCT-ID` (previously loaded with `TRANCAT-ACCT-ID`). The `INVALID KEY` clause displays `'ACCOUNT NOT FOUND: '` with the key, but does not itself stop processing — the status check immediately after treats any status other than `'00'` as fatal, displaying `'ERROR READING ACCOUNT FILE'` and abending. So a missing account produces both messages and then an abend.\n\n### 1110-GET-XREF-DATA\nRandom-reads `XREF-FILE INTO CARD-XREF-RECORD` using the alternate key `FD-XREF-ACCT-ID` to obtain `XREF-CARD-NUM` for the account. `INVALID KEY` displays `'ACCOUNT NOT FOUND: '` with the account id; as above, any status other than `'00'` then displays `'ERROR READING XREF FILE'` and abends.\n\n### 1200-GET-INTEREST-RATE\nRandom-reads `DISCGRP-FILE INTO DIS-GROUP-RECORD` on the key built from the account's group id, transaction type code and category code. `INVALID KEY` displays `'DISCLOSURE GROUP RECORD MISSING'` and `'TRY WITH DEFAULT GROUP CODE'`. Status `'00'` **or** `'23'` (record not found) is treated as acceptable (`APPL-RESULT` 0); anything else is fatal (`'ERROR READING DISCLOSURE GROUP FILE'`, then abend). When the status is `'23'`, it moves the literal `'DEFAULT'` into `FD-DIS-ACCT-GROUP-ID` and performs `1200-A-GET-DEFAULT-INT-RATE` to retry the lookup under the default group.\n\n### 1200-A-GET-DEFAULT-INT-RATE\nRe-reads `DISCGRP-FILE INTO DIS-GROUP-RECORD` with the `'DEFAULT'` group id in the key. Here only status `'00'` is acceptable — if the default disclosure-group record is also missing, it displays `'ERROR READING DEFAULT DISCLOSURE GROUP'` and abends.\n\n### 1300-COMPUTE-INTEREST\nComputes one month's interest for the current category balance:\n\n```\nCOMPUTE WS-MONTHLY-INT\n = ( TRAN-CAT-BAL * DIS-INT-RATE) / 1200\n```\n\nThat is: the category balance multiplied by the annual percentage rate, divided by 1200 — dividing by 100 to convert the percentage and by 12 to reduce the annual rate to a monthly one. The result lands in `WS-MONTHLY-INT` (`S9(09)V99`), so it is truncated to two decimal places (no `ROUNDED` phrase is present). It then does `ADD WS-MONTHLY-INT TO WS-TOTAL-INT`, accumulating this category's interest into the per-account running total, and performs `1300-B-WRITE-TX`.\n\n### 1300-B-WRITE-TX\nBuilds and writes one interest transaction record. It adds 1 to `WS-TRANID-SUFFIX` and builds the transaction id by `STRING`-ing `PARM-DATE` and `WS-TRANID-SUFFIX` `DELIMITED BY SIZE` into `TRAN-ID` — i.e. the 10-character run date passed in as a parameter followed by the 6-digit sequence number, filling the 16-byte id. It then populates the record: `TRAN-TYPE-CD` = `'01'`, `TRAN-CAT-CD` = `'05'`, `TRAN-SOURCE` = `'System'`, `TRAN-DESC` built by `STRING`-ing the literal `'Int. for a/c '` with `ACCT-ID`, `TRAN-AMT` = `WS-MONTHLY-INT`, `TRAN-MERCHANT-ID` = 0, merchant name/city/zip = spaces, and `TRAN-CARD-NUM` = `XREF-CARD-NUM` from the cross-reference read. It performs `Z-GET-DB2-FORMAT-TIMESTAMP` and moves `DB2-FORMAT-TS` into both `TRAN-ORIG-TS` and `TRAN-PROC-TS`. Finally `WRITE FD-TRANFILE-REC FROM TRAN-RECORD`; any status other than `'00'` displays `'ERROR WRITING TRANSACTION RECORD'` and abends.\n\n### 1400-COMPUTE-FEES\nA stub. The body is only the comment `To be implemented` and `EXIT` — no fee logic exists. It is still performed once per non-zero-rate balance record, immediately after `1300-COMPUTE-INTEREST`.\n\n### 9000-TCATBALF-CLOSE\nCloses `TCATBAL-FILE`; status other than `'00'` displays `'ERROR CLOSING TRANSACTION BALANCE FILE'` and abends.\n\n### 9100-XREFFILE-CLOSE\nCloses `XREF-FILE`; failure displays `'ERROR CLOSING CROSS REF FILE'` and abends.\n\n### 9200-DISCGRP-CLOSE\nCloses `DISCGRP-FILE`; failure displays `'ERROR CLOSING DISCLOSURE GROUP FILE'` and abends.\n\n### 9300-ACCTFILE-CLOSE\nCloses `ACCOUNT-FILE`; failure displays `'ERROR CLOSING ACCOUNT FILE'` and abends.\n\n### 9400-TRANFILE-CLOSE\nCloses `TRANSACT-FILE`; failure displays `'ERROR CLOSING TRANSACTION FILE'` and abends.\n\n### Z-GET-DB2-FORMAT-TIMESTAMP\nReads the system clock with `MOVE FUNCTION CURRENT-DATE TO COBOL-TS`, then reassembles the pieces into a 26-character DB2-style timestamp string in `DB2-FORMAT-TS`: year, month, day, hour, minute, second and hundredths are moved across individually, `'0000'` is moved to the trailing `DB2-REST`, hyphens are placed in the three date separators and periods in the three time separators — producing the `YYYY-MM-DD-HH.MM.SS.hh0000` layout described in the source comment. Called by `1300-B-WRITE-TX` before each transaction write.\n\n### 9999-ABEND-PROGRAM\nDisplays `'ABENDING PROGRAM'`, sets `TIMING` to 0 and `ABCODE` to 999, then `CALL 'CEE3ABD' USING ABCODE, TIMING` — the Language Environment abend service. This terminates the job; there is no return path.\n\n### 9910-DISPLAY-IO-STATUS\nFormats a file status for display. If `IO-STATUS` is not numeric or `IO-STAT1` is `'9'`, it treats the second byte as a binary value: it moves `IO-STAT1` into the first position of `IO-STATUS-04`, zeroes `TWO-BYTES-BINARY`, moves `IO-STAT2` into `TWO-BYTES-RIGHT` (the redefined low-order byte), moves `TWO-BYTES-BINARY` into `IO-STATUS-0403`, and displays `'FILE STATUS IS: NNNN'` with the result. Otherwise it moves `'0000'` into `IO-STATUS-04`, overlays positions 3–4 with the two status characters, and displays the same message. This is display-only; the abend decision is made by the caller.\n\n## Business rules\n\n- **Interest formula, verbatim:** `COMPUTE WS-MONTHLY-INT = ( TRAN-CAT-BAL * DIS-INT-RATE) / 1200`. The divisor is the literal 1200 (percent conversion × 12 months). Reproduce this exactly — do not restructure it as `rate/100/12` or apply rounding at an intermediate step.\n- **Truncation, not rounding:** there is no `ROUNDED` phrase. `WS-MONTHLY-INT` is `S9(09)V99`, so the quotient is truncated toward zero at two decimal places. A Java implementation must truncate (`RoundingMode.DOWN`) to scale 2, not use half-up.\n- **Zero rate skips everything:** interest is computed, accumulated and written only `IF DIS-INT-RATE NOT = 0`. A zero rate produces no transaction record, no addition to `WS-TOTAL-INT`, and no fee call.\n- **Disclosure-group fallback:** if the group/type/category lookup returns status `'23'` (not found), the group id is replaced with the literal `'DEFAULT'` and the lookup is retried. A miss on the *default* record is fatal and abends the program.\n- **Account-break posting:** the account master is updated only when the account id changes, and the update applies to the *previous* account's accumulated total. `WS-FIRST-TIME` (initial value `'Y'`) suppresses the update on the very first record, since there is no previous account yet.\n- **End-of-file flush:** after the read reports end of file, the loop makes one more pass and performs `1050-UPDATE-ACCOUNT` so the final account's interest is posted. Omitting this final flush loses the last account's interest.\n- **Account posting effect:** `ADD WS-TOTAL-INT TO ACCT-CURR-BAL`, then `ACCT-CURR-CYC-CREDIT` and `ACCT-CURR-CYC-DEBIT` are both set to zero. The cycle counters are cleared unconditionally as part of the same posting step.\n- **Total reset order:** `WS-TOTAL-INT` is zeroed *after* the previous account's update and *before* reading the new account's data, so each account accumulates independently.\n- **Generated transaction constants:** every generated record uses `TRAN-TYPE-CD` `'01'`, `TRAN-CAT-CD` `'05'`, `TRAN-SOURCE` `'System'`, `TRAN-MERCHANT-ID` 0, and blank merchant name/city/zip.\n- **Transaction id construction:** `PARM-DATE` concatenated with `WS-TRANID-SUFFIX`, both `DELIMITED BY SIZE`, into the 16-byte `TRAN-ID`. The suffix is a run-global counter starting at 0 and incremented before each write — it is not reset per account.\n- **Timestamps:** `TRAN-ORIG-TS` and `TRAN-PROC-TS` both receive the same `DB2-FORMAT-TS` value, captured freshly per transaction from the system clock.\n- **Output file is replaced:** `TRANSACT-FILE` is opened `OUTPUT`, so each run creates the file anew rather than appending.\n- **Any unexpected file status is fatal:** open, read (other than end of file), rewrite, write and close all treat a status other than `'00'` (plus `'23'` on the first disclosure-group read) as an abend with code 999 via `CEE3ABD`. There is no skip-and-continue error recovery anywhere in this program.\n- **Fees are not implemented:** `1400-COMPUTE-FEES` is an empty stub. A faithful port should preserve it as an explicit no-op extension point rather than inventing fee logic.\n- **`ACCT-GROUP-ID` persistence:** the disclosure key is rebuilt for every balance record from whatever `ACCOUNT-RECORD` currently holds — the account record read at the last account break — so all categories for an account share that account's group id.\n\n## Field reference\n\n| Field | PIC | Java type | Precision | Scale | Signed |\n|---|---|---|---|---|---|\n| FD-TRANCAT-ACCT-ID | 9(11) | BigDecimal | 11 | 0 | False |\n| FD-TRANCAT-TYPE-CD | X(02) | String | - | - | False |\n| FD-TRANCAT-CD | 9(04) | BigDecimal | 4 | 0 | False |\n| FD-FD-TRAN-CAT-DATA | X(33) | String | - | - | False |\n| FD-XREF-CARD-NUM | X(16) | String | - | - | False |\n| FD-XREF-CUST-NUM | 9(09) | BigDecimal | 9 | 0 | False |\n| FD-XREF-ACCT-ID | 9(11) | BigDecimal | 11 | 0 | False |\n| FD-XREF-FILLER | X(14) | String | - | - | False |\n| FD-DIS-ACCT-GROUP-ID | X(10) | String | - | - | False |\n| FD-DIS-TRAN-TYPE-CD | X(02) | String | - | - | False |\n| FD-DIS-TRAN-CAT-CD | 9(04) | BigDecimal | 4 | 0 | False |\n| FD-DISCGRP-DATA | X(34) | String | - | - | False |\n| FD-ACCT-ID | 9(11) | BigDecimal | 11 | 0 | False |\n| FD-ACCT-DATA | X(289) | String | - | - | False |\n| FD-TRANS-ID | X(16) | String | - | - | False |\n| FD-ACCT-DATA | X(334) | String | - | - | False |\n| TCATBALF-STAT1 | X | String | - | - | False |\n| TCATBALF-STAT2 | X | String | - | - | False |\n| XREFFILE-STAT1 | X | String | - | - | False |\n| XREFFILE-STAT2 | X | String | - | - | False |\n| DISCGRP-STAT1 | X | String | - | - | False |\n| DISCGRP-STAT2 | X | String | - | - | False |\n| ACCTFILE-STAT1 | X | String | - | - | False |\n| ACCTFILE-STAT2 | X | String | - | - | False |\n| TRANFILE-STAT1 | X | String | - | - | False |\n| TRANFILE-STAT2 | X | String | - | - | False |\n| IO-STAT1 | X | String | - | - | False |\n| IO-STAT2 | X | String | - | - | False |\n| TWO-BYTES-BINARY | 9(4) | BigDecimal | 4 | 0 | False |\n| IO-STATUS-0401 | 9 | BigDecimal | 1 | 0 | False |\n| IO-STATUS-0403 | 999 | BigDecimal | 3 | 0 | False |\n| APPL-RESULT | S9(9) | BigDecimal | 9 | 0 | True |\n| END-OF-FILE | X(01) | String | - | - | False |\n| ABCODE | S9(9) | BigDecimal | 9 | 0 | True |\n| TIMING | S9(9) | BigDecimal | 9 | 0 | True |\n| COB-YYYY | X(04) | String | - | - | False |\n| COB-MM | X(02) | String | - | - | False |\n| COB-DD | X(02) | String | - | - | False |\n| COB-HH | X(02) | String | - | - | False |\n| COB-MIN | X(02) | String | - | - | False |\n| COB-SS | X(02) | String | - | - | False |\n| COB-MIL | X(02) | String | - | - | False |\n| COB-REST | X(05) | String | - | - | False |\n| DB2-FORMAT-TS | X(26) | String | - | - | False |\n| WS-LAST-ACCT-NUM | X(11) | String | - | - | False |\n| WS-MONTHLY-INT | S9(09)V99 | BigDecimal | 11 | 2 | True |\n| WS-TOTAL-INT | S9(09)V99 | BigDecimal | 11 | 2 | True |\n| WS-FIRST-TIME | X(01) | String | - | - | False |\n| WS-RECORD-COUNT | 9(09) | BigDecimal | 9 | 0 | False |\n| WS-TRANID-SUFFIX | 9(06) | BigDecimal | 6 | 0 | False |\n| PARM-LENGTH | S9(04) | BigDecimal | 4 | 0 | True |\n| PARM-DATE | X(10) | String | - | - | False |\n| TRANCAT-ACCT-ID | 9(11) | BigDecimal | 11 | 0 | False |\n| TRANCAT-TYPE-CD | X(02) | String | - | - | False |\n| TRANCAT-CD | 9(04) | BigDecimal | 4 | 0 | False |\n| TRAN-CAT-BAL | S9(09)V99 | BigDecimal | 11 | 2 | True |\n| FILLER | X(22) | String | - | - | False |\n| XREF-CARD-NUM | X(16) | String | - | - | False |\n| XREF-CUST-ID | 9(09) | BigDecimal | 9 | 0 | False |\n| XREF-ACCT-ID | 9(11) | BigDecimal | 11 | 0 | False |\n| FILLER | X(14) | String | - | - | False |\n| DIS-ACCT-GROUP-ID | X(10) | String | - | - | False |\n| DIS-TRAN-TYPE-CD | X(02) | String | - | - | False |\n| DIS-TRAN-CAT-CD | 9(04) | BigDecimal | 4 | 0 | False |\n| DIS-INT-RATE | S9(04)V99 | BigDecimal | 6 | 2 | True |\n| FILLER | X(28) | String | - | - | False |\n| ACCT-ID | 9(11) | BigDecimal | 11 | 0 | False |\n| ACCT-ACTIVE-STATUS | X(01) | String | - | - | False |\n| ACCT-CURR-BAL | S9(10)V99 | BigDecimal | 12 | 2 | True |\n| ACCT-CREDIT-LIMIT | S9(10)V99 | BigDecimal | 12 | 2 | True |\n| ACCT-CASH-CREDIT-LIMIT | S9(10)V99 | BigDecimal | 12 | 2 | True |\n| ACCT-OPEN-DATE | X(10) | String | - | - | False |\n| ACCT-EXPIRAION-DATE | X(10) | String | - | - | False |\n| ACCT-REISSUE-DATE | X(10) | String | - | - | False |\n| ACCT-CURR-CYC-CREDIT | S9(10)V99 | BigDecimal | 12 | 2 | True |\n| ACCT-CURR-CYC-DEBIT | S9(10)V99 | BigDecimal | 12 | 2 | True |\n| ACCT-ADDR-ZIP | X(10) | String | - | - | False |\n| ACCT-GROUP-ID | X(10) | String | - | - | False |\n| FILLER | X(178) | String | - | - | False |\n| TRAN-ID | X(16) | String | - | - | False |\n| TRAN-TYPE-CD | X(02) | String | - | - | False |\n| TRAN-CAT-CD | 9(04) | BigDecimal | 4 | 0 | False |\n| TRAN-SOURCE | X(10) | String | - | - | False |\n| TRAN-DESC | X(100) | String | - | - | False |\n| TRAN-AMT | S9(09)V99 | BigDecimal | 11 | 2 | True |\n| TRAN-MERCHANT-ID | 9(09) | BigDecimal | 9 | 0 | False |\n| TRAN-MERCHANT-NAME | X(50) | String | - | - | False |\n| TRAN-MERCHANT-CITY | X(50) | String | - | - | False |\n| TRAN-MERCHANT-ZIP | X(10) | String | - | - | False |\n| TRAN-CARD-NUM | X(16) | String | - | - | False |\n| TRAN-ORIG-TS | X(26) | String | - | - | False |\n| TRAN-PROC-TS | X(26) | String | - | - | False |\n| FILLER | X(20) | String | - | - | False |\n\n*Observation for the human reviewer, not a correction:* `WS-LAST-ACCT-NUM` is mapped as `String` (`PIC X(11)`) while `TRANCAT-ACCT-ID` is `BigDecimal` (`PIC 9(11)`). The COBOL comparison `IF TRANCAT-ACCT-ID NOT= WS-LAST-ACCT-NUM` and the move between them rely on alphanumeric/numeric conversion semantics; a Java port needs a deliberate decision about how that comparison is expressed. The mapped shapes above stand as given.\n\n## Flagged for human review\n\nThese fields were deliberately not mapped by the parser (per ADR-0002, `REDEFINES` routes to a human gate rather than being parsed). No Java shape is guessed for any of them.\n\n- **`TWO-BYTES-LEFT`** — declared under `01 TWO-BYTES-ALPHA REDEFINES TWO-BYTES-BINARY`; overlays the high-order byte of a binary halfword, so its storage and Java shape depend on host byte order and cannot be derived from the `PIC X` clause alone.\n- **`TWO-BYTES-RIGHT`** — same `REDEFINES` group; used in `9910-DISPLAY-IO-STATUS` to inject a single status byte into the low-order half of `TWO-BYTES-BINARY` and read it back as a number. This byte-reinterpretation trick has no direct Java equivalent and needs a human decision.\n- **`DB2-YYYY`** — part of `01 FILLER REDEFINES DB2-FORMAT-TS`, an overlay carving the 26-byte timestamp string into positioned subfields.\n- **`DB2-MIN`** — same `REDEFINES` overlay on `DB2-FORMAT-TS`.\n- **`DB2-DOT-2`** — same `REDEFINES` overlay; a separator character position within the timestamp.\n- **`DB2-SS`** — same `REDEFINES` overlay on `DB2-FORMAT-TS`.\n- **`DB2-DOT-3`** — same `REDEFINES` overlay; a separator character position within the timestamp.\n- **`DB2-MIL`** — same `REDEFINES` overlay; note it is declared `PIC 9(002)` inside an otherwise alphanumeric overlay, which is exactly the kind of mixed-usage redefinition the ADR routes to a human.\n- **`DB2-REST`** — same `REDEFINES` overlay; the trailing four positions set to the literal `'0000'`.\n\nAll nine flagged fields belong to just two `REDEFINES` groups: the binary/character overlay used for file-status display, and the timestamp-assembly overlay used by `Z-GET-DB2-FORMAT-TIMESTAMP`. The remaining subfields of the timestamp overlay (`DB2-STREEP-1/2/3`, `DB2-MM`, `DB2-DD`, `DB2-HH`, `DB2-DOT-1`) appear in the same declaration and should be reviewed alongside these, as the whole overlay must be reimplemented as one unit — most naturally as timestamp formatting rather than as individual fields.\n\nOne further note on the source text: the `01 FILLER REDEFINES DB2-FORMAT-TS` declaration carries stray single characters (`E`, `-`, `M`, `-`, `D`, `-`, `U`) in the far-right comment columns of the timestamp subfield lines. These are annotation remnants marking the timestamp layout, not code, and they appear inside the flagged declaration snippets above.",
         "complexity": {
           "program_name": "CBACT04C",
           "prompt_chars": 74230,
@@ -1222,87 +1222,102 @@
         "fidelity_issues": [],
         "rule_confidence": [
           {
-            "rule": "Driver loop processes TCATBAL-FILE sequentially until END-OF-FILE = 'Y', incrementing WS-RECORD-COUNT and displaying TRAN-CAT-BAL-RECORD on each successful read.",
+            "rule": "Interest formula uses divisor 1200: `COMPUTE WS-MONTHLY-INT = ( TRAN-CAT-BAL * DIS-INT-RATE) / 1200`",
             "confidence": 1.0,
-            "rationale": "The main PROCEDURE DIVISION loop directly implements this: PERFORM UNTIL END-OF-FILE = 'Y' with ADD 1 TO WS-RECORD-COUNT and DISPLAY TRAN-CAT-BAL-RECORD inside the successful-read branch."
+            "rationale": "1300-COMPUTE-INTEREST contains this exact formula character-for-character, no variation."
           },
           {
-            "rule": "Account-break detection on TRANCAT-ACCT-ID NOT= WS-LAST-ACCT-NUM triggers UPDATE-ACCOUNT (unless WS-FIRST-TIME = 'Y'), resets WS-TOTAL-INT to 0, records the new account, and re-reads account and cross-reference records.",
+            "rule": "No ROUNDED phrase; WS-MONTHLY-INT (S9(09)V99) truncates the quotient to two decimal places",
             "confidence": 1.0,
-            "rationale": "The driver loop explicitly implements this four-step sequence in the IF TRANCAT-ACCT-ID NOT= WS-LAST-ACCT-NUM block, with the first-time guard on 1050-UPDATE-ACCOUNT."
+            "rationale": "The COMPUTE statement in 1300-COMPUTE-INTEREST carries no ROUNDED clause. The field definition confirms S9(09)V99."
           },
           {
-            "rule": "WS-LAST-ACCT-NUM is X(11) string initialized to SPACES, so the first record always triggers an account break despite the leading numeric key.",
+            "rule": "Interest computation, accumulation, and transaction write are skipped if DIS-INT-RATE = 0",
             "confidence": 1.0,
-            "rationale": "WS-LAST-ACCT-NUM is defined as PIC X(11) VALUE SPACES in WS-MISC-VARS. A numeric 9(11) key will never equal SPACES, guaranteeing the first break."
+            "rationale": "Main loop explicitly wraps both 1300-COMPUTE-INTEREST and 1400-COMPUTE-FEES in `IF DIS-INT-RATE NOT = 0`."
           },
           {
-            "rule": "Interest is computed and a transaction written only when DIS-INT-RATE NOT = 0.",
+            "rule": "On disclosure-group lookup status '23', retry with FD-DIS-ACCT-GROUP-ID set to literal 'DEFAULT'",
             "confidence": 1.0,
-            "rationale": "The driver loop gate is explicitly IF DIS-INT-RATE NOT = 0 PERFORM 1300-COMPUTE-INTEREST PERFORM 1400-COMPUTE-FEES END-IF; a zero rate skips both paragraphs and contributes nothing to WS-TOTAL-INT."
+            "rationale": "1200-GET-INTEREST-RATE checks status '23' and moves 'DEFAULT' to FD-DIS-ACCT-GROUP-ID, then performs 1200-A-GET-DEFAULT-INT-RATE."
           },
           {
-            "rule": "Interest formula is COMPUTE WS-MONTHLY-INT = ( TRAN-CAT-BAL * DIS-INT-RATE) / 1200, with the result truncated (not rounded) to 2 decimal places on store to S9(09)V99.",
+            "rule": "Account master update (1050-UPDATE-ACCOUNT) is performed only on account break, not on first record",
             "confidence": 1.0,
-            "rationale": "The formula in 1300-COMPUTE-INTEREST is verbatim; there is no ROUNDED clause, so COBOL semantics truncate the quotient to the target scale."
+            "rationale": "Account-break logic in main loop: `IF WS-FIRST-TIME NOT = 'Y'` wraps the update call; first record sets flag to 'N' instead."
           },
           {
-            "rule": "Posted account balance receives ADD WS-TOTAL-INT TO ACCT-CURR-BAL, and ACCT-CURR-CYC-CREDIT and ACCT-CURR-CYC-DEBIT are both set to 0 unconditionally.",
+            "rule": "WS-TOTAL-INT is zeroed after previous account's update and before new account data is read",
             "confidence": 1.0,
-            "rationale": "1050-UPDATE-ACCOUNT performs all three statements in order: ADD, then MOVE 0 to both cycle accumulators, then REWRITE."
+            "rationale": "Account-break sequence in main loop: update (if not first), then `MOVE 0 TO WS-TOTAL-INT`, then `PERFORM 1100-GET-ACCT-DATA`."
           },
           {
-            "rule": "Generated transaction record has type '01', category '05', source 'System', description 'Int. for a/c ' concatenated with ACCT-ID, amount WS-MONTHLY-INT, merchant ID 0, merchant name/city/zip as spaces, card from cross-reference, and identical timestamps.",
-            "confidence": 1.0,
-            "rationale": "1300-B-WRITE-TX explicitly sets each field: MOVE '01' to TRAN-TYPE-CD, MOVE '05' to TRAN-CAT-CD, MOVE 'System' to TRAN-SOURCE, STRING description, set merchant ID to 0, MOVE SPACES to merchant fields, copy XREF-CARD-NUM, call timestamp routine, and move same DB2-FORMAT-TS to both timestamps."
+            "rule": "When EOF is detected, the loop executes one final account update before terminating",
+            "confidence": 0.85,
+            "rationale": "The final update does occur: when 1000-TCATBALF-GET-NEXT sets END-OF-FILE = 'Y', the ELSE branch of the outer IF (not the 'next iteration') executes 1050-UPDATE-ACCOUNT. The spec's phrasing 'the next pass through the loop' is imprecise—the ELSE is taken in the same iteration, not after looping back—but the net claim (final account is updated after EOF) is correct."
           },
           {
-            "rule": "Transaction ID is built by STRING PARM-DATE (10 characters) + WS-TRANID-SUFFIX (6 digits), exactly filling TRAN-ID (X(16)), with suffix incrementing from 1 per transaction.",
+            "rule": "Generated transactions all use TRAN-TYPE-CD='01', TRAN-CAT-CD='05', TRAN-SOURCE='System'",
             "confidence": 1.0,
-            "rationale": "1300-B-WRITE-TX adds 1 to WS-TRANID-SUFFIX (initialized to 0, so first is 1), then STRINGs PARM-DATE and the suffix DELIMITED BY SIZE into TRAN-ID (10+6=16 characters)."
+            "rationale": "1300-B-WRITE-TX contains these exact moves: `MOVE '01' TO TRAN-TYPE-CD`, `MOVE '05' TO TRAN-CAT-CD`, `MOVE 'System' TO TRAN-SOURCE`."
           },
           {
-            "rule": "TRANSACT-FILE is opened OUTPUT, replacing any prior contents rather than appending.",
+            "rule": "Transaction ID is constructed by STRING-ing PARM-DATE and WS-TRANID-SUFFIX (both DELIMITED BY SIZE) into 16-byte TRAN-ID; suffix is global counter starting at 0, incremented before each write",
             "confidence": 1.0,
-            "rationale": "0400-TRANFILE-OPEN explicitly performs OPEN OUTPUT TRANSACT-FILE; OUTPUT mode truncates the file."
+            "rationale": "1300-B-WRITE-TX: `ADD 1 TO WS-TRANID-SUFFIX` then STRING PARM-DATE, WS-TRANID-SUFFIX into TRAN-ID. WS-TRANID-SUFFIX is initialized `VALUE 0` and never reset per account."
           },
           {
-            "rule": "Final account's accumulated interest is not posted to the account master file, though its interest transactions are written.",
+            "rule": "TRAN-ORIG-TS and TRAN-PROC-TS both receive the same DB2-FORMAT-TS value, captured freshly per transaction",
             "confidence": 1.0,
-            "rationale": "The loop is PERFORM UNTIL END-OF-FILE = 'Y', so when 1000-TCATBALF-GET-NEXT sets END-OF-FILE to 'Y', the next condition test exits the loop; the ELSE branch of the IF statement is never reached, and 1050-UPDATE-ACCOUNT is not performed for the final account."
+            "rationale": "1300-B-WRITE-TX calls Z-GET-DB2-FORMAT-TIMESTAMP (which reads CURRENT-DATE) then moves its result to both fields; the timestamp routine is called once per transaction write."
           },
           {
-            "rule": "All file I/O failures display an error message, call 9910-DISPLAY-IO-STATUS, and call 9999-ABEND-PROGRAM with user code 999.",
+            "rule": "TRANSACT-FILE is opened OUTPUT, so each run replaces the file rather than appending",
             "confidence": 1.0,
-            "rationale": "Every open, read, and write paragraph (and 1100, 1110, 1200, 1200-A) uses the same pattern: IF APPL-AOK CONTINUE ELSE DISPLAY message, PERFORM 9910-DISPLAY-IO-STATUS, PERFORM 9999-ABEND-PROGRAM END-IF."
+            "rationale": "0400-TRANFILE-OPEN contains `OPEN OUTPUT TRANSACT-FILE`."
           },
           {
-            "rule": "Disclosure group status '23' (record not found) is treated as non-fatal; the lookup is retried with group ID set to 'DEFAULT'.",
+            "rule": "Any file status other than '00' (plus '23' on first disclosure-group read) causes abend via CEE3ABD with code 999",
             "confidence": 1.0,
-            "rationale": "1200-GET-INTEREST-RATE sets APPL-RESULT to 0 if status is '00' OR '23', so only other statuses trigger the error branch. If status = '23', MOVE 'DEFAULT' to FD-DIS-ACCT-GROUP-ID and PERFORM 1200-A-GET-DEFAULT-INT-RATE."
+            "rationale": "All open/read/rewrite/write/close paths check status and call 9999-ABEND-PROGRAM on error; 1200-GET-INTEREST-RATE treats '00' OR '23' as acceptable, then 1200-A-GET-DEFAULT-INT-RATE enforces '00' only."
           },
           {
-            "rule": "DB2 timestamp is formatted as YYYY-MM-DD-HH.MM.SS.HH0000 (26 characters).",
+            "rule": "1400-COMPUTE-FEES is an empty stub (comment 'To be implemented' and EXIT only)",
             "confidence": 1.0,
-            "rationale": "Z-GET-DB2-FORMAT-TIMESTAMP builds DB2-FORMAT-TS via REDEFINES subfields, moving components to YYYY, MM, DD, HH, MIN, SS, MIL, and '0000' to REST, then inserting three dashes and three dots at the specified positions via DB2-STREEP-* and DB2-DOT-* assignments."
+            "rationale": "1400-COMPUTE-FEES contains only a comment and EXIT."
           },
           {
-            "rule": "1400-COMPUTE-FEES is an empty stub consisting only of a comment '* To be implemented' and EXIT.",
+            "rule": "Disclosure-group key is rebuilt from ACCT-GROUP-ID (read at account break) for every balance record",
             "confidence": 1.0,
-            "rationale": "The paragraph body in the source is exactly those two lines; it performs no actual fee calculation."
+            "rationale": "Main loop moves ACCT-GROUP-ID to FD-DIS-ACCT-GROUP-ID for every record; ACCOUNT-RECORD is refreshed only at account breaks, so all categories per account use that account's group."
           },
           {
-            "rule": "File status codes are interpreted such that status '00' always means success; status '10' (end-of-file) sets APPL-RESULT to 16 (APPL-EOF condition); other statuses set APPL-RESULT to 12.",
+            "rule": "Both ACCT-CURR-CYC-CREDIT and ACCT-CURR-CYC-DEBIT are set to 0 as part of account posting (1050-UPDATE-ACCOUNT)",
             "confidence": 1.0,
-            "rationale": "All file I/O paragraphs follow the same pattern: IF status = '00' MOVE 0, IF status = '10' MOVE 16, ELSE MOVE 12; APPL-EOF is defined as condition 88 VALUE 16."
+            "rationale": "1050-UPDATE-ACCOUNT: `MOVE 0 TO ACCT-CURR-CYC-CREDIT` and `MOVE 0 TO ACCT-CURR-CYC-DEBIT` executed unconditionally after the ADD."
           },
           {
-            "rule": "ACCOUNT-FILE is opened I-O (read/write) because the program rewrites account records, unlike the input-only files.",
+            "rule": "DB2 timestamp format is YYYY-MM-DD-HH.MM.SS.hh0000 (hyphens in date, periods in time, trailing 0000)",
             "confidence": 1.0,
-            "rationale": "0300-ACCTFILE-OPEN explicitly performs OPEN I-O ACCOUNT-FILE; 1050-UPDATE-ACCOUNT performs REWRITE, confirming the file must be opened for update."
+            "rationale": "Z-GET-DB2-FORMAT-TIMESTAMP sets the three date separators (DB2-STREEP-1/2/3) to '-', the three time separators (DB2-DOT-1/2/3) to '.', and DB2-REST to '0000'; the redefined structure confirms 26 total characters with this layout."
+          },
+          {
+            "rule": "1100-GET-ACCT-DATA random-reads on key FD-ACCT-ID (implicitly, as primary key of ACCOUNT-FILE)",
+            "confidence": 1.0,
+            "rationale": "1100-GET-ACCT-DATA has no explicit KEY clause; ACCOUNT-FILE is defined with `RECORD KEY IS FD-ACCT-ID`, so the READ uses the primary key by default."
+          },
+          {
+            "rule": "1110-GET-XREF-DATA random-reads on alternate key FD-XREF-ACCT-ID (explicitly specified with KEY IS clause)",
+            "confidence": 1.0,
+            "rationale": "1110-GET-XREF-DATA contains `READ XREF-FILE... KEY IS FD-XREF-ACCT-ID`; XREF-FILE is defined with `ALTERNATE RECORD KEY IS FD-XREF-ACCT-ID`."
+          },
+          {
+            "rule": "0200-DISCGRP-OPEN displays error message 'ERROR OPENING DALY REJECTS FILE' (noted as copy-paste artifact)",
+            "confidence": 1.0,
+            "rationale": "0200-DISCGRP-OPEN displays exactly this text, and it is indeed incorrect (should reference disclosure-group file, not rejects). The spec correctly identifies this as an artifact."
           }
         ],
-        "overall_confidence": 1.0
+        "overall_confidence": 0.85
       }
     }
   ],
@@ -1941,14 +1956,14 @@
         "job_name": "interestCalculationJob",
         "domain_entities": [
           "TranCatBal",
-          "Account",
           "CardXref",
           "DisGroup",
+          "Account",
           "Tran"
         ],
         "steps": [
           {
-            "step_name": "openInterestFiles",
+            "step_name": "openInterestCalculationFiles",
             "source_paragraphs": [
               "0000-TCATBALF-OPEN",
               "0100-XREFFILE-OPEN",
@@ -1957,7 +1972,7 @@
               "0400-TRANFILE-OPEN"
             ],
             "role": "tasklet",
-            "description": "Opens the category-balance, cross-reference, disclosure-group, account (I-O) and transaction (OUTPUT, recreated) resources, aborting the job on any status other than '00'.",
+            "description": "Opens the transaction-category balance, card cross-reference, disclosure-group, account master (I-O) and transaction output resources, abending the job on any status other than '00'.",
             "input_type": "TranCatBal",
             "output_type": "TranCatBal",
             "guard_condition": null,
@@ -1972,7 +1987,7 @@
               "1000-TCATBALF-GET-NEXT"
             ],
             "role": "reader",
-            "description": "Reads the transaction-category balance file sequentially in key order, one TranCatBal per item, ending the step on file status '10'.",
+            "description": "Sequentially reads the next transaction-category balance record in key order, signalling end of file on status '10'.",
             "input_type": "TranCatBal",
             "output_type": "TranCatBal",
             "guard_condition": null,
@@ -1988,10 +2003,10 @@
               "1110-GET-XREF-DATA"
             ],
             "role": "processor",
-            "description": "On an account break, randomly reads the Account by TRANCAT-ACCT-ID and the CardXref by the account alternate key, attaching both to the current category balance.",
+            "description": "On an account-number change, randomly reads the account master by account id and the card cross-reference by alternate account key, attaching both to the current category balance.",
             "input_type": "TranCatBal",
             "output_type": "TranCatBalWithAccount",
-            "guard_condition": "TRANCAT-ACCT-ID NOT= WS-LAST-ACCT-NUM",
+            "guard_condition": "IF TRANCAT-ACCT-ID NOT= WS-LAST-ACCT-NUM",
             "control_break": null,
             "job_parameters": [],
             "reads_own_writes": false,
@@ -2004,7 +2019,7 @@
               "1200-A-GET-DEFAULT-INT-RATE"
             ],
             "role": "processor",
-            "description": "Looks up the DisGroup rate by ACCT-GROUP-ID / TRANCAT-TYPE-CD / TRANCAT-CD, falling back to the 'DEFAULT' group when the account-specific record is not found (status '23').",
+            "description": "Looks up the disclosure-group record from the account's group id, transaction type and category code, retrying under the literal 'DEFAULT' group when the first read returns status '23'.",
             "input_type": "TranCatBalWithAccount",
             "output_type": "RatedCategoryBalance",
             "guard_condition": null,
@@ -2016,14 +2031,13 @@
           {
             "step_name": "computeMonthlyInterest",
             "source_paragraphs": [
-              "1300-COMPUTE-INTEREST",
-              "1400-COMPUTE-FEES"
+              "1300-COMPUTE-INTEREST"
             ],
             "role": "processor",
-            "description": "Computes (TRAN-CAT-BAL * DIS-INT-RATE) / 1200 truncated to scale 2 as WS-MONTHLY-INT and leaves the fee hook as an empty extension point.",
+            "description": "Computes ( TRAN-CAT-BAL * DIS-INT-RATE) / 1200 truncated to two decimals as this category's monthly interest, which is later summed per account for posting.",
             "input_type": "RatedCategoryBalance",
             "output_type": "AccruedCategoryInterest",
-            "guard_condition": "DIS-INT-RATE NOT = 0",
+            "guard_condition": "IF DIS-INT-RATE NOT = 0",
             "control_break": null,
             "job_parameters": [],
             "reads_own_writes": false,
@@ -2035,11 +2049,26 @@
               "1300-B-WRITE-TX",
               "Z-GET-DB2-FORMAT-TIMESTAMP"
             ],
-            "role": "writer",
-            "description": "Builds and writes one interest Tran per accrued category — TRAN-ID of PARM-DATE plus a run-wide 6-digit suffix, type '01', category '05', source 'System', amount WS-MONTHLY-INT, card number from the cross-reference, and one DB2-format timestamp in both TRAN-ORIG-TS and TRAN-PROC-TS.",
+            "role": "processor",
+            "description": "Builds the system-generated interest transaction — id from PARM-DATE plus the run-global suffix, type '01', category '05', source 'System', amount WS-MONTHLY-INT, card number from the cross-reference, and both timestamps from the DB2-format clock value — for writing to the transaction file.",
             "input_type": "AccruedCategoryInterest",
             "output_type": "Tran",
-            "guard_condition": null,
+            "guard_condition": "IF DIS-INT-RATE NOT = 0",
+            "control_break": null,
+            "job_parameters": [],
+            "reads_own_writes": false,
+            "optional_lookups": []
+          },
+          {
+            "step_name": "computeCategoryFees",
+            "source_paragraphs": [
+              "1400-COMPUTE-FEES"
+            ],
+            "role": "processor",
+            "description": "Explicit no-op extension point preserved from the empty COBOL fee stub, invoked once per non-zero-rate category balance and passing the item through unchanged.",
+            "input_type": "AccruedCategoryInterest",
+            "output_type": "AccruedCategoryInterest",
+            "guard_condition": "IF DIS-INT-RATE NOT = 0",
             "control_break": null,
             "job_parameters": [],
             "reads_own_writes": false,
@@ -2050,11 +2079,11 @@
             "source_paragraphs": [
               "1050-UPDATE-ACCOUNT"
             ],
-            "role": "writer",
-            "description": "Adds the account's summed WS-TOTAL-INT to ACCT-CURR-BAL, zeroes ACCT-CURR-CYC-CREDIT and ACCT-CURR-CYC-DEBIT, and rewrites the Account record once per account group.",
+            "role": "processor",
+            "description": "Control-break owner for the per-account interest total: adds the accumulated interest to ACCT-CURR-BAL, zeroes ACCT-CURR-CYC-CREDIT and ACCT-CURR-CYC-DEBIT, and yields the account for rewrite (also flushed once after end of file).",
             "input_type": "AccountInterestPosting",
             "output_type": "Account",
-            "guard_condition": "TRANCAT-ACCT-ID NOT= WS-LAST-ACCT-NUM AND WS-FIRST-TIME NOT = 'Y' AND END-OF-FILE = 'N'",
+            "guard_condition": "IF WS-FIRST-TIME NOT = 'Y'",
             "control_break": {
               "break_key_field": "TRANCAT-ACCT-ID",
               "accumulator_field": "WS-TOTAL-INT",
@@ -2069,7 +2098,7 @@
             "optional_lookups": []
           },
           {
-            "step_name": "closeInterestFiles",
+            "step_name": "closeInterestCalculationFiles",
             "source_paragraphs": [
               "9000-TCATBALF-CLOSE",
               "9100-XREFFILE-CLOSE",
@@ -2078,7 +2107,7 @@
               "9400-TRANFILE-CLOSE"
             ],
             "role": "tasklet",
-            "description": "Closes all five resources in source order, aborting the job on any close status other than '00'.",
+            "description": "Closes all five resources at end of run, abending on any close status other than '00'.",
             "input_type": "TranCatBal",
             "output_type": "TranCatBal",
             "guard_condition": null,
@@ -2096,43 +2125,43 @@
         "method": "POST",
         "path": "/api/v1/batch/interest-calculation/runs",
         "domain_entity": "TranCatBal",
-        "description": "Launches the interestCalculationJob for a supplied run date (PARM-DATE) and returns the created job execution identifier."
+        "description": "Launches the interest calculation batch job for a given run date parameter and returns the created job execution id."
       },
       {
         "method": "GET",
         "path": "/api/v1/batch/interest-calculation/runs/{executionId}",
         "domain_entity": "TranCatBal",
-        "description": "Returns the status, timings, step metrics and exit code of one interest-calculation job execution."
+        "description": "Returns the status, timings and record counts of one interest calculation job execution."
       },
       {
         "method": "GET",
         "path": "/api/v1/accounts/{acctId}",
         "domain_entity": "Account",
-        "description": "Point lookup of a single account's current balance, credit limits, cycle amounts and group ID."
+        "description": "Point query returning a single account master record, including its current balance and cycle credit/debit totals."
       },
       {
         "method": "GET",
         "path": "/api/v1/accounts/{acctId}/category-balances",
         "domain_entity": "TranCatBal",
-        "description": "Lists the transaction-category balance rows belonging to one account for inspection of batch inputs."
+        "description": "Point query returning the transaction-category balance rows currently held for one account."
       },
       {
         "method": "GET",
         "path": "/api/v1/accounts/{acctId}/card-xref",
         "domain_entity": "CardXref",
-        "description": "Point lookup of the card cross-reference (card number and customer ID) for one account."
+        "description": "Point query resolving the card cross-reference record (card and customer id) for one account."
       },
       {
         "method": "GET",
-        "path": "/api/v1/disclosure-groups/{disAcctGroupId}/{disTranTypeCd}/{disTranCatCd}",
+        "path": "/api/v1/disclosure-groups/{groupId}/{tranTypeCd}/{tranCatCd}",
         "domain_entity": "DisGroup",
-        "description": "Point lookup of the interest rate configured for a disclosure group, transaction type and transaction category."
+        "description": "Point query returning the disclosure-group interest rate for a group, transaction type and category combination."
       },
       {
         "method": "GET",
         "path": "/api/v1/transactions/{tranId}",
         "domain_entity": "Tran",
-        "description": "Point lookup of a single generated transaction record by its transaction ID."
+        "description": "Point query returning a single transaction record, including interest transactions generated by the batch run."
       }
     ],
     "composite_types": [
@@ -2190,6 +2219,10 @@
           {
             "field_name": "cardXref",
             "entity_name": "CardXref"
+          },
+          {
+            "field_name": "disclosureGroup",
+            "entity_name": "DisGroup"
           }
         ],
         "computed_fields": [
@@ -2264,10 +2297,10 @@
   "cost": {
     "model_calls": 3,
     "input_tokens": 14,
-    "output_tokens": 41931,
-    "cache_creation_input_tokens": 69826,
-    "cache_read_input_tokens": 16864,
-    "notional_cost_usd": 1.0994704000000002,
+    "output_tokens": 37219,
+    "cache_creation_input_tokens": 81945,
+    "cache_read_input_tokens": 4418,
+    "notional_cost_usd": 1.1215640000000002,
     "calls_without_reported_cost": 0
   }
 }
