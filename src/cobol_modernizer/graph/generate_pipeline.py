@@ -337,12 +337,12 @@ def render_job_wiring(
     #: `(package, class name, source)`, accumulated and written only once all of it exists.
     pending: list[tuple[str, str, str]] = []
 
-    for type_name in staged:
+    for producer in staged:
         pending.append(
             (
                 job_package,
-                staging_class_name(type_name),
-                render_staging(type_name, package=job_package, domain_package=domain_package),
+                staging_class_name(producer),
+                render_staging(producer, package=job_package, domain_package=domain_package),
             )
         )
 

@@ -112,7 +112,11 @@ def test_the_plan_renders_all_three_steps_once_the_break_key_is_reachable(design
         "postAccountInterest",
     ]
     assert skipped == []
-    assert staged == ["TranWithContext"], "the chain's intermediate needs a handoff and no file"
+    # By producing step, not by type (ADR-0073): the store belongs to the edge, and `computeInterest`
+    # is the step that fills this one.
+    assert [step.step_name for step in staged] == ["computeInterest"], (
+        "the chain's intermediate needs a handoff and no file"
+    )
 
 
 def test_the_refusal_still_says_what_is_missing_when_the_break_key_is_out_of_reach(design):
@@ -187,7 +191,7 @@ def test_the_file_lifecycle_steps_a_live_design_declares_are_not_chunk_steps(des
     assert skipped == []
     # Dropped from the chain as well as from the plan. If `previous` were still the raw preceding
     # step, `computeInterest` would read `TranCatBal` from a reader that is not being rendered.
-    assert staged == ["TranWithContext"]
+    assert [step.step_name for step in staged] == ["computeInterest"]
 
 
 def test_the_job_names_the_chunk_steps_and_not_the_lifecycle_around_them(design):
@@ -267,8 +271,8 @@ def test_the_unrendered_step_is_documented_in_the_configuration_itself(design):
 def test_the_chain_is_wired_through_the_staging_bean(design):
     """Step one writes to it, step two reads from it -- the handoff the design declares no store for."""
     rendered = render(design)
-    assert ".writer(tranWithContextStaging)" in rendered
-    assert ".reader(tranWithContextStaging)" in rendered
+    assert ".writer(computeInterestStaging)" in rendered
+    assert ".reader(computeInterestStaging)" in rendered
 
 
 def test_a_file_backed_step_takes_its_reader_and_writer_as_beans(design):
@@ -302,19 +306,29 @@ def test_the_class_name_is_mechanical(design):
 # --- the staging class ---------------------------------------------------------------------------
 
 
-def test_the_staging_class_is_both_ends_of_the_handoff():
-    rendered = render_staging("TranWithContext", package=JOB_PACKAGE, domain_package=DOMAIN)
-    assert staging_class_name("TranWithContext") == "TranWithContextStaging"
+def _produces(design, type_name: str):
+    """The step whose output the store carries -- what a staging bean is named for (ADR-0073)."""
+    return next(
+        step for step in design.batch_jobs[0].steps if step.output_type == type_name
+    )
+
+
+def test_the_staging_class_is_both_ends_of_the_handoff(design):
+    producer = _produces(design, "TranWithContext")
+    rendered = render_staging(producer, package=JOB_PACKAGE, domain_package=DOMAIN)
+    assert staging_class_name(producer) == "ComputeInterestStaging"
     assert "implements ItemWriter<com.modernized.batch.domain.TranWithContext>" in rendered
     assert "ItemReader<com.modernized.batch.domain.TranWithContext>" in rendered
 
 
-def test_the_staging_class_states_its_own_limitation():
+def test_the_staging_class_states_its_own_limitation(design):
     """ADR-0032's cost, written where it applies rather than only in the ADR.
 
     A generated class that is not restartable and does not say so is how a known compromise becomes
     an unknown one.
     """
-    rendered = render_staging("TranWithContext", package=JOB_PACKAGE, domain_package=DOMAIN)
+    rendered = render_staging(
+        _produces(design, "TranWithContext"), package=JOB_PACKAGE, domain_package=DOMAIN
+    )
     assert "not restartable" in rendered
     assert "staging table" in rendered

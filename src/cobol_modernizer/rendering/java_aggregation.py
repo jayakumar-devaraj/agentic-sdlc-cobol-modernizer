@@ -209,7 +209,7 @@ def render_aggregating_reader(
     )
 
     constructed = ",\n".join(arguments)
-    staging = staging_class_name(source_type)
+    staging = staging_class_name(source_step)
     qualified_source = f"{domain_package}.{source_type}"
     qualified_output = f"{domain_package}.{step.input_type}"
 

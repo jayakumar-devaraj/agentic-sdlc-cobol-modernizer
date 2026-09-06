@@ -778,11 +778,15 @@ def test_the_same_design_reordered_is_accepted(all_program_entries):
 
 
 def test_the_move_the_refusal_names_is_the_one_that_renders(all_program_entries):
-    """The instruction is checked against `generate`, not only against the refusal that emitted it.
+    """The move the message names leaves `plan_steps` with nothing to skip.
 
-    A message naming a move that does not actually wire the job would read as correct and cost a
-    run. `plan_steps` is the same oracle the refusal consults, so this asserts the loop closes:
-    every chunk step planned, and nothing left named in `STEP_NAMES` without a bean.
+    **This is necessary and not sufficient, and the gap is recorded rather than implied.** As first
+    written this test was the whole check on the instruction, and it passed while the design it
+    names did not compile: `plan_steps` is the oracle the refusal consults, so asking it whether the
+    move works is asking the refusal to mark its own paper. The staging collision behind that
+    (ADR-0073) is invisible from here. `test_the_named_move_compiles` in
+    `tests/integration/test_a_live_design_wires.py` renders and builds the moved design, which is
+    what actually holds ADR-0072's claim up.
     """
     design, job = _live_job_as_validated()
     moved = _moved_before(job, "computeCategoryFees", "writeInterestTransaction")

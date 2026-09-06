@@ -3,7 +3,7 @@
 **The gap this closes.** Verification 16 proved `generate` wires a project that builds and runs, and
 every number in it was measured against the hand-written round trip's three-step design --
 `computeInterest`, `TranCatBalWithRate`, the composite this repository's own fixtures declare. No
-design a live `solution_architect` produced had ever reached `render_job_wiring`. Six defects were
+design a live `solution_architect` produced had ever reached `render_job_wiring`. Eight defects were
 sitting behind that, and every one was found by pointing this pipeline at a real design:
 
 1. `aggregation_source` could not see a value carried as a `computed_fields` entry, so a control
@@ -20,6 +20,11 @@ sitting behind that, and every one was found by pointing this pipeline at a real
    else, so the job was wired to classes that would never exist (ADR-0070 refuses this now).
 6. `STEP_NAMES` went on naming every declared step after `plan_steps` stopped planning some of them,
    so the rendered job required beans for steps nothing rendered and threw at startup (ADR-0071).
+7. The design ordered a passthrough step after the step that changes its item's type, so nothing in
+   the chain supplied its input and the job could not start (ADR-0072 refuses this at design time).
+8. Rendering the design ADR-0072 asks for exposed the next one: staging stores were keyed by the
+   type they carry, so a passthrough -- one type on two consecutive edges -- collapsed both into one
+   bean, and the step declared it twice (ADR-0073).
 
 None of them is reachable from the fixture design, because it declares no computed field, no
 tasklet, no reader step, and no step taking a plain entity. **A fixture the repository wrote cannot
@@ -52,16 +57,24 @@ would test nothing.
 That distinction is why `test_the_rendered_project_compiles` is not the last word here: compilation
 is necessary and not sufficient, and a green build gave exactly that false comfort once already.
 
+**Both designs are rendered here, and the second is the point.** `generated` renders the design as
+the model wrote it; `generated_from_the_named_move` renders the one ADR-0072's refusal tells it to
+write. A refusal that names a move nobody rendered is a refusal that can be wrong for a whole
+release -- and this one was, until the move was rendered and defect 8 fell out of it. Two Maven
+builds is what that costs.
+
 Costs a Maven build. See `docs/development-environment.md` for `JAVA_HOME`.
 """
 
 from __future__ import annotations
 
 import json
+import re
 from pathlib import Path
 
 import pytest
 
+from cobol_modernizer.core.contracts import DesignDocument
 from cobol_modernizer.graph.generate_pipeline import run_generate
 from cobol_modernizer.tools.local_compiler import compile_project
 from tests.support.interest_design import FIXTURE_ROOT
@@ -224,8 +237,9 @@ def test_no_file_reader_is_rendered_for_an_item_carrying_a_computed_value(genera
     _outcome, project, _build = generated
     readers = project / "src" / "main" / "java" / "com" / "modernized" / "batch" / "reader"
     assert not (readers / "WriteInterestTransactionItemReader.java").exists()
+    # Named for the step that fills the store, not for the type it carries (ADR-0073).
     assert (project / "src" / "main" / "java" / "com" / "modernized" / "batch" / "job"
-            / "AccruedCategoryInterestStaging.java").exists()
+            / "ComputeMonthlyInterestStaging.java").exists()
 
 
 def test_the_rendered_project_compiles(generated):
@@ -241,3 +255,111 @@ def test_the_rendered_project_compiles(generated):
         f"the rendered project did not compile: exit {build.exit_code}; "
         + "; ".join(str(d) for d in build.diagnostics)
     )
+
+
+# --- the move ADR-0072's refusal names, rendered ------------------------------------------------
+
+
+@pytest.fixture(scope="module")
+def generated_from_the_named_move(tmp_path_factory):
+    """The same design with `computeCategoryFees` moved ahead of `writeInterestTransaction`.
+
+    **The instruction, rendered.** `solution_architect` refuses the pinned design and tells the model
+    to make exactly this move (ADR-0072). Checking that instruction against `plan_steps` -- the
+    oracle that emitted it -- said the job wired. It did not compile: the moved step is a
+    passthrough, so one type sat on two consecutive edges and the per-type staging bean was declared
+    twice (ADR-0073). A refusal is only as good as the design it asks for, so that design is built
+    here rather than reasoned about.
+
+    Constructed rather than pinned, because it is not a design any model produced -- it is what this
+    repository's own refusal demands, and it must be re-derived from the pinned design so the two
+    cannot drift apart.
+    """
+    document = DesignDocument.model_validate_json(LIVE_DESIGN.read_text(encoding="utf-8"))
+    job = document.unified_design.batch_jobs[0]
+    others = [step for step in job.steps if step.step_name != UNWIRABLE_STEP]
+    moved_step = next(step for step in job.steps if step.step_name == UNWIRABLE_STEP)
+    at = [step.step_name for step in others].index("writeInterestTransaction")
+    moved = document.model_copy(
+        update={
+            "unified_design": document.unified_design.model_copy(
+                update={
+                    "batch_jobs": [
+                        job.model_copy(
+                            update={"steps": others[:at] + [moved_step] + others[at:]}
+                        )
+                    ]
+                }
+            )
+        }
+    )
+
+    root = tmp_path_factory.mktemp("named-move")
+    design_path = root / "design.json"
+    design_path.write_text(moved.model_dump_json(indent=2), encoding="utf-8")
+    project = root / "target-project"
+
+    outcome = run_generate(
+        design_path,
+        FIXTURE_ROOT,
+        project,
+        author=_null_author,
+        advise=lambda routing, s, u: json.dumps(
+            {"repairable": False, "reason": "scripted", "instruction": ""}
+        ),
+    )
+    build = compile_project(project, goal="compile")
+    return outcome, project, build
+
+
+def test_the_named_move_leaves_no_step_unplanned(generated_from_the_named_move):
+    """Every chunk step planned, including the one the pinned design strands."""
+    outcome, _project, _build = generated_from_the_named_move
+    assert outcome.wiring.status == "rendered", outcome.wiring.reason
+    assert [step.step_name for step in outcome.wiring.skipped_steps] == []
+
+
+def test_the_named_move_compiles(generated_from_the_named_move):
+    """ADR-0073's regression, and the reason this fixture exists.
+
+    Before the staging store was keyed by its producing step, this build failed with
+    `variable accruedCategoryInterestStaging is already defined in method computeCategoryFeesStep`.
+    """
+    _outcome, _project, build = generated_from_the_named_move
+    assert build.succeeded, (
+        f"the design ADR-0072 asks for did not compile: exit {build.exit_code}; "
+        + "; ".join(str(d) for d in build.diagnostics)
+    )
+
+
+def test_the_named_move_gives_every_named_step_a_bean(generated_from_the_named_move):
+    """The claim ADR-0072 rests on: this job can start.
+
+    Asserted against the rendered Java rather than the plan, because a plan that says every step is
+    renderable is what said so while the project did not compile. `STEP_NAMES` and the `@Bean Step`
+    methods are the two halves a Spring bean lookup compares at startup.
+    """
+    _outcome, project, _build = generated_from_the_named_move
+    configuration = next(project.rglob("InterestCalculationJobConfiguration.java"))
+    source = configuration.read_text(encoding="utf-8")
+
+    declared = re.findall(r'"([A-Za-z][A-Za-z0-9]*)"', source.split("STEP_NAMES")[1].split(";")[0])
+    beans = set(re.findall(r"Step\s+([A-Za-z][A-Za-z0-9]*)Step\s*\(", source))
+
+    assert declared == CHUNK_STEPS[:3] + [UNWIRABLE_STEP] + CHUNK_STEPS[3:]
+    assert [name for name in declared if name not in beans] == []
+
+
+def test_the_passthrough_gets_a_store_of_its_own(generated_from_the_named_move):
+    """ADR-0073 stated as the thing it produces: two edges of one type, two stores.
+
+    Keyed by type there would be one `AccruedCategoryInterestStaging` and the collision that did not
+    compile; keyed by producer there is one store per filling step and no name is reused.
+    """
+    _outcome, project, _build = generated_from_the_named_move
+    job_dir = project / "src" / "main" / "java" / "com" / "modernized" / "batch" / "job"
+    stores = sorted(path.name for path in job_dir.glob("*Staging.java"))
+
+    assert "ComputeMonthlyInterestStaging.java" in stores
+    assert "ComputeCategoryFeesStaging.java" in stores
+    assert not (job_dir / "AccruedCategoryInterestStaging.java").exists()
