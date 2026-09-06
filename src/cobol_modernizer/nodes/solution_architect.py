@@ -97,6 +97,13 @@ logger = logging.getLogger(__name__)
 
 _NODE_NAME = "solution_architect"
 
+#: v1_4_0 states that a step changing its item's type is a processor (ADR-0070). A live design typed
+#: `writeInterestTransaction` and `postAccountInterest` as `"writer"`, which is a fair reading of
+#: paragraphs whose visible purpose is a `WRITE` and a `REWRITE` -- and `generate` renders a body for
+#: a processor and nothing else, so the wiring injected two processor classes the pipeline would
+#: never produce and the project did not compile. Two halves again: stated here, refused by
+#: `_refuse_a_transform_that_is_not_a_processor`.
+#:
 #: v1_3_0 states that an accumulator belongs to its group, not to the row that feeds it
 #: (ADR-0063). v1_2_0's rule -- a step must be able to return what it computes -- is correct for
 #: a per-row value and *required* a defect for a group-scoped one: `WS-TOTAL-INT` escapes the
@@ -117,7 +124,7 @@ _NODE_NAME = "solution_architect"
 #: COBOL-style `1300-COMPUTE-INTEREST` was following the prompt it was given, and failing at
 #: `generate` time an approval later. Enforcing the rule without stating it would have been the
 #: worse half of the fix on its own.
-PROMPT_VERSION = "v1_3_0"
+PROMPT_VERSION = "v1_4_0"
 
 #: Rank for picking the highest tier across a run's programs. `ComplexityTier` is a `str` Enum, so
 #: it sorts alphabetically by default -- which would put "complex" below "moderate" and silently
@@ -1076,11 +1083,49 @@ def _parse_unified_design_response(
             )
         )
 
+    _refuse_a_transform_that_is_not_a_processor(batch_jobs)
     _refuse_undeliverable_computed_values(
         batch_jobs, composite_types, domain_entities, computed_values or [], accumulator_paragraphs
     )
 
     return batch_jobs, rest_endpoints, composite_types
+
+
+def _refuse_a_transform_that_is_not_a_processor(batch_jobs: list[BatchJobDesign]) -> None:
+    """Refuse a step that changes its item's type and is not a processor (ADR-0070).
+
+    **Only the processor transforms**, and this repository has said so twice already without ever
+    checking it: `unobtainable_inputs` narrows to processors because *"a reader's and a writer's
+    outputs are bound by `READ ... INTO` and `WRITE ... FROM`, and a tasklet has no item at all"*,
+    and `interest_design`'s own fixture types `1300-B-WRITE-TX` a processor with a paragraph of
+    commentary explaining that typing it a writer would leave its field population ungenerated.
+
+    So the rule is decidable from the design alone: **different input and output types mean
+    something transformed the item.** A live design typed `writeInterestTransaction` and
+    `postAccountInterest` as `"writer"` -- a fair reading of paragraphs whose visible purpose is a
+    `WRITE` and a `REWRITE` -- and `generate` renders a body for a processor and nothing else, so
+    the wiring injected two classes the pipeline would never produce and the project did not
+    compile. That is a compile error a human would have met *after* approving the design.
+
+    Reached through `parse_with_repair`, so the message names the fix rather than only the fault:
+    a model told a role is wrong and not told which is right will pick the remaining wrong one.
+    """
+    for job in batch_jobs:
+        for step in job.steps:
+            if step.role == "processor" or step.input_type == step.output_type:
+                continue
+            raise SolutionArchitectParseError(
+                f"solution_architect step {step.step_name!r} is typed {step.role!r} and turns a "
+                f"{step.input_type!r} into a {step.output_type!r}. Only a processor transforms an "
+                f"item: a reader's output is what it read (READ ... INTO), a writer writes what it "
+                f"was given (WRITE ... FROM), and a tasklet has no item at all. A body is generated "
+                f"for a processor and for nothing else, so this step's logic would be left "
+                f"ungenerated and the job would be wired to a class that does not exist. "
+                f"Paragraph(s) {', '.join(step.source_paragraphs)} are that logic -- populating a "
+                f"record before a WRITE, or updating one before a REWRITE, is a per-item transform "
+                f"and the WRITE itself is wiring. Type this step 'processor'. Use 'reader', "
+                f"'writer' or 'tasklet' only where input_type and output_type are the same."
+            )
 
 
 def _refuse_undeliverable_computed_values(
