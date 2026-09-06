@@ -22,6 +22,7 @@ from cobol_modernizer.core.contracts import (
     BatchJobDesign,
     CompositeComponent,
     CompositeType,
+    ComputedComponent,
     LookupKeyPart,
     ProgramDesignEntry,
     UnifiedDesign,
@@ -145,6 +146,32 @@ def test_the_provenance_names_the_declarations_it_came_from(design):
 
 
 # --- the refusals ------------------------------------------------------------------------------------
+
+
+def test_an_item_carrying_a_computed_value_is_refused(design):
+    """No file holds a working-storage value, so no file reader can produce this item.
+
+    This was silent, which is what makes it worth a test rather than a note. The constructor is
+    built from `components` alone, so a composite of three records and one computed field came out
+    as a three-argument call to a four-component record -- uncompilable Java, emitted with no
+    diagnostic, by a module whose whole premise is that it refuses what it cannot derive.
+    """
+    carrying = COMPOSITE.model_copy(
+        update={
+            "computed_fields": [
+                ComputedComponent(field_name="monthlyInterest", cobol_field_name="WS-MONTHLY-INT")
+            ]
+        }
+    )
+    widened = design.model_copy(
+        update={
+            "composite_types": [
+                carrying if c.name == COMPOSITE.name else c for c in design.composite_types
+            ]
+        }
+    )
+    with pytest.raises(UnrenderableReaderError, match="WS-MONTHLY-INT"):
+        render(widened)
 
 
 def test_a_component_with_no_access_path_is_refused(design):

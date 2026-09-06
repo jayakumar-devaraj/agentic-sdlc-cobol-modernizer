@@ -87,7 +87,18 @@ def staging_class_name(type_name: str) -> str:
 
 
 def _has_file_source(step: BatchStepDesign, design: UnifiedDesign, program_name: str) -> bool:
-    """Whether every entity the step's input carries can be read from a declared file."""
+    """Whether the step's input can be read from declared files.
+
+    Every entity it carries needs an access path -- and **it must carry nothing but entities.** A
+    `computed_fields` entry is a working-storage value some step computes (ADR-0062), and no file
+    holds one, so an item type declaring any is obtainable only from the step that computes it. Left
+    unasked, this reported `AccruedCategoryInterest` as file-readable and `render_item_reader`
+    rendered a constructor missing that argument.
+    """
+    composite = next((c for c in design.composite_types if c.name == step.input_type), None)
+    if composite is not None and composite.computed_fields:
+        return False
+
     try:
         from cobol_modernizer.rendering.java_reader import _component_entities
 

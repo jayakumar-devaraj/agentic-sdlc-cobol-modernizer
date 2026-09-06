@@ -343,6 +343,22 @@ def render_item_reader(
     class_name = reader_class_name(step)
     require_java_identifier(class_name, source_name=step.step_name, kind="Reader class name")
 
+    carried = next((c for c in design.composite_types if c.name == step.input_type), None)
+    if carried is not None and carried.computed_fields:
+        # **A computed value is in no file, so no file reader can produce this item** (ADR-0062).
+        # Refused rather than rendered, because rendering it was silent: this function builds the
+        # constructor from `components` alone, so `AccruedCategoryInterest` -- three records and one
+        # computed field -- came out as a three-argument call to a four-component record. That is
+        # uncompilable Java produced without a diagnostic, which is the failure mode this module's
+        # docstring exists to rule out. `_has_file_source` answers `False` for the same reason, so
+        # nothing in the pipeline should reach this; it is here so a new caller cannot.
+        raise UnrenderableReaderError(
+            f"step {step.step_name!r} reads {step.input_type!r}, which carries computed "
+            f"{sorted(c.cobol_field_name for c in carried.computed_fields)} -- working-storage "
+            "values a step computes and no file holds. Its input comes from the step that computes "
+            "them, not from a reader"
+        )
+
     components = _component_entities(step, design)
     paths = {entity: _paths_for(design, program_name, entity) for _field, entity in components}
 
