@@ -144,14 +144,6 @@ def render_aggregating_reader(
             "composite; an aggregation produces one item per group and needs to know its shape"
         )
 
-    #: The column the total replaces, when the summed value travels inside a record. `None` when
-    #: the stream carries the value itself, where there is no column to replace.
-    landing_field_java = (
-        next(f.java_field_name for f in landing_entity.fields if f.cobol_field_name == summed_field)
-        if landing_entity is not None
-        else None
-    )
-
     arguments: list[str] = []
     for component in output.components:
         try:
@@ -160,8 +152,17 @@ def render_aggregating_reader(
             raise UnrenderableAggregationError(str(exc)) from exc
 
         if landing_entity is not None and component.entity_name == landing_entity.name:
+            # The column the total replaces. Resolved here rather than above because it exists only
+            # where the summed value travels inside a record: a stream carrying the value itself has
+            # no column to replace, and `landing_entity` is `None` in exactly that case.
+            landing_field_java = next(
+                f.java_field_name
+                for f in landing_entity.fields
+                if f.cobol_field_name == summed_field
+            )
             arguments.append(
-                f"{_INDENT * 3}{_carrier(landing_entity, landing_field_java, domain_package, landing_component)}"
+                f"{_INDENT * 3}"
+                f"{_carrier(landing_entity, landing_field_java, domain_package, landing_component)}"
             )
             continue
         source_composite = _composite(design, source_type)
