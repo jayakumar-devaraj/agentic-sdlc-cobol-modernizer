@@ -3,7 +3,7 @@
 **The gap this closes.** Verification 16 proved `generate` wires a project that builds and runs, and
 every number in it was measured against the hand-written round trip's three-step design --
 `computeInterest`, `TranCatBalWithRate`, the composite this repository's own fixtures declare. No
-design a live `solution_architect` produced had ever reached `render_job_wiring`. Eight defects were
+design a live `solution_architect` produced had ever reached `render_job_wiring`. Nine defects were
 sitting behind that, and every one was found by pointing this pipeline at a real design:
 
 1. `aggregation_source` could not see a value carried as a `computed_fields` entry, so a control
@@ -25,6 +25,12 @@ sitting behind that, and every one was found by pointing this pipeline at a real
 8. Rendering the design ADR-0072 asks for exposed the next one: staging stores were keyed by the
    type they carry, so a passthrough -- one type on two consecutive edges -- collapsed both into one
    bean, and the step declared it twice (ADR-0073).
+9. A mid-chain step was given a file reader whenever its input type happened to be assemblable from
+   declared files, so it re-derived what the step before it had produced and that step's store went
+   unread. Invisible until a passthrough made two steps claim one reader bean and the wiring was
+   refused as ambiguous (ADR-0074). **Found by a live run**, not by pre-flighting one -- and its
+   fixture is `cbact04c-design-step56.json`, exercised in `tests/unit/test_java_job.py`, because
+   this module's own pinned design strands the passthrough before the question can arise.
 
 None of them is reachable from the fixture design, because it declares no computed field, no
 tasklet, no reader step, and no step taking a plain entity. **A fixture the repository wrote cannot

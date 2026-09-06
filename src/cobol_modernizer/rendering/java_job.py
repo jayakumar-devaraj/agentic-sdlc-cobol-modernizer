@@ -418,10 +418,11 @@ public class {class_name} implements ItemWriter<{qualified}>, ItemReader<{qualif
 def _produces_the_input_of(
     step: BatchStepDesign, job: BatchJobDesign | None
 ) -> BatchStepDesign | None:
-    """The chunk step immediately before `step`, whose store carries what `step` reads.
+    """The chunk step immediately before `step` whose output *is* what `step` reads.
 
-    `None` when there is no job to ask or `step` is the first chunk step in it -- either way there
-    is no store to read from, and the caller says so rather than naming one that does not exist.
+    `None` when there is no job to ask, when `step` is the first chunk step in it, or when the step
+    before it produces something else -- either way there is no store to read from, and the caller
+    says so rather than naming one that does not exist.
     """
     if job is None:
         return None
@@ -431,7 +432,41 @@ def _produces_the_input_of(
     )
     if index is None or index == 0:
         return None
-    return items[index - 1]
+    previous = items[index - 1]
+    return previous if previous.output_type == step.input_type else None
+
+
+def reads_a_file(
+    step: BatchStepDesign,
+    design: UnifiedDesign,
+    program_name: str,
+    job: BatchJobDesign | None = None,
+) -> bool:
+    """Whether this step's reader is a **file** reader rather than an in-memory one (ADR-0074).
+
+    The one question three modules were asking separately: `_step_bean` here, `render_file_bindings`
+    for the paths, and `generate_pipeline` for which reader class to render. All three spelled it
+    `aggregation_source(...) is None and _has_file_source(...)`, all three agreed, and all three were
+    wrong in the same way -- which is why this is one function now rather than three edits
+    (ADR-0071).
+
+    **The chain outranks the file.** `_has_file_source` answers whether an item *could* be assembled
+    from declared files, and for a composite of plain entities the answer is almost always yes. Asked
+    of a step mid-chain it is the wrong question: `resolveInterestRate` consumes what
+    `resolveAccountAndXref` produced, and a file reader handed the same input type would redo that
+    step's keyed lookups instead of reading its output -- including, in `CBACT04C`, the
+    disclosure-group read and its `'DEFAULT'` fallback on status `'23'`. The store the producing step
+    fills was rendered and never read.
+
+    It surfaced as an ambiguity rather than as wrong numbers. A live design put a passthrough on
+    `RatedCategoryBalance`, so two steps claimed one `ItemReader<RatedCategoryBalance>` and
+    `render_file_bindings` refused the job -- correctly, and for the shallower of the two reasons.
+    """
+    if job is not None and aggregation_source(job, step, design) is not None:
+        return False
+    if _produces_the_input_of(step, job) is not None:
+        return False
+    return _has_file_source(step, design, program_name)
 
 
 def _step_bean(
@@ -470,22 +505,24 @@ def _step_bean(
             f"new {reader_package}.{aggregating_reader_class_name(step)}"
             f"({_bean_name(staging)})"
         )
+    elif (producer := _produces_the_input_of(step, job)) is not None:
+        # **The store belongs to the step that filled it** (ADR-0073), which is the chunk step
+        # before this one -- resolved through `is_chunk_step`, the same predicate `plan_steps`
+        # walks the chain with, so the two cannot disagree about which step that is.
+        #
+        # **Asked before the file** (ADR-0074): mid-chain, a file reader would rebuild this item
+        # from records and redo the step that already produced it.
+        staging = staging_class_name(producer)
+        reader_parameter = f"{staging} {_bean_name(staging)}"
+        reader_expression = _bean_name(staging)
     elif _has_file_source(step, design, program_name):
         reader_parameter = f"ItemReader<{input_type}> reader"
         reader_expression = "reader"
     else:
-        # **The store belongs to the step that filled it** (ADR-0073), which is the chunk step
-        # before this one -- resolved through `is_chunk_step`, the same predicate `plan_steps`
-        # walks the chain with, so the two cannot disagree about which step that is.
-        producer = _produces_the_input_of(step, job)
-        if producer is None:
-            raise UnrenderableJobError(
-                f"step {step.step_name!r} takes its input from the step before it, and this job "
-                "names no chunk step before it -- `plan_steps` should not have planned it"
-            )
-        staging = staging_class_name(producer)
-        reader_parameter = f"{staging} {_bean_name(staging)}"
-        reader_expression = _bean_name(staging)
+        raise UnrenderableJobError(
+            f"step {step.step_name!r} takes its input from neither a declared file nor the step "
+            "before it -- `plan_steps` should not have planned it"
+        )
 
     if _has_file_sink(step, design, program_name):
         writer_parameter = f"ItemWriter<{output_type}> writer"

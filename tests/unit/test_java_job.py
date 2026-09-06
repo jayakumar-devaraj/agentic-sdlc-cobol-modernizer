@@ -13,12 +13,14 @@ silently does not run.
 
 from __future__ import annotations
 
+import re
 from pathlib import Path
 
 import pytest
 
 from cobol_modernizer.core.contracts import (
     BatchJobDesign,
+    DesignDocument,
     ProgramDesignEntry,
     UnifiedDesign,
 )
@@ -29,11 +31,14 @@ from cobol_modernizer.nodes.solution_architect import (
 )
 from cobol_modernizer.nodes.spec_critic import critique_spec
 from cobol_modernizer.nodes.spec_extractor import extract_spec
+from cobol_modernizer.rendering.java_file_bindings import render_file_bindings
 from cobol_modernizer.rendering.java_job import (
     DEFAULT_CHUNK_SIZE,
     UnrenderableJobError,
+    _has_file_source,
     configuration_class_name,
     plan_steps,
+    reads_a_file,
     render_job_configuration,
     render_staging,
     staging_class_name,
@@ -332,3 +337,115 @@ def test_the_staging_class_states_its_own_limitation(design):
     )
     assert "not restartable" in rendered
     assert "staging table" in rendered
+
+
+# --- ADR-0074: a mid-chain step reads its predecessor, not a file --------------------------------
+#
+# Nothing in this module caught the precedence flip when it was made. These exist because a change
+# that reroutes every mid-chain reader in every generated job was invisible to 906 tests.
+
+STEP56_DESIGN = (
+    Path(__file__).parent.parent / "fixtures" / "live_designs" / "cbact04c-design-step56.json"
+)
+
+
+def _step56_job():
+    """`CBACT04C` as the architect designed it under prompt `v1_5_0`, first attempt, no repair.
+
+    Pinned for ADR-0069's reason and one more: this is the design that *obeys* ADR-0072 and was then
+    refused by the renderer, so it is the only fixture that reaches ADR-0074's defect. The `step55`
+    fixture beside it cannot: it strands the passthrough before the question arises.
+    """
+    document = DesignDocument.model_validate_json(STEP56_DESIGN.read_text(encoding="utf-8"))
+    return document.unified_design, document.unified_design.batch_jobs[0]
+
+
+def _readers(job, design):
+    """`{step name: the reader parameter its bean declares}` for every rendered step."""
+    source = render_job_configuration(
+        job, design, "CBACT04C",
+        package="j", domain_package="dom", processor_package="p", reader_package="r",
+    )
+    found = {}
+    for match in re.finditer(r"Step (\w+)Step\(([^)]*)\)", source):
+        params = [p.strip() for p in " ".join(match.group(2).split()).split(",")]
+        # The two infrastructure parameters come first and are the same on every bean.
+        found[match.group(1)] = params[2]
+    return found
+
+
+def test_the_live_design_that_obeys_the_ordering_rule_wires(design):
+    """The regression: this exact design was refused by `render_file_bindings` as ambiguous.
+
+    `computeCategoryFees` and `computeMonthlyInterest` both consume a `RatedCategoryBalance`, and
+    while both were given file readers the context had two `ItemReader<RatedCategoryBalance>` beans
+    and could not resolve either.
+    """
+    step56_design, job = _step56_job()
+    renderable, skipped, _staged = plan_steps(job, step56_design, "CBACT04C")
+
+    assert skipped == []
+    assert [step.step_name for step in renderable] == [
+        "resolveAccountAndXref",
+        "resolveInterestRate",
+        "computeCategoryFees",
+        "computeMonthlyInterest",
+        "writeInterestTransaction",
+        "postAccountInterest",
+    ]
+    # The refusal this reproduces lives in `java_file_bindings`, so the bindings are what must render.
+    render_file_bindings(
+        job, step56_design, "CBACT04C",
+        package="j", domain_package="dom", reader_package="r", writer_package="w",
+    )
+
+
+def test_only_the_head_of_the_chain_reads_a_file(design):
+    """One file reader per job, at the driving stream, and stores everywhere after it.
+
+    Asserted as the whole mapping rather than as a property of one step. A test naming only
+    `computeCategoryFees` would pass again the moment some other mid-chain step was handed a file
+    reader, which is the defect this records.
+    """
+    step56_design, job = _step56_job()
+    readers = _readers(job, step56_design)
+
+    assert readers == {
+        "resolveAccountAndXref": "ItemReader<dom.TranCatBal> reader",
+        "resolveInterestRate": "ResolveAccountAndXrefStaging resolveAccountAndXrefStaging",
+        "computeCategoryFees": "ResolveInterestRateStaging resolveInterestRateStaging",
+        "computeMonthlyInterest": "ComputeCategoryFeesStaging computeCategoryFeesStaging",
+        "writeInterestTransaction": "ComputeMonthlyInterestStaging computeMonthlyInterestStaging",
+        "postAccountInterest": "ComputeMonthlyInterestStaging computeMonthlyInterestStaging",
+    }
+
+
+def test_every_store_a_step_fills_is_read_by_the_step_after_it(design):
+    """The point of the change, stated as a property rather than as a list of names.
+
+    Before it, the first step's store was written and read by nobody while the second step rebuilt
+    the same item from files -- a silent duplication of exactly the lookup the first step performs.
+    """
+    step56_design, job = _step56_job()
+    _renderable, _skipped, staged = plan_steps(job, step56_design, "CBACT04C")
+    readers = _readers(job, step56_design)
+
+    filled = {staging_class_name(step) for step in staged}
+    read = {parameter.split()[0] for parameter in readers.values() if "ItemReader<" not in parameter}
+    assert filled <= read, f"stores nothing reads: {sorted(filled - read)}"
+
+
+def test_a_file_readable_input_is_still_read_from_a_file_at_the_head(design):
+    """The other half. A rule that never chose a file would leave the job with no driving stream.
+
+    `resolveAccountAndXref` consumes a `TranCatBal`, which is as file-assemblable as the composites
+    behind it -- what makes it the file reader is that no chunk step precedes it.
+    """
+    step56_design, job = _step56_job()
+    head = next(step for step in job.steps if step.step_name == "resolveAccountAndXref")
+    second = next(step for step in job.steps if step.step_name == "resolveInterestRate")
+
+    assert reads_a_file(head, step56_design, "CBACT04C", job)
+    assert not reads_a_file(second, step56_design, "CBACT04C", job)
+    # And the reason is the chain, not the file: its input is still assemblable from one.
+    assert _has_file_source(second, step56_design, "CBACT04C")
