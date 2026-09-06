@@ -320,6 +320,49 @@ def test_design_solution_rejects_an_unknown_step_role(all_program_entries):
         design_solution(FIXTURE_ROOT, all_program_entries, architect=bad_architect)
 
 
+def _typed(all_program_entries, role: str):
+    """The valid response with its one step turned into a transform carrying `role`."""
+
+    def architect(model, system_prompt, user_content):
+        entities = build_domain_entities(FIXTURE_ROOT, all_program_entries)
+        response = json.loads(_fake_architect_response(entities, all_program_entries))
+        for job in response["batch_jobs"]:
+            job["domain_entities"] = [entity.name for entity in entities]
+            job["steps"][0]["role"] = role
+            job["steps"][0]["output_type"] = entities[1].name
+        return json.dumps(response)
+
+    return architect
+
+
+def test_design_solution_rejects_a_transform_that_is_not_a_processor(all_program_entries):
+    """ADR-0070. A live design typed two type-changing steps `writer`, and the project did not
+    compile: `generate` renders a body for a processor and nothing else, so the wiring injected two
+    classes the pipeline would never produce -- after a human had approved the design.
+
+    The message has to name the role to use. A model told only that `writer` is wrong has three
+    options left and two of them are also wrong.
+    """
+    with pytest.raises(SolutionArchitectParseError, match="Only a processor transforms an item"):
+        design_solution(
+            FIXTURE_ROOT, all_program_entries, architect=_typed(all_program_entries, "writer")
+        )
+
+
+def test_the_same_step_typed_processor_is_accepted(all_program_entries):
+    """The other half, so this is the role being checked rather than the type change.
+
+    Without it the refusal above would keep passing if the rule had become "a step may not change
+    its item's type", which would refuse every processor in every design.
+    """
+    design = design_solution(
+        FIXTURE_ROOT, all_program_entries, architect=_typed(all_program_entries, "processor")
+    )
+    step = design.batch_jobs[0].steps[0]
+    assert step.role == "processor"
+    assert step.input_type != step.output_type
+
+
 def test_design_solution_rejects_an_unknown_rest_method(all_program_entries):
     def bad_architect(model, system_prompt, user_content):
         entities = build_domain_entities(FIXTURE_ROOT, all_program_entries)
