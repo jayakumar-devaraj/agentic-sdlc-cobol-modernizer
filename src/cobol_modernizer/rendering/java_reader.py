@@ -507,6 +507,17 @@ def render_item_reader(
         return f"to{entity}({variable})"
 
     constructor_arguments = ", ".join(_argument(entity) for _field, entity in components)
+    #: **A single-entity input is the record, not a wrapper around it.** `_component_entities`
+    #: reports a plain entity as one component so the rest of this function needs no special case,
+    #: and the return expression then read `new TranCatBal(toTranCatBal(record))` -- a record passed
+    #: to its own four-argument constructor. Every step of the fixture design takes a composite, so
+    #: nothing exercised it until a live design typed `resolveAccountAndCardXref` as
+    #: `TranCatBal -> TranCatBalWithAccount`.
+    returned = (
+        f"new {domain_package}.{step.input_type}({constructor_arguments})"
+        if carried is not None
+        else constructor_arguments
+    )
 
     maps = "\n".join(
         ([f"{_INDENT}private final {working_set} state;"] if shared else [])
@@ -554,7 +565,7 @@ public class {class_name} implements ItemReader<{domain_package}.{step.input_typ
 {_INDENT}@Override
 {_INDENT}public {domain_package}.{step.input_type} read() {{
 {chr(10).join(body)}
-{_INDENT * 2}return new {domain_package}.{step.input_type}({constructor_arguments});
+{_INDENT * 2}return {returned};
 {_INDENT}}}
 
 {_INDENT}/** The COBOL abends when a keyed read finds nothing; substituting a default would post
