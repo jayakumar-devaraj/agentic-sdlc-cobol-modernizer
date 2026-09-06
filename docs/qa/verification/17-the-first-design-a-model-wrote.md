@@ -73,16 +73,25 @@ the assertion becomes `assert build.succeeded` and the module docstring loses it
 
 ## What is not covered
 
+> **Both of the first two gaps below were closed the same day**, by run
+> `step55-cbact04c-20260906-090845` — see
+> [18 — the accumulator is right on a live run](18-the-accumulator-is-right-on-a-live-run.md). They
+> are left standing here rather than rewritten, because what this entry could honestly claim at the
+> time it was written is part of its record.
+
 **The design-time refusal is not proven against a live model.** ADR-0070 is enforced and tested in
 both directions — the `writer`-typed transform is refused, the same step typed `processor` is
 accepted — but whether `v1_4_0` makes an architect type these steps correctly is the next live run's
 question. The `parse_with_repair` attempt exists because the honest answer is *not necessarily*.
 ADR-0063 was written `Proposed` for this reason; ADR-0070 is not, because it claims only that a
 design breaking a stated rule is refused before a human sees it.
+*(Answered: it does, on the first attempt, with no repair spent.)*
 
 **The project does not run.** It does not compile, for the reason above, so there is no differential
 here and none is claimed. Correctness stays where it is measured, in
 `test_generate_renders_the_wiring.py` against the oracle.
+*(A live design does now compile — and its job still does not start, for a different reason this
+entry could not have seen: ADR-0071.)*
 
 **One design, one program, one day.** `CLAUDE.md`'s standing rule is that a capability is complete
 when a *second* instance exercises it. This is one design, from one model, for `CBACT04C`. The

@@ -2,22 +2,38 @@
 
 ## Status
 
-**Proposed** (2026-09-04). Corrects
+**Accepted** (2026-09-06, proposed 2026-09-04). Corrects
 [ADR-0062](0062-a-step-must-be-able-to-return-what-it-computes.md), which is live in
 `v0.2.0` and whose refusal **requires** the defect described below.
 
-Marked *Proposed* rather than *Accepted* deliberately, and against this repository's habit — all 62
-prior records are Accepted. ADR-0062 was written as Accepted before anything had exercised it
-against a live model, and the hole it left was found one run later. Repeating that pattern here
-would be a decision claiming more confidence than it has earned. This becomes Accepted when the
-check below exists **and** a run produces a correct `postAccountInterest` item.
+Held at *Proposed* deliberately, and against this repository's habit — all 62 prior records were
+Accepted. ADR-0062 was written as Accepted before anything had exercised it against a live model,
+and the hole it left was found one run later. This record set two conditions instead: the check
+exists, **and** a run produces a correct `postAccountInterest` item.
 
-**Half met, as of this change.** The check exists and is tested: the correct design is now accepted
-where it was previously refused, the step-51 defect is refused, and both halves are verified by
-removal. `WS-MONTHLY-INT` is untouched. **The second condition is not met** — no live model has
-produced a design under prompt `v1_3_0`, so *the architect now places the accumulator correctly* is
-unproven, exactly as *the architect now returns what it computes* was unproven when ADR-0062 was
-written. That run is what flips this record.
+**Both are now met.** The check landed with this record. The second condition was met by run
+`step55-cbact04c-20260906-090845` (`v0.4.2`, architect prompt `v1_4_0`), which produced the correct
+design with no repair attempt — `AccruedCategoryInterest` carrying `monthlyInterest` alone, the
+accumulator on `AccountInterestPosting` — and generated this:
+
+```java
+BigDecimal key = item.categoryBalance().trancatAcctId();
+totals.merge(key, item.monthlyInterest(), BigDecimal::add);
+...
+new AccountInterestPosting(first.account(), total)          // the group's sum
+
+// and in the processor:
+account.acctCurrBal().add(item.totalInterest())             // ADD WS-TOTAL-INT TO ACCT-CURR-BAL
+```
+
+Step 51's branch set `totalInterest = monthlyInterest` and would have posted one category's interest
+where an account has four. Measured, not inferred: see
+[verification 18](../qa/verification/18-the-accumulator-is-right-on-a-live-run.md).
+
+**What is still not proven** is that the resulting job *runs*. It cannot yet, for a reason unrelated
+to this record — see [ADR-0071](0071-a-chunk-step-is-a-processor-step-and-the-job-names-only-those.md)
+and that verification entry. The accumulator being correct in the generated source is what this
+record claimed, and that is what has been shown.
 
 Restores the boundary [ADR-0027](0027-the-account-break-becomes-a-second-pass-over-pre-aggregated-items.md)
 already drew and ADR-0062 unknowingly crossed.
