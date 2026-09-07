@@ -273,6 +273,79 @@ def is_chunk_step(step: BatchStepDesign) -> bool:
     return step.role not in _NOT_A_CHUNK_STEP
 
 
+def unsupplied_components(
+    step: BatchStepDesign, design: UnifiedDesign, program_name: str
+) -> list[tuple[str, str]]:
+    """`(entity, ASSIGN TO)` for each keyed lookup this step's output promises and its input lacks.
+
+    A step declaring `TranCatBal -> TranCatBalWithAccount` says it **joins**: what leaves it travels
+    with an `Account` and a `CardXref` that what entered it never held. Nothing in a rendered
+    processor can obtain them. `render_processor` gives a processor one method, `process(item)`, and
+    constructor parameters only for *job parameters*; the records come from files, and the only
+    thing that opens a file is the step's reader, which `reader_path_parameters` builds from the
+    step's `input_type`. So the step renders a one-path reader, the lookup files stay declared and
+    bound to nothing, and the processor is left having to invent the records.
+
+    **Only keyed lookups count, and that distinction is the whole of the check** (ADR-0076). A
+    component the output adds is a defect when a reader could have read it and did not; it is
+    ordinary work when the step *makes* it. `TranWithContext` carries a `Tran`, and `TRANSACT` is a
+    sink -- the step computes that record, and a check that counted every added component refused
+    the interest calculation itself. `is_keyed_lookup` is what separates the two, and it is a fact
+    the design already carries rather than one inferred here.
+
+    `computed_fields` are not components and never count: a step that computes a value and carries
+    it out in its output type is the ordinary processor case (ADR-0070).
+    """
+    carried = next((c for c in design.composite_types if c.name == step.output_type), None)
+    if carried is None:
+        # The output is a plain entity, so the step transforms rather than joins.
+        return []
+    produced = [component.entity_name for component in carried.components]
+    held_by = next((c for c in design.composite_types if c.name == step.input_type), None)
+    held = (
+        {component.entity_name for component in held_by.components}
+        if held_by is not None
+        else {step.input_type}
+    )
+    lookups = {
+        path.entity_name: path.assign_to
+        for path in design.file_access_paths
+        if path.program_name == program_name and path.is_keyed_lookup and path.entity_name
+    }
+    return sorted(
+        (entity, lookups[entity])
+        for entity in set(produced) - held
+        if entity in lookups
+    )
+
+
+def unsupplied_join_reason(
+    step: BatchStepDesign, design: UnifiedDesign, program_name: str
+) -> str | None:
+    """Why this step cannot fill its own output type, phrased as the move that would fix it.
+
+    `None` when it can. **Reported by `plan_steps` rather than raised there** (ADR-0076), and that
+    placement is the decision this function exists to record. `plan_steps` is not only a gate: it is
+    also what `solution_architect` asks to find the one move that would wire a job it refused, so a
+    planner that raised would break the machinery that tells a model what to change -- which is the
+    only thing that gets this shape fixed at its source. The hard gate sits in `render_job_wiring`,
+    the one place a project is actually produced.
+    """
+    unsupplied = unsupplied_components(step, design, program_name)
+    if not unsupplied:
+        return None
+    named = ", ".join(f"{entity} (from {assign_to})" for entity, assign_to in unsupplied)
+    them = "them" if len(unsupplied) > 1 else "it"
+    return (
+        f"its output {step.output_type!r} carries {named}, which its input {step.input_type!r} does "
+        f"not. A rendered processor has no way to obtain {them}: its only injected state is job "
+        f"parameters, and its reader is built from {step.input_type!r}, so each of those files is "
+        f"declared and bound to nothing. A keyed lookup belongs in the reader of the step that "
+        f"consumes the joined item -- give that step an input_type of {step.output_type!r}, which "
+        f"makes its reader take the driving stream and every lookup beside it, and drop this step"
+    )
+
+
 def plan_steps(
     job: BatchJobDesign, design: UnifiedDesign, program_name: str
 ) -> tuple[list[BatchStepDesign], list[tuple[BatchStepDesign, str]], list[BatchStepDesign]]:
@@ -318,6 +391,10 @@ def plan_steps(
                 # It aggregates an earlier step's output, and that output carries what it groups by
                 # and what it sums. Renderable, and staged from the step it reads rather than from
                 # the one that happens to precede it in the chain.
+                join = unsupplied_join_reason(step, design, program_name)
+                if join is not None:
+                    skipped.append((step, join))
+                    continue
                 renderable.append(step)
                 if source.step_name not in staged_names:
                     staged.append(source)
@@ -356,6 +433,10 @@ def plan_steps(
             skipped.append((step, reason))
             continue
 
+        join = unsupplied_join_reason(step, design, program_name)
+        if join is not None:
+            skipped.append((step, join))
+            continue
         renderable.append(step)
         if to_chain and not to_file and step.step_name not in staged_names:
             staged.append(step)

@@ -84,6 +84,7 @@ from cobol_modernizer.core.contracts import DesignDocument
 from cobol_modernizer.graph.generate_pipeline import run_generate
 from cobol_modernizer.tools.local_compiler import compile_project
 from tests.support.interest_design import FIXTURE_ROOT
+from tests.support.joined_design import fold_the_join
 
 #: A design `solution_architect` produced for `CBACT04C` under prompt `v1_4_0`, saved verbatim from
 #: run `step55-cbact04c-20260906-090845`. Pinned rather than regenerated: the point is that it is
@@ -99,10 +100,13 @@ from tests.support.interest_design import FIXTURE_ROOT
 #: still reach the code it regresses.
 LIVE_DESIGN = Path(__file__).resolve().parents[1] / "fixtures" / "live_designs" / "cbact04c-design.json"
 
-#: The steps this design decomposes `CBACT04C` into that carry an item, in job order.
+#: The steps this design decomposes `CBACT04C` into that carry an item, in job order, **after the
+#: join is folded** (ADR-0076). As the model wrote it this design also declares
+#: `resolveAccountAndCardXref` and `resolveInterestRate`, which join `Account`, `CardXref` and
+#: `DisGroup` in a processor that cannot open a file; `render_job_wiring` refuses that shape now, so
+#: the design built here is the corrected one and `test_the_design_as_written_is_refused` holds the
+#: original up to the refusal.
 CHUNK_STEPS = [
-    "resolveAccountAndCardXref",
-    "resolveInterestRate",
     "computeMonthlyInterest",
     "writeInterestTransaction",
     "postAccountInterest",
@@ -133,14 +137,39 @@ def _null_author(routing, system_prompt: str, user_content: str) -> str:
     return json.dumps({"imports": [], "body": "return null;", "notes": ""})
 
 
+def _folded_design(root: Path) -> Path:
+    """The pinned design with its split enrichment folded into the step that consumes it.
+
+    Derived from the pinned file rather than pinned itself, for the reason
+    `generated_from_the_named_move` gives about the move: this is not a design any model produced,
+    it is what this repository's own refusal demands, and re-deriving it is what stops the two
+    drifting apart. `fold_the_join` raises if there is nothing to fold, so this cannot quietly
+    become a copy.
+    """
+    document = DesignDocument.model_validate_json(LIVE_DESIGN.read_text(encoding="utf-8"))
+    design = document.unified_design
+    folded = document.model_copy(
+        update={
+            "unified_design": design.model_copy(
+                update={"batch_jobs": [fold_the_join(design.batch_jobs[0], design)]}
+            )
+        }
+    )
+    path = root / "design.json"
+    path.write_text(folded.model_dump_json(indent=2), encoding="utf-8")
+    return path
+
+
 @pytest.fixture(scope="module")
 def generated(tmp_path_factory):
     """Render the whole project from the live design, once -- Maven is the cost."""
-    project = tmp_path_factory.mktemp("live-design") / "target-project"
+    root = tmp_path_factory.mktemp("live-design")
+    project = root / "target-project"
     project.parent.mkdir(parents=True, exist_ok=True)
+    design_path = _folded_design(root)
 
     outcome = run_generate(
-        LIVE_DESIGN,
+        design_path,
         FIXTURE_ROOT,
         project,
         author=_null_author,
@@ -282,7 +311,9 @@ def generated_from_the_named_move(tmp_path_factory):
     cannot drift apart.
     """
     document = DesignDocument.model_validate_json(LIVE_DESIGN.read_text(encoding="utf-8"))
-    job = document.unified_design.batch_jobs[0]
+    # Folded first (ADR-0076), then moved: the refusal names the same move either way -- measured,
+    # not assumed -- but the design it is applied to has to be one the renderer will build.
+    job = fold_the_join(document.unified_design.batch_jobs[0], document.unified_design)
     others = [step for step in job.steps if step.step_name != UNWIRABLE_STEP]
     moved_step = next(step for step in job.steps if step.step_name == UNWIRABLE_STEP)
     at = [step.step_name for step in others].index("writeInterestTransaction")
@@ -352,7 +383,7 @@ def test_the_named_move_gives_every_named_step_a_bean(generated_from_the_named_m
     declared = re.findall(r'"([A-Za-z][A-Za-z0-9]*)"', source.split("STEP_NAMES")[1].split(";")[0])
     beans = set(re.findall(r"Step\s+([A-Za-z][A-Za-z0-9]*)Step\s*\(", source))
 
-    assert declared == CHUNK_STEPS[:3] + [UNWIRABLE_STEP] + CHUNK_STEPS[3:]
+    assert declared == CHUNK_STEPS[:1] + [UNWIRABLE_STEP] + CHUNK_STEPS[1:]
     assert [name for name in declared if name not in beans] == []
 
 
@@ -369,3 +400,43 @@ def test_the_passthrough_gets_a_store_of_its_own(generated_from_the_named_move):
     assert "ComputeMonthlyInterestStaging.java" in stores
     assert "ComputeCategoryFeesStaging.java" in stores
     assert not (job_dir / "AccruedCategoryInterestStaging.java").exists()
+
+
+# --- ADR-0076: the design as the model wrote it is refused ---------------------------------------
+
+
+@pytest.fixture(scope="module")
+def generated_from_the_design_as_written(tmp_path_factory):
+    """The pinned design unfolded -- the shape three independent model runs produced."""
+    root = tmp_path_factory.mktemp("as-written")
+    project = root / "target-project"
+    project.parent.mkdir(parents=True, exist_ok=True)
+    return run_generate(
+        LIVE_DESIGN,
+        FIXTURE_ROOT,
+        project,
+        author=_null_author,
+        advise=lambda routing, s, u: json.dumps(
+            {"repairable": False, "reason": "scripted", "instruction": ""}
+        ),
+    )
+
+
+def test_the_design_as_written_is_refused(generated_from_the_design_as_written):
+    """A job that would read three of `CBACT04C`'s five files is not built (ADR-0076).
+
+    **Refused rather than skipped**, and the difference is measured in
+    `test_skipping_the_join_would_leave_a_store_nothing_fills`: left out, the join takes the job's
+    driving input with it -- the bindings collapse to two properties, `computeMonthlyInterest` reads
+    a store whose producer is gone, and the project still compiles and starts. A run of that job
+    reports a differential about files it never opened, which is the one failure worse than not
+    running at all.
+    """
+    outcome = generated_from_the_design_as_written
+
+    assert outcome.wiring.status == "refused", outcome.wiring.reason
+    # The reason names the step, the records and the move -- a model given "refused" and nothing
+    # else has every other shape left to try.
+    assert "resolveAccountAndCardXref" in outcome.wiring.reason
+    assert "XREFFILE" in outcome.wiring.reason
+    assert "belongs in the reader" in outcome.wiring.reason

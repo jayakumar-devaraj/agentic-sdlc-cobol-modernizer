@@ -42,6 +42,7 @@ from cobol_modernizer.rendering.java_job import (
     render_job_configuration,
     render_staging,
     staging_class_name,
+    unsupplied_components,
 )
 from tests.support.interest_design import (
     COMPLETE_STEP,
@@ -49,6 +50,7 @@ from tests.support.interest_design import (
     OUTPUT_COMPOSITE,
     STEP,
 )
+from tests.support.joined_design import fold_the_join
 from tests.support.posting_design import POSTING
 from tests.support.posting_design import STEP as POSTING_STEP
 
@@ -382,12 +384,13 @@ def test_the_live_design_that_obeys_the_ordering_rule_wires(design):
     and could not resolve either.
     """
     step56_design, job = _step56_job()
-    renderable, skipped, _staged = plan_steps(job, step56_design, "CBACT04C")
+    # Folded first (ADR-0076): this design also splits its enrichment across two steps that read
+    # nothing, and the ordering claim below is about the steps that remain either way.
+    folded = fold_the_join(job, step56_design)
+    renderable, skipped, _staged = plan_steps(folded, step56_design, "CBACT04C")
 
     assert skipped == []
     assert [step.step_name for step in renderable] == [
-        "resolveAccountAndXref",
-        "resolveInterestRate",
         "computeCategoryFees",
         "computeMonthlyInterest",
         "writeInterestTransaction",
@@ -395,7 +398,7 @@ def test_the_live_design_that_obeys_the_ordering_rule_wires(design):
     ]
     # The refusal this reproduces lives in `java_file_bindings`, so the bindings are what must render.
     render_file_bindings(
-        job, step56_design, "CBACT04C",
+        folded, step56_design, "CBACT04C",
         package="j", domain_package="dom", reader_package="r", writer_package="w",
     )
 
@@ -408,12 +411,13 @@ def test_only_the_head_of_the_chain_reads_a_file(design):
     reader, which is the defect this records.
     """
     step56_design, job = _step56_job()
-    readers = _readers(job, step56_design)
+    readers = _readers(fold_the_join(job, step56_design), step56_design)
 
+    # The head is now the step that consumes the joined item, and its reader is the one that reads
+    # the driving stream and the lookups together (ADR-0076). Everything after it still reads a
+    # store, which is ADR-0074's claim and the reason this mapping is asserted whole.
     assert readers == {
-        "resolveAccountAndXref": "ItemReader<dom.TranCatBal> reader",
-        "resolveInterestRate": "ResolveAccountAndXrefStaging resolveAccountAndXrefStaging",
-        "computeCategoryFees": "ResolveInterestRateStaging resolveInterestRateStaging",
+        "computeCategoryFees": "ItemReader<dom.RatedCategoryBalance> reader",
         "computeMonthlyInterest": "ComputeCategoryFeesStaging computeCategoryFeesStaging",
         "writeInterestTransaction": "ComputeMonthlyInterestStaging computeMonthlyInterestStaging",
         "postAccountInterest": "ComputeMonthlyInterestStaging computeMonthlyInterestStaging",
@@ -449,3 +453,121 @@ def test_a_file_readable_input_is_still_read_from_a_file_at_the_head(design):
     assert not reads_a_file(second, step56_design, "CBACT04C", job)
     # And the reason is the chain, not the file: its input is still assemblable from one.
     assert _has_file_source(second, step56_design, "CBACT04C")
+
+
+# --- ADR-0076: a step cannot join a keyed lookup its reader never opens --------------------------
+#
+# The fourth defect to sit behind "the last thing in the way". The job ran (ADR-0075) and ran
+# without three of `CBACT04C`'s five files, because both live designs put the join in a processor
+# and a processor is the one thing in a rendered job that cannot open a file.
+
+
+@pytest.mark.parametrize(
+    "name", ["cbact04c-design-step56.json", "cbact04c-design-step58.json"]
+)
+def test_a_step_that_joins_a_lookup_it_cannot_read_is_skipped(name):
+    """Both live designs, and the skip names the file each stranded record comes from.
+
+    Parameterised rather than run against one, because a fact true only of the design it was
+    written against is what "closed for one instance" means here (CLAUDE.md).
+    """
+    document = DesignDocument.model_validate_json(
+        (Path(__file__).parent.parent / "fixtures" / "live_designs" / name).read_text(
+            encoding="utf-8"
+        )
+    )
+    design = document.unified_design
+    job = design.batch_jobs[0]
+
+    _renderable, skipped, _staged = plan_steps(job, design, "CBACT04C")
+    reasons = {step.step_name: why for step, why in skipped}
+
+    joins = [name for name, why in reasons.items() if "belongs in the reader" in why]
+    assert len(joins) == 2, f"expected both enrichment steps, got {joins}"
+    both = " ".join(reasons[name] for name in joins)
+    # The ASSIGN TO, not only the entity: the file is what a reader binds and what an operator
+    # already knows, and "Account is missing" does not say which of two account paths is meant.
+    assert "XREFFILE" in both and "DISCGRP" in both and "ACCTFILE" in both
+
+
+def test_the_folded_design_leaves_nothing_skipped_and_binds_every_file():
+    """The other half, and the one that matters: the move the message names actually renders.
+
+    Written against a real design with the join folded rather than a synthetic one -- a hand-built
+    design that binds nothing would let this pass while exercising nothing (ADR-0073's lesson, and
+    bite 13 of the step-59 brief).
+    """
+    document = DesignDocument.model_validate_json(
+        (
+            Path(__file__).parent.parent
+            / "fixtures"
+            / "live_designs"
+            / "cbact04c-design-step58.json"
+        ).read_text(encoding="utf-8")
+    )
+    design = document.unified_design
+    folded = fold_the_join(design.batch_jobs[0], design)
+
+    _renderable, skipped, _staged = plan_steps(folded, design, "CBACT04C")
+    assert skipped == []
+
+    from cobol_modernizer.rendering.java_file_bindings import file_binding_properties
+
+    assert set(file_binding_properties(folded, design, "CBACT04C")) == {
+        "cobol.file.tcatbalf",
+        "cobol.file.acctfile",
+        "cobol.file.xreffile",
+        "cobol.file.discgrp",
+        "cobol.file.transact",
+    }
+
+
+def test_a_component_the_step_computes_is_not_a_stranded_lookup(design):
+    """The check must not fire on a step that *makes* the record it carries out.
+
+    `computeInterest` produces a `Tran` and carries it in `TranWithContext`; `TRANSACT` is a sink,
+    not a keyed lookup. A first version of this check counted every added component and refused the
+    interest calculation itself -- so this is the false positive that shaped the rule, kept as a
+    test rather than as a sentence in the ADR.
+    """
+    step = next(
+        s for s in design.batch_jobs[0].steps if s.step_name == "computeInterest"
+    )
+    assert step.output_type == "TranWithContext"
+    assert unsupplied_components(step, design, "CBACT04C") == []
+
+
+def test_skipping_the_join_would_leave_a_store_nothing_fills():
+    """Why this is refused at the wiring rather than left out of the job -- measured, not reasoned.
+
+    Every other skip in `plan_steps` is survivable: the steps around it do not depend on it having
+    run. This one they do. With the joins left out, `computeMonthlyInterest` still reads
+    `ResolveInterestRateStaging` -- whose producer is gone -- and the job's bindings collapse to two
+    properties, losing `TCATBALF`, its own driving input. It would compile and start.
+
+    `test_every_store_a_step_fills_is_read_by_the_step_after_it` asserts the other direction (no
+    store is filled that nothing reads) and is blind to this one, which is why it is here.
+    """
+    from cobol_modernizer.rendering.java_file_bindings import file_binding_properties
+
+    document = DesignDocument.model_validate_json(
+        (
+            Path(__file__).parent.parent
+            / "fixtures"
+            / "live_designs"
+            / "cbact04c-design-step58.json"
+        ).read_text(encoding="utf-8")
+    )
+    design = document.unified_design
+    job = design.batch_jobs[0]
+
+    _renderable, _skipped, staged = plan_steps(job, design, "CBACT04C")
+    readers = _readers(job, design)
+
+    filled = {staging_class_name(step) for step in staged}
+    read = {p.split()[0] for p in readers.values() if "ItemReader<" not in p}
+    assert read - filled == {"ResolveInterestRateStaging"}
+    assert set(file_binding_properties(job, design, "CBACT04C")) == {
+        "cobol.file.acctfile",
+        "cobol.file.transact",
+    }

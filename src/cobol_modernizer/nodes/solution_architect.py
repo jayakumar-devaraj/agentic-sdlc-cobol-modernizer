@@ -97,6 +97,15 @@ logger = logging.getLogger(__name__)
 
 _NODE_NAME = "solution_architect"
 
+#: v1_6_0 states that a keyed lookup belongs in the reader of the step that uses it (ADR-0076).
+#: Three independent live designs wrote the join as its own step -- `TranCatBal ->
+#: TranCatBalWithAccount` -- which is a fair reading of COBOL that `READ`s `XREFFILE` in its own
+#: paragraph, and is exactly the shape a generated job cannot honour: a processor has one method and
+#: no way to open a file, and a step's reader is built from its `input_type`. So the job ran and ran
+#: without three of `CBACT04C`'s five files, with every check reporting it wired. Two halves again:
+#: stated here, refused by `render_job_wiring` via `unsupplied_components` -- and refused rather than
+#: skipped, because leaving the join out takes the job's driving input with it.
+#:
 #: v1_5_0 states that a step is ordered where its input exists (ADR-0072). A live design flattened
 #: `1300-B-WRITE-TX` out of the `1300-COMPUTE-INTEREST` that performs it and kept the paragraph
 #: order, which put a step turning an `AccruedCategoryInterest` into a `Tran` between the step
@@ -134,7 +143,7 @@ _NODE_NAME = "solution_architect"
 #: COBOL-style `1300-COMPUTE-INTEREST` was following the prompt it was given, and failing at
 #: `generate` time an approval later. Enforcing the rule without stating it would have been the
 #: worse half of the fix on its own.
-PROMPT_VERSION = "v1_5_0"
+PROMPT_VERSION = "v1_6_0"
 
 #: Rank for picking the highest tier across a run's programs. `ComplexityTier` is a `str` Enum, so
 #: it sorts alphabetically by default -- which would put "complex" below "moderate" and silently
@@ -1260,7 +1269,11 @@ def _refuse_a_step_ordered_before_its_input_exists(
     # Local, matching `java_job._has_file_source`'s own import of `java_reader`: a design node
     # reaching into a renderer is the unusual direction, and keeping it off the module surface says
     # this is a question borrowed from `generate`, not a dependency of designing.
-    from cobol_modernizer.rendering.java_job import UnrenderableJobError, plan_steps
+    from cobol_modernizer.rendering.java_job import (
+        UnrenderableJobError,
+        plan_steps,
+        unsupplied_components,
+    )
 
     for job in batch_jobs:
         # **The design the *renderer* will see, not the one parsed so far.** `attach_control_breaks`
@@ -1287,10 +1300,20 @@ def _refuse_a_step_ordered_before_its_input_exists(
             # A job with no steps at all, which is a different refusal's subject.
             continue
 
-        if not skipped:
+        # **Only the skips a move could fix** (ADR-0076). A step that joins a keyed lookup it cannot
+        # read is skipped too, and no reordering fixes it -- its fix is a different shape of design,
+        # and it has its own refusal. Left in, it is a skip that never clears, so the search below
+        # finds no move for any design carrying one and this refusal goes silent on the very defect
+        # it was written for.
+        ordering = [
+            (step, why)
+            for step, why in skipped
+            if not unsupplied_components(step, design, planned.program_name)
+        ]
+        if not ordering:
             continue
 
-        move = _a_move_that_strands_no_step(planned, design, [step for step, _why in skipped])
+        move = _a_move_that_strands_no_step(planned, design, [step for step, _why in ordering])
         if move is None:
             continue
 
@@ -1321,7 +1344,12 @@ def _a_move_that_strands_no_step(
     step that cannot be supplied, and proposing to move some other step to accommodate it would be
     choosing between two readings of the design rather than reporting the one fault found.
     """
-    from cobol_modernizer.rendering.java_job import UnrenderableJobError, is_chunk_step, plan_steps
+    from cobol_modernizer.rendering.java_job import (
+        UnrenderableJobError,
+        is_chunk_step,
+        plan_steps,
+        unsupplied_components,
+    )
 
     for step in stranded:
         others = [other for other in job.steps if other.step_name != step.step_name]
@@ -1335,7 +1363,13 @@ def _a_move_that_strands_no_step(
                 )
             except UnrenderableJobError:
                 continue
-            if skipped:
+            # Judged on the ordering skips alone, for the reason the caller states: a join skip is
+            # present before and after every move, so a search that counted it would reject the
+            # move that does fix the ordering.
+            if any(
+                not unsupplied_components(other, design, candidate.program_name)
+                for other, _why in skipped
+            ):
                 continue
 
             # The step it now precedes, named because a position index is not something a model can

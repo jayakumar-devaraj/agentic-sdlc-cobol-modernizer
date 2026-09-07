@@ -29,6 +29,7 @@ from cobol_modernizer.equivalence.staging import (
     stage_oracle_inputs,
 )
 from cobol_modernizer.rendering.java_file_bindings import file_binding_properties
+from tests.support.joined_design import fold_the_join
 
 LIVE_DESIGNS = Path(__file__).resolve().parents[1] / "fixtures" / "live_designs"
 TENANT_SAMPLE = Path(__file__).resolve().parents[1] / "fixtures" / "tenant_repo_sample"
@@ -75,6 +76,11 @@ def test_only_what_the_job_binds_is_staged(tmp_path: Path, name: str) -> None:
     `cardxref.dat` sitting in `roundtrip/input/` would hide that.
     """
     design, job = _design(name)
+    # **The folded job, because that is the one that runs** (ADR-0076). As written, both designs
+    # split the enrichment across steps that read nothing, and `render_job_wiring` now refuses that
+    # rather than building it -- so staging what the *unfolded* job binds would be describing a job
+    # this pipeline no longer produces.
+    job = fold_the_join(job, design)
     project = tmp_path / "target-project"
 
     overrides = stage_oracle_inputs(
@@ -83,7 +89,12 @@ def test_only_what_the_job_binds_is_staged(tmp_path: Path, name: str) -> None:
 
     assert set(overrides) == set(file_binding_properties(job, design, job.program_name))
     staged = {p.name for p in (project / "roundtrip" / "input").iterdir()}
-    assert staged == {"tcatbal-posted.dat", "acctdata-stage1.dat"}
+    assert staged == {
+        "tcatbal-posted.dat",
+        "acctdata-stage1.dat",
+        "cardxref.dat",
+        "discgrp.dat",
+    }
     # An output is not staged: the job creates it, and a pre-existing file would let a job that
     # wrote nothing report a comparison against whatever was already there.
     assert list((project / "roundtrip" / "output").iterdir()) == []
@@ -147,6 +158,7 @@ def test_a_bound_file_with_no_source_is_refused(tmp_path: Path) -> None:
     path with nothing linking the failure back to staging.
     """
     design, job = _design("cbact04c-design-step58.json")
+    job = fold_the_join(job, design)
     path = next(p for p in design.file_access_paths if p.assign_to == "TCATBALF")
     path.assign_to = "SOMEOTHERFILE"
 
