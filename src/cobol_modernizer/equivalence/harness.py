@@ -17,14 +17,18 @@ design `plan_steps` reported 6 of 9 steps renderable and there was nothing to po
 closed. Run `step58-cbact04c-20260907-085235` rendered **6 of 6** and reported
 *"Wiring: rendered and compiled; every renderable step is wired."*
 
-**What remains is that nobody runs the job.** `generate` calls `compile_project` with `goal="compile"`
-or `"test"` and stops; no phase stages the oracle's input files into `roundtrip/input/` and no phase
-executes the built job, so the two paths below are simply absent and this returns `not_run` saying
-so. The round trip in `tests/integration/` gets a verdict because *the test* stages the inputs and
-runs it -- the mechanism exists, it has never been part of the pipeline.
+**That is closed too, and the limit moved again.** `generate` now stages the oracle's inputs and runs
+the job it generated (ADR-0075), so a caller pointing this at a freshly generated project gets a
+comparison rather than `not_run` -- provided the job actually completed, which
+`GenerateOutcome.job_run` answers separately and which this cannot see.
 
-So a caller pointing this at a freshly generated project still gets `not_run`, and the reason it
-should report is now "the job did not run", not "the wiring is incomplete".
+**The limit is now what the job was given to read.** Both live `CBACT04C` designs bind three of the
+program's five files: `XREFFILE` and `DISCGRP` are declared, resolvable, and bound to nothing, and
+the rendered processors that are supposed to attach the account, the card cross-reference and the
+interest rate are constructed with no arguments and can read none of them. So a `mismatched` verdict
+from this function today is at least as likely to be about the lookups the job never opened as about
+the arithmetic a model wrote. ADR-0075's Consequences states the shape; read it before attributing a
+difference to the generated code.
 """
 
 from __future__ import annotations

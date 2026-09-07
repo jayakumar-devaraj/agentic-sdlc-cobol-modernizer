@@ -865,6 +865,33 @@ class EquivalenceTestVerdict(BaseModel):
     test_class: str = ""
 
 
+class JobRunVerdict(BaseModel):
+    """Whether the generated job was executed, and what happened when it was (ADR-0075).
+
+    **Why this is not folded into `EquivalenceVerdict`.** That one compares output files against
+    COBOL's, and its `not_run` branch can say only "there is no output here". Every reason a run
+    might not have produced output -- the job threw, the context could not start, staging had no
+    source for a bound file, nothing tried -- collapses into that one sentence, and a reviewer
+    reading it cannot tell a pipeline that never ran the job from a job that ran and abended. Those
+    are different findings and the second is a defect in the generated code.
+
+    **`failed` is not `mismatched`.** A job that throws has produced no evidence about the
+    arithmetic, so a gate must not read this as the generated logic being wrong -- the same
+    distinction `build_validator` draws for a processor that does not compile, and `run_equivalence
+    _test` draws for a test that does not build, drawn once more at job granularity.
+    """
+
+    status: Literal["completed", "failed", "refused", "not_run"]
+    #: Why, in one line, for every status including `completed` -- a run that completed and wrote
+    #: nothing is a fact a reviewer needs beside the answer, not one to infer from an empty output.
+    reason: str
+    #: The rendered runner class, empty unless one was written. Names the file a reviewer opens.
+    test_class: str = ""
+    #: `cobol.file.*` -> the path this run actually staged, so a reviewer can check what the job was
+    #: pointed at rather than trust that it was pointed anywhere. Empty when nothing was staged.
+    staged_inputs: dict[str, str] = Field(default_factory=dict)
+
+
 class GenerateCliResult(BaseModel):
     """The `cobol-modernizer generate --json` stdout contract.
 

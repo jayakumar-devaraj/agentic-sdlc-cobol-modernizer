@@ -33,6 +33,7 @@ from cobol_modernizer.core.contracts import (
     EquivalenceTestVerdict,
     EquivalenceVerdict,
     GenerateCliResult,
+    JobRunVerdict,
     WiringVerdict,
 )
 from cobol_modernizer.core.design_outputs import write_design_outputs
@@ -184,6 +185,23 @@ def _describe_wiring(verdict: WiringVerdict) -> str:
     return f"not rendered -- {verdict.reason}"
 
 
+def _describe_job_run(verdict: JobRunVerdict) -> str:
+    """One line for whether the generated job was started and what it did (ADR-0075).
+
+    **Reported beside the differential rather than folded into it**, because the differential's
+    `not_run` cannot distinguish a job that abended from a pipeline that never tried -- and a
+    reviewer weighing a `not_run` needs that difference to know whether the finding is about the
+    generated code at all.
+    """
+    if verdict.status == "completed":
+        return f"completed -- {verdict.reason}"
+    if verdict.status == "failed":
+        return f"FAILED -- {verdict.reason}"
+    if verdict.status == "refused":
+        return f"REFUSED -- {verdict.reason}"
+    return f"not run -- {verdict.reason}"
+
+
 def _describe_equivalence_test(verdict: EquivalenceTestVerdict) -> str:
     """One line for the rendered unit test, for the same sentence (ADR-0065).
 
@@ -236,12 +254,15 @@ def _equivalence_for(outcome, design_path: Path, output_dir: Path) -> Equivalenc
     that omits correctness entirely, which is what a human approved twice while the generated code
     posted the wrong money. That branch is still below and still right when a design strands a step.
 
-    It is no longer what happens on a good design. Run `step58-cbact04c-20260907-085235` rendered 6
-    of 6 and wired every one, and this still returned `not_run` -- because **no phase runs the job**.
-    `generate` compiles and stops: nothing stages the oracle's inputs into `roundtrip/input/` and
-    nothing executes the built job, so `compare_project_output` finds neither file. The comparison is
-    wired and the oracle ships in the wheel, as this docstring has said all along; what was missing
-    was never the comparison.
+    **`generate` now runs the job** (ADR-0075). It stages the oracle's inputs, renders a runner, and
+    executes what it generated, so on a design whose wiring compiles this returns a comparison rather
+    than `not_run`. The branch below is still right when a design strands a step, and still the only
+    thing that can explain an absent output to a reviewer.
+
+    **What a `not_run` from here now means is narrower, and `job_run` says which.** No output can mean
+    the job was never started, was started and abended, or ran and wrote elsewhere -- and this
+    function cannot tell them apart. `GenerateOutcome.job_run` carries that distinction, and the
+    `generate` summary renders it beside this one for exactly that reason.
     """
     verdict = compare_project_output(output_dir, ORACLE_ROOT / "CBACT04C")
     if verdict.status != "not_run":
@@ -300,6 +321,7 @@ def _run_generate_command(args: argparse.Namespace) -> tuple[GenerateCliResult, 
         detail = (
             f"Generated and compiled {len(outcome.compiled)} processor step(s). "
             f"Wiring: {_describe_wiring(outcome.wiring)} "
+            f"Job run: {_describe_job_run(outcome.job_run)} "
             f"Equivalence: {_describe_equivalence(equivalence)} "
             f"Equivalence test: {_describe_equivalence_test(outcome.equivalence_test)}"
         )

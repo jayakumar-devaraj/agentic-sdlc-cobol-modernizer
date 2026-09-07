@@ -46,11 +46,14 @@ from cobol_modernizer.core.contracts import (
     DomainEntity,
     EquivalenceTestVerdict,
     JobParameter,
+    JobRunVerdict,
     ProgramDesignEntry,
     UnifiedDesign,
     WiringVerdict,
 )
 from cobol_modernizer.core.package_data import ORACLE_ROOT, TEMPLATES_ROOT
+from cobol_modernizer.equivalence.harness import TRANSACTION_OUTPUT
+from cobol_modernizer.equivalence.staging import StagingError, stage_oracle_inputs
 from cobol_modernizer.nodes.build_validator import AdviseFn, ValidationVerdict, validate_build
 from cobol_modernizer.nodes.modernization_engineer import (
     AuthorFn,
@@ -81,6 +84,11 @@ from cobol_modernizer.rendering.java_job import (
     render_job_configuration,
     render_staging,
     staging_class_name,
+)
+from cobol_modernizer.rendering.java_job_run import (
+    UnrenderableJobRunError,
+    render_job_run_test,
+    run_test_class_name,
 )
 from cobol_modernizer.rendering.java_processor import (
     model_authored_line_numbers,
@@ -446,6 +454,132 @@ def render_job_wiring(
     return written, skipped
 
 
+def stage_and_run_job(
+    job: BatchJobDesign,
+    design: UnifiedDesign,
+    output_dir: Path,
+    *,
+    worktree_root: Path,
+    job_package: str = DEFAULT_JOB_PACKAGE,
+) -> JobRunVerdict:
+    """Stage the oracle's inputs, render a runner, and execute the built job (ADR-0075).
+
+    **The goal stays `test` with `-Dtest=`, and that is the whole trick.** The hand-written round
+    trip runs `goal="verify"`, which is what executes the job *there* -- and copying that into the
+    pipeline would make this verdict depend on `BaselineStackTest`, the `@SpringBootTest
+    @Testcontainers` the baseline template ships. Docker on the specialist host is not what is being
+    measured, and a red build for want of it says nothing about the generated job. Narrowing to the
+    rendered runner runs exactly the check this verdict claims to report, exactly as
+    `run_equivalence_test` already does one level down.
+
+    Returns `refused` rather than raising when the job cannot be launched or an input has no source:
+    both are findings about the design, and a phase that raised here would lose the four ADRs' worth
+    of verdicts already assembled above it.
+    """
+    program_name = job.program_name
+    try:
+        staged = stage_oracle_inputs(
+            job,
+            design,
+            program_name,
+            output_dir,
+            oracle_dir=ORACLE_ROOT / program_name,
+            worktree_root=worktree_root,
+        )
+    except StagingError as exc:
+        return JobRunVerdict(
+            status="refused",
+            reason=f"the job's inputs could not be staged, so it was not run -- {exc}",
+        )
+
+    try:
+        source = render_job_run_test(
+            job,
+            package=job_package,
+            staged=staged,
+            output_path=output_dir / TRANSACTION_OUTPUT,
+        )
+    except UnrenderableJobRunError as exc:
+        return JobRunVerdict(
+            status="refused",
+            reason=f"no runner could be rendered for this job -- {exc}",
+            staged_inputs=staged,
+        )
+
+    test_class = run_test_class_name(job)
+    destination = output_dir.joinpath(
+        "src", "test", "java", *job_package.split("."), f"{test_class}.java"
+    )
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    destination.write_text(source, encoding="utf-8")
+    logger.info("generate: rendered job runner %s for %s", test_class, job.job_name)
+
+    try:
+        result = compile_project(
+            output_dir,
+            goal="test",
+            extra_args=(f"-Dtest={test_class}", "-Dsurefire.failIfNoSpecifiedTests=false"),
+        )
+    finally:
+        # **The runner does not survive the run that used it**, and this is not tidiness. It holds
+        # the absolute staged paths of one machine's temp directory, so left in place it is a test
+        # that fails for every tenant who builds the artifact this phase produced -- and, being an
+        # ordinary test in `src/test/java`, it joins any later unfiltered `test` or `verify` and
+        # takes that build down with it. Measured, not argued: the round-trip integration test,
+        # which runs `verify`, went red the first time this ran because of exactly that.
+        #
+        # What a reviewer needs from it survives in the verdict: `test_class` names what ran and
+        # `staged_inputs` names every file it was pointed at.
+        destination.unlink(missing_ok=True)
+    if result.succeeded:
+        # **A green build is not evidence the job ran.** `-Dsurefire.failIfNoSpecifiedTests=false`
+        # is what keeps a project with no matching test from failing, and it means a runner surefire
+        # never picked up exits 0 exactly like one that passed. Reporting that as `completed` would
+        # put a false green on the one verdict in this pipeline that claims the program executed --
+        # so the claim is checked against the artefact instead of the exit code.
+        if not (output_dir / TRANSACTION_OUTPUT).is_file():
+            return JobRunVerdict(
+                status="refused",
+                reason=(
+                    f"the build succeeded and {TRANSACTION_OUTPUT.as_posix()} does not exist, so "
+                    f"{test_class} did not run -- surefire matched no test, which "
+                    f"-Dsurefire.failIfNoSpecifiedTests=false makes a passing build"
+                ),
+                test_class=test_class,
+                staged_inputs=staged,
+            )
+        return JobRunVerdict(
+            status="completed",
+            reason=(
+                f"{test_class} started {job.job_name!r} and it reached COMPLETED having written "
+                f"{TRANSACTION_OUTPUT.as_posix()}. Says nothing about whether the values are "
+                f"right -- that is the differential's verdict (ADR-0029)"
+            ),
+            test_class=test_class,
+            staged_inputs=staged,
+        )
+    # **A runner that did not compile is not a job that ran wrong.** The same distinction
+    # `run_equivalence_test` draws, drawn again here: reporting it as `failed` would tell a reviewer
+    # the generated job abends when nothing has started it at all.
+    first = result.errors[0].render() if result.errors else ""
+    if result.errors:
+        return JobRunVerdict(
+            status="refused",
+            reason=f"the rendered runner does not compile, so the job was not started: {first}",
+            test_class=test_class,
+            staged_inputs=staged,
+        )
+    return JobRunVerdict(
+        status="failed",
+        reason=(
+            f"{test_class} ran and {job.job_name!r} did not reach COMPLETED. The generated job "
+            f"started and did not finish, which is a defect in it rather than in the comparison"
+        ),
+        test_class=test_class,
+        staged_inputs=staged,
+    )
+
+
 #: The per-program oracle a rendered equivalence test reads its expected values from. Absent for
 #: every program but `CBACT04C` today, and absence is not an error: a program with no hand-derived
 #: oracle gets no rendered test, which `not_rendered` says.
@@ -714,6 +848,13 @@ class GenerateOutcome:
             status="not_rendered", reason="no job wiring was rendered for this design"
         )
     )
+    #: Whether the job was executed and what happened (ADR-0075). Defaults to `not_run` so a run
+    #: that never reached the job says so, rather than leaving the subject out.
+    job_run: JobRunVerdict = field(
+        default_factory=lambda: JobRunVerdict(
+            status="not_run", reason="nothing ran the job for this design"
+        )
+    )
 
     @property
     def compiled(self) -> tuple[StepOutcome, ...]:
@@ -795,6 +936,10 @@ def run_generate(
     wiring_files: list[str] = []
     wiring_skipped: list[str] = []
     wiring_refusal: str | None = None
+    #: Jobs whose wiring rendered, so the run below points at what was actually written rather than
+    #: re-deciding which jobs were wired -- the question is already answered here.
+    wired_jobs: list[BatchJobDesign] = []
+    job_run = JobRunVerdict(status="not_run", reason="nothing ran the job for this design")
     rendered_test_class: str | None = None
     rendered_test_paragraph = ""
     equivalence_test = EquivalenceTestVerdict(
@@ -977,6 +1122,7 @@ def run_generate(
                 break
             wiring_files += files
             wiring_skipped += [f"{step.step_name}: {why}" for step, why in skipped]
+            wired_jobs.append(job)
 
     if wiring_refusal is not None:
         wiring = WiringVerdict(
@@ -1005,6 +1151,24 @@ def run_generate(
                 files_rendered=wiring_files,
                 skipped_steps=wiring_skipped,
             )
+            # **Only once the wiring compiles** (ADR-0075). A job whose configuration does not
+            # build cannot be started, and rendering a runner against it would report "the runner
+            # does not compile" for a reason that has nothing to do with the runner.
+            #
+            # One job, not every one: `harness` compares the two files `CBACT04C` writes, so a
+            # second job's run would have nowhere to report to. `wired_jobs` is in design order, so
+            # this is the first job whose wiring rendered rather than an arbitrary one.
+            if wired_jobs:
+                job_run = stage_and_run_job(
+                    wired_jobs[0], design, output_dir, worktree_root=worktree_root
+                )
+                if len(wired_jobs) > 1:
+                    logger.warning(
+                        "generate: %d jobs wired, ran %s only -- the differential compares one "
+                        "program's output",
+                        len(wired_jobs),
+                        wired_jobs[0].job_name,
+                    )
         else:
             first = built.errors[0].render() if built.errors else "no located diagnostic"
             wiring = WiringVerdict(
@@ -1032,4 +1196,5 @@ def run_generate(
         output_dir=str(output_dir),
         equivalence_test=equivalence_test,
         wiring=wiring,
+        job_run=job_run,
     )
