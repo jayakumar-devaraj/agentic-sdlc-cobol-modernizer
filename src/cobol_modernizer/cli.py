@@ -230,15 +230,18 @@ def _describe_equivalence(verdict: EquivalenceVerdict) -> str:
 def _equivalence_for(outcome, design_path: Path, output_dir: Path) -> EquivalenceVerdict:
     """The differential's verdict for this run, or `not_run` saying precisely why not (ADR-0064).
 
-    **Today this returns `not_run` for every real design, and the reason is the deliverable.**
-    `generate` renders processors (ADR-0019), not readers, writers or job configuration, so it
-    produces no project that runs -- for `CBACT04C`'s real design `plan_steps` reports 6 of 9 steps
-    renderable. Naming the three that are missing is a materially different thing for a reviewer to
-    weigh than a summary that omits correctness entirely, which is what a human approved twice while
-    the generated code posted the wrong money.
+    **Today this still returns `not_run` for every real design, and the reason moved.** It used to be
+    the wiring -- 6 of 9 steps renderable for `CBACT04C`, so no project that runs -- and naming the
+    three that were missing is a materially different thing for a reviewer to weigh than a summary
+    that omits correctness entirely, which is what a human approved twice while the generated code
+    posted the wrong money. That branch is still below and still right when a design strands a step.
 
-    It becomes a real verdict with no change here the moment a run produces output: the comparison
-    is wired, the oracle ships in the wheel, and `compare_project_output` is what runs.
+    It is no longer what happens on a good design. Run `step58-cbact04c-20260907-085235` rendered 6
+    of 6 and wired every one, and this still returned `not_run` -- because **no phase runs the job**.
+    `generate` compiles and stops: nothing stages the oracle's inputs into `roundtrip/input/` and
+    nothing executes the built job, so `compare_project_output` finds neither file. The comparison is
+    wired and the oracle ships in the wheel, as this docstring has said all along; what was missing
+    was never the comparison.
     """
     verdict = compare_project_output(output_dir, ORACLE_ROOT / "CBACT04C")
     if verdict.status != "not_run":
