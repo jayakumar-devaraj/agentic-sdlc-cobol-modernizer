@@ -11,12 +11,20 @@ failing the run is the right response. At a gate it is not: the reviewer needs t
 counts, and what was excluded, in a form that survives into `design.json` and the audit trail. The
 same `compare` produces both; only the reporting differs.
 
-**The honest limit, stated because it decides what a caller can claim.** `generate` renders
-processors (ADR-0019), not readers, writers or job configuration, so it cannot by itself produce a
-project that runs. For `CBACT04C`'s real design, `plan_steps` reports 6 of 9 steps renderable. Until
-that closes, a caller has nothing to point this at and should report `not_run` naming the unrendered
-steps -- which is what `not_run` carrying a reason is for. The round trip in `tests/integration/`
-runs today only because it copies hand-written wiring in.
+**The honest limit, stated because it decides what a caller can claim -- and it moved.** It used to
+be the wiring: `generate` rendered processors and no job configuration, so for `CBACT04C`'s real
+design `plan_steps` reported 6 of 9 steps renderable and there was nothing to point this at. That is
+closed. Run `step58-cbact04c-20260907-085235` rendered **6 of 6** and reported
+*"Wiring: rendered and compiled; every renderable step is wired."*
+
+**What remains is that nobody runs the job.** `generate` calls `compile_project` with `goal="compile"`
+or `"test"` and stops; no phase stages the oracle's input files into `roundtrip/input/` and no phase
+executes the built job, so the two paths below are simply absent and this returns `not_run` saying
+so. The round trip in `tests/integration/` gets a verdict because *the test* stages the inputs and
+runs it -- the mechanism exists, it has never been part of the pipeline.
+
+So a caller pointing this at a freshly generated project still gets `not_run`, and the reason it
+should report is now "the job did not run", not "the wiring is incomplete".
 """
 
 from __future__ import annotations

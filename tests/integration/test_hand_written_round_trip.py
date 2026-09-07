@@ -272,11 +272,14 @@ def render_job_into(project: Path, design, program_name: str) -> list[Path]:
     _renderable, _skipped, staged = plan_steps(job, design, program_name)
 
     written = []
-    for type_name in staged:
+    # Producing steps, not type names, since ADR-0073. This loop kept working under the old variable
+    # name because a step is what `staged` now holds -- which made the name a lie rather than a
+    # failure, and is exactly the kind of thing a green suite does not catch.
+    for producer in staged:
         source = render_staging(
-            type_name, package=JOB_PACKAGE, domain_package=DEFAULT_DOMAIN_PACKAGE
+            producer, package=JOB_PACKAGE, domain_package=DEFAULT_DOMAIN_PACKAGE
         )
-        written.append(_write_java(project, JOB_PACKAGE, staging_class_name(type_name), source))
+        written.append(_write_java(project, JOB_PACKAGE, staging_class_name(producer), source))
 
     # The aggregating reader for any step that runs at a control break (ADR-0032's amendment).
     for step in job.steps:
