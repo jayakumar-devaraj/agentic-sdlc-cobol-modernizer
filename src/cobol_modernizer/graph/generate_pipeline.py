@@ -84,6 +84,7 @@ from cobol_modernizer.rendering.java_job import (
     render_job_configuration,
     render_staging,
     staging_class_name,
+    unsupplied_components,
 )
 from cobol_modernizer.rendering.java_job_run import (
     UnrenderableJobRunError,
@@ -342,6 +343,19 @@ def render_job_wiring(
     """
     program_name = job.program_name
     renderable, skipped, staged = plan_steps(job, design, program_name)
+
+    # **A stranded join is refused, not left out** (ADR-0076). Every other skip in `plan_steps` is
+    # survivable: the steps around it do not depend on it having run, so the job renders without it
+    # and the verdict says whose COBOL is missing. This one they do depend on -- the step after a
+    # join consumes the join's output type, so leaving it out renders a staging store for a producer
+    # that is not there, and the job starts, runs, reads an empty store and writes nothing. That is
+    # a worse failure than the one being fixed, because it still looks like a run.
+    stranded = [
+        (step, why) for step, why in skipped if unsupplied_components(step, design, program_name)
+    ]
+    if stranded:
+        step, why = stranded[0]
+        raise UnrenderableJobError(f"step {step.step_name!r} cannot be rendered: {why}")
     #: `(package, class name, source)`, accumulated and written only once all of it exists.
     pending: list[tuple[str, str, str]] = []
 

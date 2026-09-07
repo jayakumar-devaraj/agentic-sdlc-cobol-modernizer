@@ -39,7 +39,10 @@ from cobol_modernizer.nodes.solution_architect import (
 )
 from cobol_modernizer.nodes.spec_critic import critique_spec
 from cobol_modernizer.nodes.spec_extractor import extract_spec
-from cobol_modernizer.rendering.java_job import is_chunk_step, plan_steps
+from cobol_modernizer.rendering.java_job import (
+    plan_steps,
+    unsupplied_components,
+)
 from cobol_modernizer.tools.tenant_repo import resolve_program
 
 FIXTURE_ROOT = Path(__file__).parent.parent / "fixtures" / "tenant_repo_sample"
@@ -800,9 +803,21 @@ def test_the_move_the_refusal_names_is_the_one_that_renders(all_program_entries)
     )
     renderable, skipped, _staged = plan_steps(attached[0], resolved, "CBACT04C")
 
-    assert skipped == []
-    named = [step.step_name for step in attached[0].steps if is_chunk_step(step)]
-    assert named == [step.step_name for step in renderable]
+    # **The ordering skips, not every skip** (ADR-0076). This design also splits its enrichment
+    # across two steps that read nothing, and that is not an ordering fault: no position in the
+    # chain fixes it, it has its own refusal, and asserting an empty list here would make this test
+    # a claim about two defects when ADR-0072's move only ever addressed one.
+    ordering = [
+        (step, why)
+        for step, why in skipped
+        if not unsupplied_components(step, resolved, "CBACT04C")
+    ]
+    assert ordering == []
+    assert [step.step_name for step, _why in skipped] == [
+        "resolveAccountAndCardXref",
+        "resolveInterestRate",
+    ]
+    named = [step.step_name for step in renderable]
     assert "computeCategoryFees" in named
 
 
@@ -824,8 +839,11 @@ def test_the_refusal_is_silent_when_no_single_move_would_wire_the_job(all_progra
     )
     _renderable, skipped, _staged = plan_steps(job, resolved, "CBACT04C")
 
-    # Both, precisely because the control breaks are stripped here.
+    # Both, precisely because the control breaks are stripped here -- and the two join steps
+    # beside them, which ADR-0076 skips for a reason no move addresses.
     assert [step.step_name for step, _why in skipped] == [
+        "resolveAccountAndCardXref",
+        "resolveInterestRate",
         "computeCategoryFees",
         "postAccountInterest",
     ]
