@@ -514,18 +514,46 @@ def stage_and_run_job(
     destination.write_text(source, encoding="utf-8")
     logger.info("generate: rendered job runner %s for %s", test_class, job.job_name)
 
-    result = compile_project(
-        output_dir,
-        goal="test",
-        extra_args=(f"-Dtest={test_class}", "-Dsurefire.failIfNoSpecifiedTests=false"),
-    )
+    try:
+        result = compile_project(
+            output_dir,
+            goal="test",
+            extra_args=(f"-Dtest={test_class}", "-Dsurefire.failIfNoSpecifiedTests=false"),
+        )
+    finally:
+        # **The runner does not survive the run that used it**, and this is not tidiness. It holds
+        # the absolute staged paths of one machine's temp directory, so left in place it is a test
+        # that fails for every tenant who builds the artifact this phase produced -- and, being an
+        # ordinary test in `src/test/java`, it joins any later unfiltered `test` or `verify` and
+        # takes that build down with it. Measured, not argued: the round-trip integration test,
+        # which runs `verify`, went red the first time this ran because of exactly that.
+        #
+        # What a reviewer needs from it survives in the verdict: `test_class` names what ran and
+        # `staged_inputs` names every file it was pointed at.
+        destination.unlink(missing_ok=True)
     if result.succeeded:
+        # **A green build is not evidence the job ran.** `-Dsurefire.failIfNoSpecifiedTests=false`
+        # is what keeps a project with no matching test from failing, and it means a runner surefire
+        # never picked up exits 0 exactly like one that passed. Reporting that as `completed` would
+        # put a false green on the one verdict in this pipeline that claims the program executed --
+        # so the claim is checked against the artefact instead of the exit code.
+        if not (output_dir / TRANSACTION_OUTPUT).is_file():
+            return JobRunVerdict(
+                status="refused",
+                reason=(
+                    f"the build succeeded and {TRANSACTION_OUTPUT.as_posix()} does not exist, so "
+                    f"{test_class} did not run -- surefire matched no test, which "
+                    f"-Dsurefire.failIfNoSpecifiedTests=false makes a passing build"
+                ),
+                test_class=test_class,
+                staged_inputs=staged,
+            )
         return JobRunVerdict(
             status="completed",
             reason=(
                 f"{test_class} started {job.job_name!r} and it reached COMPLETED having written "
-                f"output. Says nothing about whether the values are right -- that is the "
-                f"differential's verdict (ADR-0029)"
+                f"{TRANSACTION_OUTPUT.as_posix()}. Says nothing about whether the values are "
+                f"right -- that is the differential's verdict (ADR-0029)"
             ),
             test_class=test_class,
             staged_inputs=staged,

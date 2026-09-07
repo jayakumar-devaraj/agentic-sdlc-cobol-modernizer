@@ -17,8 +17,13 @@ from __future__ import annotations
 
 import pytest
 
-from cobol_modernizer.cli import _describe_equivalence
-from cobol_modernizer.core.contracts import NOT_RUN, EquivalenceVerdict, GenerateCliResult
+from cobol_modernizer.cli import _describe_equivalence, _describe_job_run
+from cobol_modernizer.core.contracts import (
+    NOT_RUN,
+    EquivalenceVerdict,
+    GenerateCliResult,
+    JobRunVerdict,
+)
 
 
 def _result(**kwargs) -> GenerateCliResult:
@@ -92,3 +97,21 @@ def test_a_mismatch_shows_the_first_few_and_says_how_many_more() -> None:
     assert "m0; m1; m2" in rendered
     assert "(+6 more)" in rendered
     assert "m8" not in rendered
+
+
+@pytest.mark.parametrize(
+    ("status", "expected"),
+    [
+        ("completed", "completed"),
+        ("failed", "FAILED"),
+        ("refused", "REFUSED"),
+        ("not_run", "not run"),
+    ],
+)
+def test_the_job_run_renders_a_line_for_every_status(status, expected) -> None:
+    """The run's own verdict reaches the sentence a gate reads (ADR-0075).
+
+    `failed` and `refused` are shouted and `completed` is not, for the reason this module exists: a
+    reviewer skimming a summary should have to work to miss a job that did not finish.
+    """
+    assert _describe_job_run(JobRunVerdict(status=status, reason="r")).startswith(expected)

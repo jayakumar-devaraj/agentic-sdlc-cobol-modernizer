@@ -82,8 +82,21 @@ oracle"* — and weakening that to meet the job halfway would have been the wron
 **The staged paths are baked into the rendered runner rather than passed as `-D`.** Surefire does not
 forward command-line system properties into the forked JVM without being configured to, and
 configuring the generated project's POM to make one test work would change the artifact the tenant
-ships. Baked in, the runner also names the files the run actually used, which is what an audit trail
-wants.
+ships.
+
+**So the runner does not survive the run that used it.** Baking the paths in means the file holds one
+machine's temp directory, and an ordinary test in `src/test/java` joins every later unfiltered `test`
+or `verify`. Left in place it is therefore a test that fails for every tenant who builds this
+artifact, and it takes the build with it. Measured rather than reasoned: the round-trip integration
+test runs `verify`, and it went red the first time this ran. The runner is deleted in a `finally`,
+and what a reviewer needs survives in the verdict — `test_class` names what ran, `staged_inputs`
+names every file it was pointed at.
+
+**A green build is not evidence the job ran.** `-Dsurefire.failIfNoSpecifiedTests=false` is what stops
+a project with no matching test from failing, and it makes a runner surefire never picked up exit 0
+exactly like one that passed. `completed` is therefore conditioned on the output file existing, not
+on the exit code — otherwise the one verdict in this pipeline that claims the program executed would
+be the easiest in it to fake.
 
 **This is the fourth "last thing in the way" in four records, and it is not the last one either.**
 ADR-0071 said the remaining gap was design ordering; ADR-0072 closed that and ADR-0073 was behind it;
