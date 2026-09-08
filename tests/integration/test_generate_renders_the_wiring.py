@@ -78,13 +78,60 @@ import org.junit.jupiter.api.Test;
 import org.springframework.batch.core.job.Job;
 import org.springframework.batch.core.job.JobExecution;
 import org.springframework.batch.core.job.parameters.JobParametersBuilder;
+import org.springframework.batch.core.configuration.JobRegistry;
+import org.springframework.batch.core.configuration.support.MapJobRegistry;
 import org.springframework.batch.core.launch.JobOperator;
+import org.springframework.batch.core.launch.support.TaskExecutorJobOperator;
+import org.springframework.batch.core.repository.JobRepository;
+import org.springframework.batch.core.repository.support.ResourcelessJobRepository;
+import org.springframework.batch.infrastructure.support.transaction.ResourcelessTransactionManager;
 import org.springframework.context.annotation.AnnotationConfigApplicationContext;
+import org.springframework.context.annotation.Bean;
+import org.springframework.context.annotation.Configuration;
 import org.springframework.context.support.PropertySourcesPlaceholderConfigurer;
 import org.springframework.core.env.MapPropertySource;
+import org.springframework.transaction.PlatformTransactionManager;
 
-/** Starts the job {{@code generate}} rendered. Registers no bean of its own. */
+/**
+ * Starts the job {{@code generate}} rendered.
+ *
+ * <p>Carries the batch infrastructure, which the rendered configuration deliberately does not
+ * (ADR-0080): in a delivered application Spring Boot builds those beans against the configured
+ * {{@code DataSource}}, and a configuration declaring them itself collides with that
+ * auto-configuration. This context has neither, so it supplies resourceless equivalents.
+ *
+ * <p>It previously said it registered no bean of its own, which was true until the beans moved.
+ */
 class RenderedWiringRunTest {{
+
+    @Configuration
+    static class Infrastructure {{
+
+        @Bean
+        JobRepository jobRepository() {{
+            return new ResourcelessJobRepository();
+        }}
+
+        @Bean
+        PlatformTransactionManager transactionManager() {{
+            return new ResourcelessTransactionManager();
+        }}
+
+        @Bean
+        JobRegistry jobRegistry() {{
+            return new MapJobRegistry();
+        }}
+
+        @Bean
+        JobOperator jobOperator(JobRepository jobRepository, JobRegistry jobRegistry)
+                throws Exception {{
+            TaskExecutorJobOperator operator = new TaskExecutorJobOperator();
+            operator.setJobRepository(jobRepository);
+            operator.setJobRegistry(jobRegistry);
+            operator.afterPropertiesSet();
+            return operator;
+        }}
+    }}
 
     @Test
     void runsTheRenderedJob() throws Exception {{
@@ -97,7 +144,8 @@ class RenderedWiringRunTest {{
             context.registerBean(PropertySourcesPlaceholderConfigurer.class);
             context.register(
                     com.modernized.batch.job.InterestJobConfiguration.class,
-                    com.modernized.batch.job.InterestJobFileBindings.class);
+                    com.modernized.batch.job.InterestJobFileBindings.class,
+                    Infrastructure.class);
             context.refresh();
 
             Job job = context.getBean(Job.class);
