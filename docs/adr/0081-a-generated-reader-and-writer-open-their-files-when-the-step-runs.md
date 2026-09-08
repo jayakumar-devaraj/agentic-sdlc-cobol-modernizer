@@ -55,6 +55,20 @@ generated project refreshes a context, and so does Boot while resolving the job 
 The control-break aggregating reader (`java_aggregation`) was checked and needed no change: its
 constructor stores the staging store and its `aggregate()` already runs on first `read()`.
 
+### The working set has the same defect and is deliberately not fixed here
+
+`java_working_set` renders a constructor that loads the file it holds, which is the same mistake.
+It is left alone because **no pipeline-generated project can contain one**: `_refuse_working_set`
+refuses a `reads_own_writes` step before any binding is rendered, so the only working set that exists
+is the hand-written `CBTRN02C` fixture, which declares its own bean. Fixing it would also need a
+different mechanism — a working set is not an `ItemReader` or `ItemWriter`, so nothing auto-registers
+it as a stream, and the step would have to declare `.stream(state)` or load it from the
+`StepExecutionListener` that already flushes it.
+
+Changing a renderer whose output nothing can reach, by a mechanism nothing exercises, is the kind of
+unverifiable fix this repository refuses elsewhere. It is recorded so it is not rediscovered as new,
+and it becomes real the day a working-set bean is rendered (register #14, ADR-0043, G7).
+
 ## Decision
 
 **A rendered reader or writer takes its `Path`s in its constructor and touches the disk in
