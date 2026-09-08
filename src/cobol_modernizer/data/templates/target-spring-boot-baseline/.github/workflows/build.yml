@@ -1,0 +1,48 @@
+# Build and test this generated project, in the repository it was delivered to.
+#
+# **Why a generated project carries its own CI.** Everything this pipeline verifies -- the compile,
+# the rendered job's run, the differential against the COBOL oracle -- happens inside the
+# specialist container, and then the artifact is pushed somewhere that re-checked nothing. Four
+# deliveries had landed in the output repository before anyone noticed it had never run a workflow,
+# so the only evidence the delivered code built was a log line in a machine that had already
+# discarded the workspace. This makes the artifact answerable in its own right.
+#
+# `verify` rather than `test`: the baseline ships `BaselineStackTest`, a `@SpringBootTest`
+# `@Testcontainers` case that starts a real PostgreSQL and is the gate ADR-0034 put on the pinned
+# JDK. GitHub-hosted runners provide the Docker daemon it needs. Running only `test` would skip the
+# one check that proves the Spring context can actually start.
+#
+# **No `-Dsurefire.failIfNoSpecifiedTests=false` here, deliberately.** The pipeline passes that flag
+# when it runs one narrowed test, and it makes a build that matched *no test* exit 0 exactly like
+# one that passed. An unnarrowed `verify` has no such excuse: if the test sources vanished, this
+# job should go red.
+name: build
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up the pinned JDK
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          # Matches `java.version` and `maven.compiler.release` in pom.xml (ADR-0034). A runner on
+          # an older JDK fails at compile with a release-version error rather than anything that
+          # names the real cause, so this is pinned rather than left to the runner's default.
+          java-version: '25'
+          cache: maven
+
+      # `./mvnw` rather than `mvn`: the wrapper pins the Maven distribution, and it is the same
+      # entry point the generating pipeline builds with. A runner's own Maven could differ.
+      - name: Build, test and verify
+        run: ./mvnw -B verify

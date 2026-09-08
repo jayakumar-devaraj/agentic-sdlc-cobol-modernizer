@@ -89,6 +89,12 @@ cobol_modernizer = [
     # `./mvnw` in an installed baseline exited 1 with "Cannot start maven from wrapper" before
     # Maven ever started. `local_compiler` prefers `./mvnw` over `mvn`, so that is the build path.
     "data/templates/**/.mvn/wrapper/*",
+    # Same dot-directory rule, same cost if it is forgotten: the generated project carries its own
+    # CI workflow so the delivered artifact is answerable in the repository it lands in, and
+    # `data/templates/**/*` does not descend into `.github` any more than it did into `.mvn`.
+    # Without this line the wheel ships a template whose workflow is missing and every generated
+    # project is silently delivered without a build -- which is the state that prompted adding it.
+    "data/templates/**/.github/workflows/*",
 ]
 
 # `include_package_data` collects what is on disk and `.gitignore` has no say in it: a developer
