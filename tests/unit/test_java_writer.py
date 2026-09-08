@@ -111,8 +111,49 @@ def test_the_records_trailing_filler_is_written_as_spaces(design):
 def test_an_appending_writer_truncates_its_file_first(design):
     """`OPEN OUTPUT` starts an empty file; appending to a stale one would double it on a re-run."""
     rendered = render(COMPLETE_STEP, design)
-    assert "Files.deleteIfExists(transact)" in rendered
+    assert "Files.deleteIfExists(output)" in rendered
     assert "StandardOpenOption.APPEND" in rendered
+
+
+def test_a_writer_truncates_when_the_step_starts_and_not_before(design):
+    """ADR-0081: `deleteIfExists` in the constructor deleted the job's output on a context refresh.
+
+    Asserted as "the constructor assigns and does nothing else" rather than "`open` exists",
+    because the defect was a writer that did both -- and a check for an `open` somewhere in the
+    file would have passed on it.
+    """
+    rendered = render(COMPLETE_STEP, design)
+    constructor = rendered.split(f"public {writer_class_name(COMPLETE_STEP)}(")[1].split(
+        "\n    }"
+    )[0]
+    assert constructor.count(";") == 1
+    assert "this.output = " in constructor
+    assert "Files." not in constructor
+    assert "throws IOException" not in constructor
+    opened = rendered.split("public void open(ExecutionContext executionContext)")[1].split(
+        "\n    }"
+    )[0]
+    assert "Files.deleteIfExists(output);" in opened
+    assert "throw new ItemStreamException(" in opened
+    assert "ItemWriter<com.modernized.batch.domain.Tran>, ItemStream {" in rendered
+
+
+def test_a_rewriting_writer_reads_the_file_it_replaces_at_step_start(design):
+    """The `REWRITE` writer loads the existing file, and that read is a step-start read too.
+
+    It is the same defect as the reader's -- opening a file to build a bean -- and it failed the
+    same way, just later in the resolution order.
+    """
+    rendered = render(POSTING_STEP, design)
+    constructor = rendered.split(f"public {writer_class_name(POSTING_STEP)}(")[1].split(
+        "\n    }"
+    )[0]
+    assert "fixedRecords" not in constructor
+    opened = rendered.split("public void open(ExecutionContext executionContext)")[1].split(
+        "\n    }"
+    )[0]
+    assert "CobolRecord.fixedRecords(output," in opened
+    assert "records.clear();" in opened
 
 
 def test_a_rewriting_writer_replaces_by_key_and_keeps_the_file(design):
