@@ -775,20 +775,14 @@ def render_job_configuration(
 
 import java.util.List;
 import java.util.Map;
-{sequential_imports}import org.springframework.batch.core.configuration.JobRegistry;
-import org.springframework.batch.core.configuration.support.MapJobRegistry;
-import org.springframework.batch.core.job.Job;
+{sequential_imports}import org.springframework.batch.core.job.Job;
 import org.springframework.batch.core.job.builder.JobBuilder;
 import org.springframework.batch.core.job.builder.SimpleJobBuilder;
-import org.springframework.batch.core.launch.JobOperator;
-import org.springframework.batch.core.launch.support.TaskExecutorJobOperator;
 import org.springframework.batch.core.repository.JobRepository;
-import org.springframework.batch.core.repository.support.ResourcelessJobRepository;
 import org.springframework.batch.core.step.Step;
 import org.springframework.batch.core.step.builder.StepBuilder;
 import org.springframework.batch.infrastructure.item.ItemReader;
 import org.springframework.batch.infrastructure.item.ItemWriter;
-import org.springframework.batch.infrastructure.support.transaction.ResourcelessTransactionManager;
 import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
@@ -824,30 +818,6 @@ public class {class_name} {{
 {_INDENT}/** Every step of this job, in declared order. */
 {_INDENT}public static final List<String> STEP_NAMES = List.of({names});
 
-{_INDENT}@Bean
-{_INDENT}JobRepository jobRepository() {{
-{_INDENT * 2}return new ResourcelessJobRepository();
-{_INDENT}}}
-
-{_INDENT}@Bean
-{_INDENT}PlatformTransactionManager transactionManager() {{
-{_INDENT * 2}return new ResourcelessTransactionManager();
-{_INDENT}}}
-
-{_INDENT}@Bean
-{_INDENT}JobRegistry jobRegistry() {{
-{_INDENT * 2}return new MapJobRegistry();
-{_INDENT}}}
-
-{_INDENT}@Bean
-{_INDENT}JobOperator jobOperator(JobRepository jobRepository, JobRegistry jobRegistry)
-{_INDENT * 3}throws Exception {{
-{_INDENT * 2}TaskExecutorJobOperator operator = new TaskExecutorJobOperator();
-{_INDENT * 2}operator.setJobRepository(jobRepository);
-{_INDENT * 2}operator.setJobRegistry(jobRegistry);
-{_INDENT * 2}operator.afterPropertiesSet();
-{_INDENT * 2}return operator;
-{_INDENT}}}
 
 {staging_beans}
 

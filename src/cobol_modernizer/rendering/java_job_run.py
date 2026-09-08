@@ -99,10 +99,19 @@ import org.junit.jupiter.api.Test;
 import org.springframework.batch.core.job.Job;
 import org.springframework.batch.core.job.JobExecution;
 import org.springframework.batch.core.job.parameters.JobParametersBuilder;
+import org.springframework.batch.core.configuration.JobRegistry;
+import org.springframework.batch.core.configuration.support.MapJobRegistry;
 import org.springframework.batch.core.launch.JobOperator;
+import org.springframework.batch.core.launch.support.TaskExecutorJobOperator;
+import org.springframework.batch.core.repository.JobRepository;
+import org.springframework.batch.core.repository.support.ResourcelessJobRepository;
+import org.springframework.batch.infrastructure.support.transaction.ResourcelessTransactionManager;
 import org.springframework.context.annotation.AnnotationConfigApplicationContext;
+import org.springframework.context.annotation.Bean;
+import org.springframework.context.annotation.Configuration;
 import org.springframework.context.support.PropertySourcesPlaceholderConfigurer;
 import org.springframework.core.env.MapPropertySource;
+import org.springframework.transaction.PlatformTransactionManager;
 
 /**
  * Runs job "{job.job_name}", rendered from design.json for {job.program_name} by
@@ -116,6 +125,48 @@ import org.springframework.core.env.MapPropertySource;
  * working directory of a surefire fork is not the one that staged them.
  */
 class {test_class} {{
+
+    /**
+     * The batch infrastructure this context needs, and which the generated configuration
+     * deliberately does not carry (ADR-0080).
+     *
+     * <p>In the delivered application Spring Boot builds these against the configured
+     * {{@code DataSource}} -- that is what {{@code BatchApplication}} means by carrying no
+     * {{@code @EnableBatchProcessing}}. A configuration that declared them itself would collide
+     * with that auto-configuration and the application would not start.
+     *
+     * <p>This context has no auto-configuration and no {{@code DataSource}}, so it supplies
+     * resourceless equivalents. They live here, in a test that is deleted after the run, rather
+     * than in the artifact the tenant ships.
+     */
+    @Configuration
+    static class Infrastructure {{
+
+        @Bean
+        JobRepository jobRepository() {{
+            return new ResourcelessJobRepository();
+        }}
+
+        @Bean
+        PlatformTransactionManager transactionManager() {{
+            return new ResourcelessTransactionManager();
+        }}
+
+        @Bean
+        JobRegistry jobRegistry() {{
+            return new MapJobRegistry();
+        }}
+
+        @Bean
+        JobOperator jobOperator(JobRepository jobRepository, JobRegistry jobRegistry)
+                throws Exception {{
+            TaskExecutorJobOperator operator = new TaskExecutorJobOperator();
+            operator.setJobRepository(jobRepository);
+            operator.setJobRegistry(jobRegistry);
+            operator.afterPropertiesSet();
+            return operator;
+        }}
+    }}
 
     /** Where this run's inputs were staged, overriding the rendered {{@code cobol.file.*}} defaults. */
     private static final Map<String, Object> STAGED = Map.of(
@@ -139,6 +190,7 @@ class {test_class} {{
             context.register(
                     {configuration}.class,
                     {bindings}.class,
+                    Infrastructure.class,
                     PropertySourcesPlaceholderConfigurer.class);
             context.refresh();
 

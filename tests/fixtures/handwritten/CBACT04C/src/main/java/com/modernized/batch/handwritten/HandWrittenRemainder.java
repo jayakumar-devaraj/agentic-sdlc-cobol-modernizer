@@ -8,6 +8,14 @@ import com.modernized.batch.reader.ComputeInterestItemReader;
 import com.modernized.batch.writer.CompleteTransactionItemWriter;
 import com.modernized.batch.writer.PostAccountInterestItemWriter;
 import java.nio.file.Path;
+import org.springframework.batch.core.configuration.JobRegistry;
+import org.springframework.batch.core.configuration.support.MapJobRegistry;
+import org.springframework.batch.core.launch.JobOperator;
+import org.springframework.batch.core.launch.support.TaskExecutorJobOperator;
+import org.springframework.batch.core.repository.JobRepository;
+import org.springframework.batch.core.repository.support.ResourcelessJobRepository;
+import org.springframework.batch.infrastructure.support.transaction.ResourcelessTransactionManager;
+import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.batch.infrastructure.item.ItemReader;
 import org.springframework.batch.infrastructure.item.ItemWriter;
 import org.springframework.context.annotation.Bean;
@@ -72,5 +80,38 @@ public class HandWrittenRemainder {
     @Bean
     ItemWriter<Account> accountItemWriter() throws Exception {
         return new PostAccountInterestItemWriter(INPUT.resolve("acctdata-stage1.dat"));
+    }
+
+    /**
+     * The batch infrastructure this context needs, which the rendered configuration deliberately
+     * no longer carries (ADR-0080).
+     *
+     * <p>In the delivered application Spring Boot builds these against the configured
+     * {@code DataSource}. This context is a plain {@code AnnotationConfigApplicationContext} with
+     * neither auto-configuration nor a database, so the wiring that stands in for the generated
+     * remainder supplies resourceless equivalents -- which is what this class is for.
+     */
+    @Bean
+    JobRepository jobRepository() {
+        return new ResourcelessJobRepository();
+    }
+
+    @Bean
+    PlatformTransactionManager transactionManager() {
+        return new ResourcelessTransactionManager();
+    }
+
+    @Bean
+    JobRegistry jobRegistry() {
+        return new MapJobRegistry();
+    }
+
+    @Bean
+    JobOperator jobOperator(JobRepository jobRepository, JobRegistry jobRegistry) throws Exception {
+        TaskExecutorJobOperator operator = new TaskExecutorJobOperator();
+        operator.setJobRepository(jobRepository);
+        operator.setJobRegistry(jobRegistry);
+        operator.afterPropertiesSet();
+        return operator;
     }
 }
