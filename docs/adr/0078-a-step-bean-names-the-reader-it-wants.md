@@ -51,14 +51,32 @@ input and output types differed and only one bean matched.
 
 ## Decision
 
-**A step bean names the bean it wants.** The file reader is injected as
-`@Qualifier("<readerBeanName>") ItemReader<T> reader`, and the file writer as
-`@Qualifier("<writerBeanName>") ItemWriter<T> writer`.
+**A step bean names the bean it wants, where two beans could answer.** The file reader is injected
+as `@Qualifier("<readerBeanName>") ItemReader<T> reader` **when some staging store also carries
+`T`** — and as a bare `ItemReader<T>` otherwise. The writer follows the same rule against the same
+condition.
 
-**The writer is qualified too, though no run has failed on it.** A staging store is an
-`ItemWriter<T>` as well, so a step writing a file whose `output_type` is carried by some store has
-exactly this ambiguity available to it. The bean name is already known at the point the parameter is
-rendered, so qualifying it costs nothing now and costs a live run later.
+**The condition is the decision, and the first version did not have one.** Qualifying every reader
+and writer is the obvious form of this fix, it is what was written first, and it is wrong. The bean
+named is rendered by `java_file_bindings`; a caller that renders a job configuration while supplying
+its *own* bindings names that bean differently, and `test_hand_written_round_trip` is exactly such a
+caller. Unqualified, its `computeInterestStep` resolved one candidate by type and worked. Qualified
+unconditionally, it asked for a bean named `computeInterestItemReader` that nothing had rendered:
+
+```
+No qualifying bean of type 'ItemReader<...TranCatBalWithRate>' available:
+expected at least 1 bean which qualifies as autowire candidate.
+Dependency annotations: {@Qualifier("computeInterestItemReader")}
+```
+
+**Nineteen integration errors, measured rather than reasoned**, and none of them visible in the 940
+unit and contract tests that passed. An unconditional qualifier trades an ambiguity that arises in
+one design shape for a name coupling that binds two modules in every shape — the worse trade, and
+the reason this rule carries a condition.
+
+**The writer is covered by the same condition, though no run has failed on it.** A staging store is
+an `ItemWriter<T>` as well, so a step writing a file whose `output_type` some store also carries is
+ambiguous in exactly this way. Guarded now rather than after a run finds it.
 
 **Qualified rather than refused.** The alternative was to extend the bindings' `claimed` map to
 include staging stores, which would have refused this design. That is the wrong direction: a
@@ -93,6 +111,11 @@ v0.4.6. It also classified it correctly: *"a defect in it rather than in the com
 sequence was found by rendering a design offline in seconds. This defect is invisible until a Spring
 context starts: the configuration compiles, every bean exists, and the ambiguity is a *runtime*
 resolution failure. The habit stands, and its limit is now known.
+
+**The property test asserts a biconditional, and that is not tidiness.** "Every reader is
+qualified" is true of the broken version; only "qualified exactly when a store shares the type"
+separates it from the correct one. A test that states one direction of a rule cannot catch the
+failure of the other, and here the other direction was the defect.
 
 **A test helper broke in a way worth recording.** `_readers` matched a step bean's parameter list
 with `\\(([^)]*)\\)`, which stops at the first `)` — now the one inside `@Qualifier("...")`. It

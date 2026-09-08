@@ -622,26 +622,40 @@ def test_a_passthrough_head_does_not_share_a_reader_type_with_its_own_store():
     assert reads_a_file(head, design, "CBACT04C", job), "the head must also read a file"
 
 
-def test_an_injected_reader_or_writer_names_the_bean_it_wants():
-    """Every step bean's reader and writer resolve to exactly one candidate.
+def test_an_injected_reader_or_writer_names_the_bean_when_a_store_shares_its_type():
+    """A parameter is qualified exactly when a staging store also satisfies it.
 
-    Asserted as a property over the whole configuration rather than on the one step that failed: a
-    staging store `implements ItemWriter<T>, ItemReader<T>`, so any step whose file reader or writer
-    carries a staged type has the same ambiguity available to it. A parameter is unambiguous when it
-    either names a concrete staging class or carries a `@Qualifier`.
+    Stated as a biconditional rather than "everything is qualified", and the second half is the
+    half that was wrong first. Qualifying unconditionally names a bean that
+    `java_file_bindings` did not render whenever the caller supplies its own bindings -- which
+    `test_hand_written_round_trip` does -- turning an ambiguity nobody had into a missing bean
+    everybody has. That cost nineteen integration errors, so this asserts both directions.
     """
     design, job = _step60_job()
+    _renderable, _skipped, staged = plan_steps(job, design, "CBACT04C")
+    stored = {producer.output_type for producer in staged}
+    assert stored, "this design must stage something, or the property below is vacuous"
+
     source = render_job_configuration(
         job, design, "CBACT04C",
         package="j", domain_package="dom", processor_package="p", reader_package="rd",
     )
-
     flat = " ".join(source.split())
-    interfaces = re.findall(r"(@Qualifier\(\"\w+\"\) )?Item(?:Reader|Writer)<[\w.]+> \w+", flat)
-    assert interfaces, "no reader or writer parameters were rendered at all"
-    unqualified = [match for match in interfaces if not match]
-    assert unqualified == [], (
-        f"{len(unqualified)} reader/writer parameter(s) resolve by type alone, and a staging store "
-        "satisfies both interfaces"
+
+    found = re.findall(
+        r'(@Qualifier\("\w+"\) )?Item(?:Reader|Writer)<dom\.(\w+)> \w+', flat
     )
+    assert found, "no reader or writer parameters were rendered at all"
+
+    for qualifier, item_type in found:
+        if item_type in stored:
+            assert qualifier, (
+                f"Item<{item_type}> resolves by type alone while a store carries {item_type}"
+            )
+        else:
+            assert not qualifier, (
+                f"Item<{item_type}> is qualified though no store carries {item_type} -- the named "
+                "bean may not exist when the caller renders its own bindings"
+            )
+
     assert "import org.springframework.beans.factory.annotation.Qualifier;" in source

@@ -562,6 +562,7 @@ def _step_bean(
     reader_package: str,
     job: BatchJobDesign | None = None,
     working_set_package: str | None = None,
+    staged_types: frozenset[str] = frozenset(),
 ) -> str:
     """One `@Bean Step`, wired to whichever reader and writer this step's data comes from and to.
 
@@ -599,15 +600,23 @@ def _step_bean(
         reader_parameter = f"{staging} {_bean_name(staging)}"
         reader_expression = _bean_name(staging)
     elif _has_file_source(step, design, program_name):
-        # **Qualified by bean name rather than resolved by type alone** (ADR-0078). A staging store
+        # **Qualified only where a store of this type is also in scope** (ADR-0078). A staging store
         # `implements ItemWriter<T>, ItemReader<T>`, so a *passthrough* step -- one whose
         # `input_type` equals its `output_type` -- offers Spring two candidates for this one
-        # parameter: the file reader it reads from, and the store it writes to. Both are
-        # `ItemReader<T>`, the context cannot choose, and the job fails at startup having compiled
-        # cleanly and reported every step wired.
-        reader_parameter = (
-            f'@Qualifier("{_bean_name(reader_class_name(step))}") ItemReader<{input_type}> reader'
-        )
+        # parameter: the file reader it reads from, and the store it writes to. The context cannot
+        # choose, and the job fails at startup having compiled cleanly and reported every step wired.
+        #
+        # **Narrow on purpose.** The bean this names is rendered by `java_file_bindings`, and a
+        # caller that renders the job configuration while supplying its own bindings -- which
+        # `test_hand_written_round_trip` does -- names that bean differently. Qualifying
+        # unconditionally couples two modules by a string and turns an ambiguity nobody had into a
+        # missing bean everybody has: measured, that failed nineteen integration tests. So the
+        # annotation appears exactly where two candidates exist.
+        reader_parameter = f"ItemReader<{input_type}> reader"
+        if step.input_type in staged_types:
+            reader_parameter = (
+                f'@Qualifier("{_bean_name(reader_class_name(step))}") {reader_parameter}'
+            )
         reader_expression = "reader"
     else:
         raise UnrenderableJobError(
@@ -616,13 +625,15 @@ def _step_bean(
         )
 
     if _has_file_sink(step, design, program_name):
-        # The same collision is available here and has not been seen yet: a staging store is an
-        # `ItemWriter<T>` too, so a step writing a file whose `output_type` is also carried by some
-        # store would be ambiguous in exactly this way. Qualified now rather than after a run finds
-        # it, since the name is already known at this point.
-        writer_parameter = (
-            f'@Qualifier("{_bean_name(writer_class_name(step))}") ItemWriter<{output_type}> writer'
-        )
+        # The same collision is available here and has not been seen on a run yet: a staging store
+        # is an `ItemWriter<T>` too, so a step writing a file whose `output_type` some store also
+        # carries is ambiguous in exactly this way. Guarded by the same condition for the same
+        # reason.
+        writer_parameter = f"ItemWriter<{output_type}> writer"
+        if step.output_type in staged_types:
+            writer_parameter = (
+                f'@Qualifier("{_bean_name(writer_class_name(step))}") {writer_parameter}'
+            )
         writer_expression = "writer"
     else:
         staging = staging_class_name(step)
@@ -719,6 +730,7 @@ def render_job_configuration(
             reader_package=reader_package,
             job=job,
             working_set_package=working_set_package,
+            staged_types=frozenset(producer.output_type for producer in staged),
         )
         for step in renderable
     )
