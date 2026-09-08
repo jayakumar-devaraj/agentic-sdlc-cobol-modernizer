@@ -40,6 +40,32 @@ cobol.file.transact = ${cobol.file.base}/TRANSACT
 `XREFFILE` and `DISCGRP` are declared in `file_access_paths`, resolvable, and bound to nothing;
 `ACCTFILE` is bound only as a writer.
 
+### The stranding is younger than the design shape
+
+Added after the live run that closed this record, because the first version of it implied the shape
+had never worked and that is not what the artifacts say.
+
+`agentic-patch/step55-cbact04c-20260906-090845`, generated under **v0.4.4**, ships the same split
+design and three file readers over one driving stream:
+
+```java
+ResolveAccountAndCardXrefItemReader(Path tcatbalf)
+ResolveInterestRateItemReader(Path tcatbalf, Path acctfile, Path xreffile)
+ComputeMonthlyInterestItemReader(Path tcatbalf, Path acctfile, Path xreffile, Path discgrp)
+```
+
+So the lookup files *were* read — by three separate steps, each re-iterating `TCATBALF` from the
+start and redoing the keyed reads the step before it had already done. That is the defect
+[ADR-0074](0074-a-mid-chain-step-reads-its-predecessor-not-a-file.md) names in its own words, and
+fixing it was right. **For this design shape it also left the only file-reading step as the first
+resolve step, holding a one-path reader** — which is when `XREFFILE` and `DISCGRP` stopped reaching a
+reader at all. `git show v0.4.4:docs/adr` carries no ADR-0074; `v0.4.5` does.
+
+v0.4.4 read them redundantly and wrongly; v0.4.5 fixed the redundancy and stranded them; this record
+has each read once, in one reader, at the step that uses them. Worth stating because a fix that
+closes one defect and opens another is this repository's most frequent shape, and naming the
+predecessor is the only thing that makes the pattern visible.
+
 ### Why a processor cannot do it
 
 `render_processor` gives a processor exactly one method, `process(item)`, with constructor
