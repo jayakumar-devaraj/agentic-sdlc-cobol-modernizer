@@ -33,8 +33,10 @@ from cobol_modernizer.rendering.java_reader import (
     UnrenderableReaderError,
     _paths_for,
     locate_item_field,
+    reader_class_name,
 )
 from cobol_modernizer.rendering.java_working_set import working_set_class_name
+from cobol_modernizer.rendering.java_writer import writer_class_name
 
 _INDENT = " " * 4
 
@@ -597,7 +599,15 @@ def _step_bean(
         reader_parameter = f"{staging} {_bean_name(staging)}"
         reader_expression = _bean_name(staging)
     elif _has_file_source(step, design, program_name):
-        reader_parameter = f"ItemReader<{input_type}> reader"
+        # **Qualified by bean name rather than resolved by type alone** (ADR-0078). A staging store
+        # `implements ItemWriter<T>, ItemReader<T>`, so a *passthrough* step -- one whose
+        # `input_type` equals its `output_type` -- offers Spring two candidates for this one
+        # parameter: the file reader it reads from, and the store it writes to. Both are
+        # `ItemReader<T>`, the context cannot choose, and the job fails at startup having compiled
+        # cleanly and reported every step wired.
+        reader_parameter = (
+            f'@Qualifier("{_bean_name(reader_class_name(step))}") ItemReader<{input_type}> reader'
+        )
         reader_expression = "reader"
     else:
         raise UnrenderableJobError(
@@ -606,7 +616,13 @@ def _step_bean(
         )
 
     if _has_file_sink(step, design, program_name):
-        writer_parameter = f"ItemWriter<{output_type}> writer"
+        # The same collision is available here and has not been seen yet: a staging store is an
+        # `ItemWriter<T>` too, so a step writing a file whose `output_type` is also carried by some
+        # store would be ambiguous in exactly this way. Qualified now rather than after a run finds
+        # it, since the name is already known at this point.
+        writer_parameter = (
+            f'@Qualifier("{_bean_name(writer_class_name(step))}") ItemWriter<{output_type}> writer'
+        )
         writer_expression = "writer"
     else:
         staging = staging_class_name(step)
@@ -761,6 +777,7 @@ import org.springframework.batch.core.step.builder.StepBuilder;
 import org.springframework.batch.infrastructure.item.ItemReader;
 import org.springframework.batch.infrastructure.item.ItemWriter;
 import org.springframework.batch.infrastructure.support.transaction.ResourcelessTransactionManager;
+import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.context.annotation.Lazy;

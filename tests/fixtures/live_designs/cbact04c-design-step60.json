@@ -1,0 +1,2251 @@
+{
+  "schema_version": "3.10.0",
+  "generated_at": "2026-09-08T13:06:37.385344Z",
+  "programs": [
+    {
+      "program_name": "CBACT04C",
+      "spec_extraction": {
+        "program_name": "CBACT04C",
+        "paragraph_names": [
+          "0000-TCATBALF-OPEN",
+          "0100-XREFFILE-OPEN",
+          "0200-DISCGRP-OPEN",
+          "0300-ACCTFILE-OPEN",
+          "0400-TRANFILE-OPEN",
+          "1000-TCATBALF-GET-NEXT",
+          "1050-UPDATE-ACCOUNT",
+          "1100-GET-ACCT-DATA",
+          "1110-GET-XREF-DATA",
+          "1200-GET-INTEREST-RATE",
+          "1200-A-GET-DEFAULT-INT-RATE",
+          "1300-COMPUTE-INTEREST",
+          "1300-B-WRITE-TX",
+          "1400-COMPUTE-FEES",
+          "9000-TCATBALF-CLOSE",
+          "9100-XREFFILE-CLOSE",
+          "9200-DISCGRP-CLOSE",
+          "9300-ACCTFILE-CLOSE",
+          "9400-TRANFILE-CLOSE",
+          "Z-GET-DB2-FORMAT-TIMESTAMP",
+          "9999-ABEND-PROGRAM",
+          "9910-DISPLAY-IO-STATUS"
+        ],
+        "field_mappings": [
+          {
+            "field_name": "FD-TRANCAT-ACCT-ID",
+            "raw_pic": "9(11)",
+            "field_type": "numeric",
+            "usage": "DISPLAY",
+            "signed": false,
+            "precision": 11,
+            "scale": 0,
+            "string_length": null,
+            "java_type": "BigDecimal",
+            "source_text": "              10 FD-TRANCAT-ACCT-ID             PIC 9(11).                      "
+          },
+          {
+            "field_name": "FD-TRANCAT-TYPE-CD",
+            "raw_pic": "X(02)",
+            "field_type": "alphanumeric",
+            "usage": "DISPLAY",
+            "signed": false,
+            "precision": null,
+            "scale": null,
+            "string_length": 2,
+            "java_type": "String",
+            "source_text": "              10 FD-TRANCAT-TYPE-CD             PIC X(02).                      "
+          },
+          {
+            "field_name": "FD-TRANCAT-CD",
+            "raw_pic": "9(04)",
+            "field_type": "numeric",
+            "usage": "DISPLAY",
+            "signed": false,
+            "precision": 4,
+            "scale": 0,
+            "string_length": null,
+            "java_type": "BigDecimal",
+            "source_text": "              10 FD-TRANCAT-CD                  PIC 9(04).                      "
+          },
+          {
+            "field_name": "FD-FD-TRAN-CAT-DATA",
+            "raw_pic": "X(33)",
+            "field_type": "alphanumeric",
+            "usage": "DISPLAY",
+            "signed": false,
+            "precision": null,
+            "scale": null,
+            "string_length": 33,
+            "java_type": "String",
+            "source_text": "           05 FD-FD-TRAN-CAT-DATA               PIC X(33).                      "
+          },
+          {
+            "field_name": "FD-XREF-CARD-NUM",
+            "raw_pic": "X(16)",
+            "field_type": "alphanumeric",
+            "usage": "DISPLAY",
+            "signed": false,
+            "precision": null,
+            "scale": null,
+            "string_length": 16,
+            "java_type": "String",
+            "source_text": "           05 FD-XREF-CARD-NUM                  PIC X(16).                      "
+          },
+          {
+            "field_name": "FD-XREF-CUST-NUM",
+            "raw_pic": "9(09)",
+            "field_type": "numeric",
+            "usage": "DISPLAY",
+            "signed": false,
+            "precision": 9,
+            "scale": 0,
+            "string_length": null,
+            "java_type": "BigDecimal",
+            "source_text": "           05 FD-XREF-CUST-NUM                  PIC 9(09).                      "
+          },
+          {
+            "field_name": "FD-XREF-ACCT-ID",
+            "raw_pic": "9(11)",
+            "field_type": "numeric",
+            "usage": "DISPLAY",
+            "signed": false,
+            "precision": 11,
+            "scale": 0,
+            "string_length": null,
+            "java_type": "BigDecimal",
+            "source_text": "           05 FD-XREF-ACCT-ID                   PIC 9(11).                      "
+          },
+          {
+            "field_name": "FD-XREF-FILLER",
+            "raw_pic": "X(14)",
+            "field_type": "alphanumeric",
+            "usage": "DISPLAY",
+            "signed": false,
+            "precision": null,
+            "scale": null,
+            "string_length": 14,
+            "java_type": "String",
+            "source_text": "           05 FD-XREF-FILLER                    PIC X(14).                      "
+          },
+          {
+            "field_name": "FD-DIS-ACCT-GROUP-ID",
+            "raw_pic": "X(10)",
+            "field_type": "alphanumeric",
+            "usage": "DISPLAY",
+            "signed": false,
+            "precision": null,
+            "scale": null,
+            "string_length": 10,
+            "java_type": "String",
+            "source_text": "              10 FD-DIS-ACCT-GROUP-ID           PIC X(10).                      "
+          },
+          {
+            "field_name": "FD-DIS-TRAN-TYPE-CD",
+            "raw_pic": "X(02)",
+            "field_type": "alphanumeric",
+            "usage": "DISPLAY",
+            "signed": false,
+            "precision": null,
+            "scale": null,
+            "string_length": 2,
+            "java_type": "String",
+            "source_text": "              10 FD-DIS-TRAN-TYPE-CD            PIC X(02).                      "
+          },
+          {
+            "field_name": "FD-DIS-TRAN-CAT-CD",
+            "raw_pic": "9(04)",
+            "field_type": "numeric",
+            "usage": "DISPLAY",
+            "signed": false,
+            "precision": 4,
+            "scale": 0,
+            "string_length": null,
+            "java_type": "BigDecimal",
+            "source_text": "              10 FD-DIS-TRAN-CAT-CD             PIC 9(04).                      "
+          },
+          {
+            "field_name": "FD-DISCGRP-DATA",
+            "raw_pic": "X(34)",
+            "field_type": "alphanumeric",
+            "usage": "DISPLAY",
+            "signed": false,
+            "precision": null,
+            "scale": null,
+            "string_length": 34,
+            "java_type": "String",
+            "source_text": "           05 FD-DISCGRP-DATA                   PIC X(34).                      "
+          },
+          {
+            "field_name": "FD-ACCT-ID",
+            "raw_pic": "9(11)",
+            "field_type": "numeric",
+            "usage": "DISPLAY",
+            "signed": false,
+            "precision": 11,
+            "scale": 0,
+            "string_length": null,
+            "java_type": "BigDecimal",
+            "source_text": "           05 FD-ACCT-ID                        PIC 9(11).                      "
+          },
+          {
+            "field_name": "FD-ACCT-DATA",
+            "raw_pic": "X(289)",
+            "field_type": "alphanumeric",
+            "usage": "DISPLAY",
+            "signed": false,
+            "precision": null,
+            "scale": null,
+            "string_length": 289,
+            "java_type": "String",
+            "source_text": "           05 FD-ACCT-DATA                      PIC X(289).                     "
+          },
+          {
+            "field_name": "FD-TRANS-ID",
+            "raw_pic": "X(16)",
+            "field_type": "alphanumeric",
+            "usage": "DISPLAY",
+            "signed": false,
+            "precision": null,
+            "scale": null,
+            "string_length": 16,
+            "java_type": "String",
+            "source_text": "           05 FD-TRANS-ID                       PIC X(16).                      "
+          },
+          {
+            "field_name": "FD-ACCT-DATA",
+            "raw_pic": "X(334)",
+            "field_type": "alphanumeric",
+            "usage": "DISPLAY",
+            "signed": false,
+            "precision": null,
+            "scale": null,
+            "string_length": 334,
+            "java_type": "String",
+            "source_text": "           05 FD-ACCT-DATA                      PIC X(334).                     "
+          },
+          {
+            "field_name": "TCATBALF-STAT1",
+            "raw_pic": "X",
+            "field_type": "alphanumeric",
+            "usage": "DISPLAY",
+            "signed": false,
+            "precision": null,
+            "scale": null,
+            "string_length": 1,
+            "java_type": "String",
+            "source_text": "           05  TCATBALF-STAT1      PIC X.                                       "
+          },
+          {
+            "field_name": "TCATBALF-STAT2",
+            "raw_pic": "X",
+            "field_type": "alphanumeric",
+            "usage": "DISPLAY",
+            "signed": false,
+            "precision": null,
+            "scale": null,
+            "string_length": 1,
+            "java_type": "String",
+            "source_text": "           05  TCATBALF-STAT2      PIC X.                                       "
+          },
+          {
+            "field_name": "XREFFILE-STAT1",
+            "raw_pic": "X",
+            "field_type": "alphanumeric",
+            "usage": "DISPLAY",
+            "signed": false,
+            "precision": null,
+            "scale": null,
+            "string_length": 1,
+            "java_type": "String",
+            "source_text": "           05  XREFFILE-STAT1      PIC X.                                       "
+          },
+          {
+            "field_name": "XREFFILE-STAT2",
+            "raw_pic": "X",
+            "field_type": "alphanumeric",
+            "usage": "DISPLAY",
+            "signed": false,
+            "precision": null,
+            "scale": null,
+            "string_length": 1,
+            "java_type": "String",
+            "source_text": "           05  XREFFILE-STAT2      PIC X.                                       "
+          },
+          {
+            "field_name": "DISCGRP-STAT1",
+            "raw_pic": "X",
+            "field_type": "alphanumeric",
+            "usage": "DISPLAY",
+            "signed": false,
+            "precision": null,
+            "scale": null,
+            "string_length": 1,
+            "java_type": "String",
+            "source_text": "           05 DISCGRP-STAT1        PIC X.                                       "
+          },
+          {
+            "field_name": "DISCGRP-STAT2",
+            "raw_pic": "X",
+            "field_type": "alphanumeric",
+            "usage": "DISPLAY",
+            "signed": false,
+            "precision": null,
+            "scale": null,
+            "string_length": 1,
+            "java_type": "String",
+            "source_text": "           05 DISCGRP-STAT2        PIC X.                                       "
+          },
+          {
+            "field_name": "ACCTFILE-STAT1",
+            "raw_pic": "X",
+            "field_type": "alphanumeric",
+            "usage": "DISPLAY",
+            "signed": false,
+            "precision": null,
+            "scale": null,
+            "string_length": 1,
+            "java_type": "String",
+            "source_text": "           05  ACCTFILE-STAT1      PIC X.                                       "
+          },
+          {
+            "field_name": "ACCTFILE-STAT2",
+            "raw_pic": "X",
+            "field_type": "alphanumeric",
+            "usage": "DISPLAY",
+            "signed": false,
+            "precision": null,
+            "scale": null,
+            "string_length": 1,
+            "java_type": "String",
+            "source_text": "           05  ACCTFILE-STAT2      PIC X.                                       "
+          },
+          {
+            "field_name": "TRANFILE-STAT1",
+            "raw_pic": "X",
+            "field_type": "alphanumeric",
+            "usage": "DISPLAY",
+            "signed": false,
+            "precision": null,
+            "scale": null,
+            "string_length": 1,
+            "java_type": "String",
+            "source_text": "           05  TRANFILE-STAT1      PIC X.                                       "
+          },
+          {
+            "field_name": "TRANFILE-STAT2",
+            "raw_pic": "X",
+            "field_type": "alphanumeric",
+            "usage": "DISPLAY",
+            "signed": false,
+            "precision": null,
+            "scale": null,
+            "string_length": 1,
+            "java_type": "String",
+            "source_text": "           05  TRANFILE-STAT2      PIC X.                                       "
+          },
+          {
+            "field_name": "IO-STAT1",
+            "raw_pic": "X",
+            "field_type": "alphanumeric",
+            "usage": "DISPLAY",
+            "signed": false,
+            "precision": null,
+            "scale": null,
+            "string_length": 1,
+            "java_type": "String",
+            "source_text": "           05  IO-STAT1            PIC X.                                       "
+          },
+          {
+            "field_name": "IO-STAT2",
+            "raw_pic": "X",
+            "field_type": "alphanumeric",
+            "usage": "DISPLAY",
+            "signed": false,
+            "precision": null,
+            "scale": null,
+            "string_length": 1,
+            "java_type": "String",
+            "source_text": "           05  IO-STAT2            PIC X.                                       "
+          },
+          {
+            "field_name": "TWO-BYTES-BINARY",
+            "raw_pic": "9(4)",
+            "field_type": "numeric",
+            "usage": "BINARY",
+            "signed": false,
+            "precision": 4,
+            "scale": 0,
+            "string_length": null,
+            "java_type": "BigDecimal",
+            "source_text": "       01  TWO-BYTES-BINARY        PIC 9(4) BINARY.                             "
+          },
+          {
+            "field_name": "IO-STATUS-0401",
+            "raw_pic": "9",
+            "field_type": "numeric",
+            "usage": "DISPLAY",
+            "signed": false,
+            "precision": 1,
+            "scale": 0,
+            "string_length": null,
+            "java_type": "BigDecimal",
+            "source_text": "           05  IO-STATUS-0401      PIC 9   VALUE 0.                             "
+          },
+          {
+            "field_name": "IO-STATUS-0403",
+            "raw_pic": "999",
+            "field_type": "numeric",
+            "usage": "DISPLAY",
+            "signed": false,
+            "precision": 3,
+            "scale": 0,
+            "string_length": null,
+            "java_type": "BigDecimal",
+            "source_text": "           05  IO-STATUS-0403      PIC 999 VALUE 0.                             "
+          },
+          {
+            "field_name": "APPL-RESULT",
+            "raw_pic": "S9(9)",
+            "field_type": "numeric",
+            "usage": "COMP",
+            "signed": true,
+            "precision": 9,
+            "scale": 0,
+            "string_length": null,
+            "java_type": "BigDecimal",
+            "source_text": "       01  APPL-RESULT             PIC S9(9)   COMP.                            "
+          },
+          {
+            "field_name": "END-OF-FILE",
+            "raw_pic": "X(01)",
+            "field_type": "alphanumeric",
+            "usage": "DISPLAY",
+            "signed": false,
+            "precision": null,
+            "scale": null,
+            "string_length": 1,
+            "java_type": "String",
+            "source_text": "       01  END-OF-FILE             PIC X(01)    VALUE 'N'.                      "
+          },
+          {
+            "field_name": "ABCODE",
+            "raw_pic": "S9(9)",
+            "field_type": "numeric",
+            "usage": "BINARY",
+            "signed": true,
+            "precision": 9,
+            "scale": 0,
+            "string_length": null,
+            "java_type": "BigDecimal",
+            "source_text": "       01  ABCODE                  PIC S9(9) BINARY.                            "
+          },
+          {
+            "field_name": "TIMING",
+            "raw_pic": "S9(9)",
+            "field_type": "numeric",
+            "usage": "BINARY",
+            "signed": true,
+            "precision": 9,
+            "scale": 0,
+            "string_length": null,
+            "java_type": "BigDecimal",
+            "source_text": "       01  TIMING                  PIC S9(9) BINARY.                            "
+          },
+          {
+            "field_name": "COB-YYYY",
+            "raw_pic": "X(04)",
+            "field_type": "alphanumeric",
+            "usage": "DISPLAY",
+            "signed": false,
+            "precision": null,
+            "scale": null,
+            "string_length": 4,
+            "java_type": "String",
+            "source_text": "           05 COB-YYYY                  PIC X(04).                              "
+          },
+          {
+            "field_name": "COB-MM",
+            "raw_pic": "X(02)",
+            "field_type": "alphanumeric",
+            "usage": "DISPLAY",
+            "signed": false,
+            "precision": null,
+            "scale": null,
+            "string_length": 2,
+            "java_type": "String",
+            "source_text": "           05 COB-MM                    PIC X(02).                              "
+          },
+          {
+            "field_name": "COB-DD",
+            "raw_pic": "X(02)",
+            "field_type": "alphanumeric",
+            "usage": "DISPLAY",
+            "signed": false,
+            "precision": null,
+            "scale": null,
+            "string_length": 2,
+            "java_type": "String",
+            "source_text": "           05 COB-DD                    PIC X(02).                              "
+          },
+          {
+            "field_name": "COB-HH",
+            "raw_pic": "X(02)",
+            "field_type": "alphanumeric",
+            "usage": "DISPLAY",
+            "signed": false,
+            "precision": null,
+            "scale": null,
+            "string_length": 2,
+            "java_type": "String",
+            "source_text": "           05 COB-HH                    PIC X(02).                              "
+          },
+          {
+            "field_name": "COB-MIN",
+            "raw_pic": "X(02)",
+            "field_type": "alphanumeric",
+            "usage": "DISPLAY",
+            "signed": false,
+            "precision": null,
+            "scale": null,
+            "string_length": 2,
+            "java_type": "String",
+            "source_text": "           05 COB-MIN                   PIC X(02).                              "
+          },
+          {
+            "field_name": "COB-SS",
+            "raw_pic": "X(02)",
+            "field_type": "alphanumeric",
+            "usage": "DISPLAY",
+            "signed": false,
+            "precision": null,
+            "scale": null,
+            "string_length": 2,
+            "java_type": "String",
+            "source_text": "           05 COB-SS                    PIC X(02).                              "
+          },
+          {
+            "field_name": "COB-MIL",
+            "raw_pic": "X(02)",
+            "field_type": "alphanumeric",
+            "usage": "DISPLAY",
+            "signed": false,
+            "precision": null,
+            "scale": null,
+            "string_length": 2,
+            "java_type": "String",
+            "source_text": "           05 COB-MIL                   PIC X(02).                              "
+          },
+          {
+            "field_name": "COB-REST",
+            "raw_pic": "X(05)",
+            "field_type": "alphanumeric",
+            "usage": "DISPLAY",
+            "signed": false,
+            "precision": null,
+            "scale": null,
+            "string_length": 5,
+            "java_type": "String",
+            "source_text": "           05 COB-REST                  PIC X(05).                              "
+          },
+          {
+            "field_name": "DB2-FORMAT-TS",
+            "raw_pic": "X(26)",
+            "field_type": "alphanumeric",
+            "usage": "DISPLAY",
+            "signed": false,
+            "precision": null,
+            "scale": null,
+            "string_length": 26,
+            "java_type": "String",
+            "source_text": "       01  DB2-FORMAT-TS                PIC X(26).                              "
+          },
+          {
+            "field_name": "WS-LAST-ACCT-NUM",
+            "raw_pic": "X(11)",
+            "field_type": "alphanumeric",
+            "usage": "DISPLAY",
+            "signed": false,
+            "precision": null,
+            "scale": null,
+            "string_length": 11,
+            "java_type": "String",
+            "source_text": "           05 WS-LAST-ACCT-NUM          PIC X(11) VALUE SPACES.                 "
+          },
+          {
+            "field_name": "WS-MONTHLY-INT",
+            "raw_pic": "S9(09)V99",
+            "field_type": "numeric",
+            "usage": "DISPLAY",
+            "signed": true,
+            "precision": 11,
+            "scale": 2,
+            "string_length": null,
+            "java_type": "BigDecimal",
+            "source_text": "           05 WS-MONTHLY-INT            PIC S9(09)V99.                          "
+          },
+          {
+            "field_name": "WS-TOTAL-INT",
+            "raw_pic": "S9(09)V99",
+            "field_type": "numeric",
+            "usage": "DISPLAY",
+            "signed": true,
+            "precision": 11,
+            "scale": 2,
+            "string_length": null,
+            "java_type": "BigDecimal",
+            "source_text": "           05 WS-TOTAL-INT              PIC S9(09)V99.                          "
+          },
+          {
+            "field_name": "WS-FIRST-TIME",
+            "raw_pic": "X(01)",
+            "field_type": "alphanumeric",
+            "usage": "DISPLAY",
+            "signed": false,
+            "precision": null,
+            "scale": null,
+            "string_length": 1,
+            "java_type": "String",
+            "source_text": "           05 WS-FIRST-TIME             PIC X(01) VALUE 'Y'.                    "
+          },
+          {
+            "field_name": "WS-RECORD-COUNT",
+            "raw_pic": "9(09)",
+            "field_type": "numeric",
+            "usage": "DISPLAY",
+            "signed": false,
+            "precision": 9,
+            "scale": 0,
+            "string_length": null,
+            "java_type": "BigDecimal",
+            "source_text": "           05 WS-RECORD-COUNT           PIC 9(09) VALUE 0.                      "
+          },
+          {
+            "field_name": "WS-TRANID-SUFFIX",
+            "raw_pic": "9(06)",
+            "field_type": "numeric",
+            "usage": "DISPLAY",
+            "signed": false,
+            "precision": 6,
+            "scale": 0,
+            "string_length": null,
+            "java_type": "BigDecimal",
+            "source_text": "           05 WS-TRANID-SUFFIX          PIC 9(06) VALUE 0.                      "
+          },
+          {
+            "field_name": "PARM-LENGTH",
+            "raw_pic": "S9(04)",
+            "field_type": "numeric",
+            "usage": "COMP",
+            "signed": true,
+            "precision": 4,
+            "scale": 0,
+            "string_length": null,
+            "java_type": "BigDecimal",
+            "source_text": "           05  PARM-LENGTH         PIC S9(04) COMP.                             "
+          },
+          {
+            "field_name": "PARM-DATE",
+            "raw_pic": "X(10)",
+            "field_type": "alphanumeric",
+            "usage": "DISPLAY",
+            "signed": false,
+            "precision": null,
+            "scale": null,
+            "string_length": 10,
+            "java_type": "String",
+            "source_text": "           05  PARM-DATE           PIC X(10).                                   "
+          },
+          {
+            "field_name": "TRANCAT-ACCT-ID",
+            "raw_pic": "9(11)",
+            "field_type": "numeric",
+            "usage": "DISPLAY",
+            "signed": false,
+            "precision": 11,
+            "scale": 0,
+            "string_length": null,
+            "java_type": "BigDecimal",
+            "source_text": "              10 TRANCAT-ACCT-ID                       PIC 9(11).               "
+          },
+          {
+            "field_name": "TRANCAT-TYPE-CD",
+            "raw_pic": "X(02)",
+            "field_type": "alphanumeric",
+            "usage": "DISPLAY",
+            "signed": false,
+            "precision": null,
+            "scale": null,
+            "string_length": 2,
+            "java_type": "String",
+            "source_text": "              10 TRANCAT-TYPE-CD                       PIC X(02).               "
+          },
+          {
+            "field_name": "TRANCAT-CD",
+            "raw_pic": "9(04)",
+            "field_type": "numeric",
+            "usage": "DISPLAY",
+            "signed": false,
+            "precision": 4,
+            "scale": 0,
+            "string_length": null,
+            "java_type": "BigDecimal",
+            "source_text": "              10 TRANCAT-CD                            PIC 9(04).               "
+          },
+          {
+            "field_name": "TRAN-CAT-BAL",
+            "raw_pic": "S9(09)V99",
+            "field_type": "numeric",
+            "usage": "DISPLAY",
+            "signed": true,
+            "precision": 11,
+            "scale": 2,
+            "string_length": null,
+            "java_type": "BigDecimal",
+            "source_text": "           05  TRAN-CAT-BAL                            PIC S9(09)V99.           "
+          },
+          {
+            "field_name": "FILLER",
+            "raw_pic": "X(22)",
+            "field_type": "alphanumeric",
+            "usage": "DISPLAY",
+            "signed": false,
+            "precision": null,
+            "scale": null,
+            "string_length": 22,
+            "java_type": "String",
+            "source_text": "           05  FILLER                                  PIC X(22).               "
+          },
+          {
+            "field_name": "XREF-CARD-NUM",
+            "raw_pic": "X(16)",
+            "field_type": "alphanumeric",
+            "usage": "DISPLAY",
+            "signed": false,
+            "precision": null,
+            "scale": null,
+            "string_length": 16,
+            "java_type": "String",
+            "source_text": "           05  XREF-CARD-NUM                     PIC X(16).                     "
+          },
+          {
+            "field_name": "XREF-CUST-ID",
+            "raw_pic": "9(09)",
+            "field_type": "numeric",
+            "usage": "DISPLAY",
+            "signed": false,
+            "precision": 9,
+            "scale": 0,
+            "string_length": null,
+            "java_type": "BigDecimal",
+            "source_text": "           05  XREF-CUST-ID                      PIC 9(09).                     "
+          },
+          {
+            "field_name": "XREF-ACCT-ID",
+            "raw_pic": "9(11)",
+            "field_type": "numeric",
+            "usage": "DISPLAY",
+            "signed": false,
+            "precision": 11,
+            "scale": 0,
+            "string_length": null,
+            "java_type": "BigDecimal",
+            "source_text": "           05  XREF-ACCT-ID                      PIC 9(11).                     "
+          },
+          {
+            "field_name": "FILLER",
+            "raw_pic": "X(14)",
+            "field_type": "alphanumeric",
+            "usage": "DISPLAY",
+            "signed": false,
+            "precision": null,
+            "scale": null,
+            "string_length": 14,
+            "java_type": "String",
+            "source_text": "           05  FILLER                            PIC X(14).                     "
+          },
+          {
+            "field_name": "DIS-ACCT-GROUP-ID",
+            "raw_pic": "X(10)",
+            "field_type": "alphanumeric",
+            "usage": "DISPLAY",
+            "signed": false,
+            "precision": null,
+            "scale": null,
+            "string_length": 10,
+            "java_type": "String",
+            "source_text": "              10 DIS-ACCT-GROUP-ID                     PIC X(10).               "
+          },
+          {
+            "field_name": "DIS-TRAN-TYPE-CD",
+            "raw_pic": "X(02)",
+            "field_type": "alphanumeric",
+            "usage": "DISPLAY",
+            "signed": false,
+            "precision": null,
+            "scale": null,
+            "string_length": 2,
+            "java_type": "String",
+            "source_text": "              10 DIS-TRAN-TYPE-CD                      PIC X(02).               "
+          },
+          {
+            "field_name": "DIS-TRAN-CAT-CD",
+            "raw_pic": "9(04)",
+            "field_type": "numeric",
+            "usage": "DISPLAY",
+            "signed": false,
+            "precision": 4,
+            "scale": 0,
+            "string_length": null,
+            "java_type": "BigDecimal",
+            "source_text": "              10 DIS-TRAN-CAT-CD                       PIC 9(04).               "
+          },
+          {
+            "field_name": "DIS-INT-RATE",
+            "raw_pic": "S9(04)V99",
+            "field_type": "numeric",
+            "usage": "DISPLAY",
+            "signed": true,
+            "precision": 6,
+            "scale": 2,
+            "string_length": null,
+            "java_type": "BigDecimal",
+            "source_text": "           05  DIS-INT-RATE                            PIC S9(04)V99.           "
+          },
+          {
+            "field_name": "FILLER",
+            "raw_pic": "X(28)",
+            "field_type": "alphanumeric",
+            "usage": "DISPLAY",
+            "signed": false,
+            "precision": null,
+            "scale": null,
+            "string_length": 28,
+            "java_type": "String",
+            "source_text": "           05  FILLER                                  PIC X(28).               "
+          },
+          {
+            "field_name": "ACCT-ID",
+            "raw_pic": "9(11)",
+            "field_type": "numeric",
+            "usage": "DISPLAY",
+            "signed": false,
+            "precision": 11,
+            "scale": 0,
+            "string_length": null,
+            "java_type": "BigDecimal",
+            "source_text": "           05  ACCT-ID                           PIC 9(11)."
+          },
+          {
+            "field_name": "ACCT-ACTIVE-STATUS",
+            "raw_pic": "X(01)",
+            "field_type": "alphanumeric",
+            "usage": "DISPLAY",
+            "signed": false,
+            "precision": null,
+            "scale": null,
+            "string_length": 1,
+            "java_type": "String",
+            "source_text": "           05  ACCT-ACTIVE-STATUS                PIC X(01)."
+          },
+          {
+            "field_name": "ACCT-CURR-BAL",
+            "raw_pic": "S9(10)V99",
+            "field_type": "numeric",
+            "usage": "DISPLAY",
+            "signed": true,
+            "precision": 12,
+            "scale": 2,
+            "string_length": null,
+            "java_type": "BigDecimal",
+            "source_text": "           05  ACCT-CURR-BAL                     PIC S9(10)V99."
+          },
+          {
+            "field_name": "ACCT-CREDIT-LIMIT",
+            "raw_pic": "S9(10)V99",
+            "field_type": "numeric",
+            "usage": "DISPLAY",
+            "signed": true,
+            "precision": 12,
+            "scale": 2,
+            "string_length": null,
+            "java_type": "BigDecimal",
+            "source_text": "           05  ACCT-CREDIT-LIMIT                 PIC S9(10)V99."
+          },
+          {
+            "field_name": "ACCT-CASH-CREDIT-LIMIT",
+            "raw_pic": "S9(10)V99",
+            "field_type": "numeric",
+            "usage": "DISPLAY",
+            "signed": true,
+            "precision": 12,
+            "scale": 2,
+            "string_length": null,
+            "java_type": "BigDecimal",
+            "source_text": "           05  ACCT-CASH-CREDIT-LIMIT            PIC S9(10)V99."
+          },
+          {
+            "field_name": "ACCT-OPEN-DATE",
+            "raw_pic": "X(10)",
+            "field_type": "alphanumeric",
+            "usage": "DISPLAY",
+            "signed": false,
+            "precision": null,
+            "scale": null,
+            "string_length": 10,
+            "java_type": "String",
+            "source_text": "           05  ACCT-OPEN-DATE                    PIC X(10)."
+          },
+          {
+            "field_name": "ACCT-EXPIRAION-DATE",
+            "raw_pic": "X(10)",
+            "field_type": "alphanumeric",
+            "usage": "DISPLAY",
+            "signed": false,
+            "precision": null,
+            "scale": null,
+            "string_length": 10,
+            "java_type": "String",
+            "source_text": "           05  ACCT-EXPIRAION-DATE               PIC X(10). "
+          },
+          {
+            "field_name": "ACCT-REISSUE-DATE",
+            "raw_pic": "X(10)",
+            "field_type": "alphanumeric",
+            "usage": "DISPLAY",
+            "signed": false,
+            "precision": null,
+            "scale": null,
+            "string_length": 10,
+            "java_type": "String",
+            "source_text": "           05  ACCT-REISSUE-DATE                 PIC X(10)."
+          },
+          {
+            "field_name": "ACCT-CURR-CYC-CREDIT",
+            "raw_pic": "S9(10)V99",
+            "field_type": "numeric",
+            "usage": "DISPLAY",
+            "signed": true,
+            "precision": 12,
+            "scale": 2,
+            "string_length": null,
+            "java_type": "BigDecimal",
+            "source_text": "           05  ACCT-CURR-CYC-CREDIT              PIC S9(10)V99."
+          },
+          {
+            "field_name": "ACCT-CURR-CYC-DEBIT",
+            "raw_pic": "S9(10)V99",
+            "field_type": "numeric",
+            "usage": "DISPLAY",
+            "signed": true,
+            "precision": 12,
+            "scale": 2,
+            "string_length": null,
+            "java_type": "BigDecimal",
+            "source_text": "           05  ACCT-CURR-CYC-DEBIT               PIC S9(10)V99."
+          },
+          {
+            "field_name": "ACCT-ADDR-ZIP",
+            "raw_pic": "X(10)",
+            "field_type": "alphanumeric",
+            "usage": "DISPLAY",
+            "signed": false,
+            "precision": null,
+            "scale": null,
+            "string_length": 10,
+            "java_type": "String",
+            "source_text": "           05  ACCT-ADDR-ZIP                     PIC X(10)."
+          },
+          {
+            "field_name": "ACCT-GROUP-ID",
+            "raw_pic": "X(10)",
+            "field_type": "alphanumeric",
+            "usage": "DISPLAY",
+            "signed": false,
+            "precision": null,
+            "scale": null,
+            "string_length": 10,
+            "java_type": "String",
+            "source_text": "           05  ACCT-GROUP-ID                     PIC X(10)."
+          },
+          {
+            "field_name": "FILLER",
+            "raw_pic": "X(178)",
+            "field_type": "alphanumeric",
+            "usage": "DISPLAY",
+            "signed": false,
+            "precision": null,
+            "scale": null,
+            "string_length": 178,
+            "java_type": "String",
+            "source_text": "           05  FILLER                            PIC X(178).      "
+          },
+          {
+            "field_name": "TRAN-ID",
+            "raw_pic": "X(16)",
+            "field_type": "alphanumeric",
+            "usage": "DISPLAY",
+            "signed": false,
+            "precision": null,
+            "scale": null,
+            "string_length": 16,
+            "java_type": "String",
+            "source_text": "           05  TRAN-ID                                 PIC X(16).               "
+          },
+          {
+            "field_name": "TRAN-TYPE-CD",
+            "raw_pic": "X(02)",
+            "field_type": "alphanumeric",
+            "usage": "DISPLAY",
+            "signed": false,
+            "precision": null,
+            "scale": null,
+            "string_length": 2,
+            "java_type": "String",
+            "source_text": "           05  TRAN-TYPE-CD                            PIC X(02).               "
+          },
+          {
+            "field_name": "TRAN-CAT-CD",
+            "raw_pic": "9(04)",
+            "field_type": "numeric",
+            "usage": "DISPLAY",
+            "signed": false,
+            "precision": 4,
+            "scale": 0,
+            "string_length": null,
+            "java_type": "BigDecimal",
+            "source_text": "           05  TRAN-CAT-CD                             PIC 9(04).               "
+          },
+          {
+            "field_name": "TRAN-SOURCE",
+            "raw_pic": "X(10)",
+            "field_type": "alphanumeric",
+            "usage": "DISPLAY",
+            "signed": false,
+            "precision": null,
+            "scale": null,
+            "string_length": 10,
+            "java_type": "String",
+            "source_text": "           05  TRAN-SOURCE                             PIC X(10).               "
+          },
+          {
+            "field_name": "TRAN-DESC",
+            "raw_pic": "X(100)",
+            "field_type": "alphanumeric",
+            "usage": "DISPLAY",
+            "signed": false,
+            "precision": null,
+            "scale": null,
+            "string_length": 100,
+            "java_type": "String",
+            "source_text": "           05  TRAN-DESC                               PIC X(100).              "
+          },
+          {
+            "field_name": "TRAN-AMT",
+            "raw_pic": "S9(09)V99",
+            "field_type": "numeric",
+            "usage": "DISPLAY",
+            "signed": true,
+            "precision": 11,
+            "scale": 2,
+            "string_length": null,
+            "java_type": "BigDecimal",
+            "source_text": "           05  TRAN-AMT                                PIC S9(09)V99.           "
+          },
+          {
+            "field_name": "TRAN-MERCHANT-ID",
+            "raw_pic": "9(09)",
+            "field_type": "numeric",
+            "usage": "DISPLAY",
+            "signed": false,
+            "precision": 9,
+            "scale": 0,
+            "string_length": null,
+            "java_type": "BigDecimal",
+            "source_text": "           05  TRAN-MERCHANT-ID                        PIC 9(09).               "
+          },
+          {
+            "field_name": "TRAN-MERCHANT-NAME",
+            "raw_pic": "X(50)",
+            "field_type": "alphanumeric",
+            "usage": "DISPLAY",
+            "signed": false,
+            "precision": null,
+            "scale": null,
+            "string_length": 50,
+            "java_type": "String",
+            "source_text": "           05  TRAN-MERCHANT-NAME                      PIC X(50).               "
+          },
+          {
+            "field_name": "TRAN-MERCHANT-CITY",
+            "raw_pic": "X(50)",
+            "field_type": "alphanumeric",
+            "usage": "DISPLAY",
+            "signed": false,
+            "precision": null,
+            "scale": null,
+            "string_length": 50,
+            "java_type": "String",
+            "source_text": "           05  TRAN-MERCHANT-CITY                      PIC X(50).               "
+          },
+          {
+            "field_name": "TRAN-MERCHANT-ZIP",
+            "raw_pic": "X(10)",
+            "field_type": "alphanumeric",
+            "usage": "DISPLAY",
+            "signed": false,
+            "precision": null,
+            "scale": null,
+            "string_length": 10,
+            "java_type": "String",
+            "source_text": "           05  TRAN-MERCHANT-ZIP                       PIC X(10).               "
+          },
+          {
+            "field_name": "TRAN-CARD-NUM",
+            "raw_pic": "X(16)",
+            "field_type": "alphanumeric",
+            "usage": "DISPLAY",
+            "signed": false,
+            "precision": null,
+            "scale": null,
+            "string_length": 16,
+            "java_type": "String",
+            "source_text": "           05  TRAN-CARD-NUM                           PIC X(16).               "
+          },
+          {
+            "field_name": "TRAN-ORIG-TS",
+            "raw_pic": "X(26)",
+            "field_type": "alphanumeric",
+            "usage": "DISPLAY",
+            "signed": false,
+            "precision": null,
+            "scale": null,
+            "string_length": 26,
+            "java_type": "String",
+            "source_text": "           05  TRAN-ORIG-TS                            PIC X(26).               "
+          },
+          {
+            "field_name": "TRAN-PROC-TS",
+            "raw_pic": "X(26)",
+            "field_type": "alphanumeric",
+            "usage": "DISPLAY",
+            "signed": false,
+            "precision": null,
+            "scale": null,
+            "string_length": 26,
+            "java_type": "String",
+            "source_text": "           05  TRAN-PROC-TS                            PIC X(26).               "
+          },
+          {
+            "field_name": "FILLER",
+            "raw_pic": "X(20)",
+            "field_type": "alphanumeric",
+            "usage": "DISPLAY",
+            "signed": false,
+            "precision": null,
+            "scale": null,
+            "string_length": 20,
+            "java_type": "String",
+            "source_text": "           05  FILLER                                  PIC X(20).               "
+          }
+        ],
+        "unsupported_fields": [
+          {
+            "source_label": "CBACT04C",
+            "field_name": "TWO-BYTES-LEFT",
+            "raw_text": "05  TWO-BYTES-LEFT      PIC X.",
+            "reason": "Unsupported construct 'REDEFINES' detected in field declaration; per ADR-0002 this must route to a human gate, not be parsed: '           05  TWO-BYTES-LEFT      PIC X.                                       \\n       01  TWO-BYTES-ALPHA         REDEFINES TWO-BYTES-BINARY.                  \\n           05  TWO-BYTES-RIGHT     PIC X.                                       '"
+          },
+          {
+            "source_label": "CBACT04C",
+            "field_name": "TWO-BYTES-RIGHT",
+            "raw_text": "05  TWO-BYTES-RIGHT     PIC X.",
+            "reason": "Unsupported construct 'REDEFINES' detected in field declaration; per ADR-0002 this must route to a human gate, not be parsed: '           05  TWO-BYTES-RIGHT     PIC X.                                       \\n       01  TWO-BYTES-ALPHA         REDEFINES TWO-BYTES-BINARY.                  \\n           05  TWO-BYTES-LEFT      PIC X.                                       '"
+          },
+          {
+            "source_label": "CBACT04C",
+            "field_name": "DB2-YYYY",
+            "raw_text": "06 DB2-YYYY                  PIC X(004).                      E      \n           06 DB2-STREEP-1              PIC X.                           -      \n           06 DB2-MM                    PIC X(002).                      M      \n           06 DB2-STREEP-2              PIC X.                           -      \n           06 DB2-DD                    PIC X(002).                      D      \n           06 DB2-STREEP-3              PIC X.                           -      \n           06 DB2-HH                    PIC X(002).                      U      \n           06 DB2-DOT-1                 PIC X.",
+            "reason": "Unsupported construct 'REDEFINES' detected in field declaration; per ADR-0002 this must route to a human gate, not be parsed: '           06 DB2-YYYY                  PIC X(004).                      E      \\n           06 DB2-STREEP-1              PIC X.                           -      \\n           06 DB2-MM                    PIC X(002).                      M      \\n           06 DB2-STREEP-2              PIC X.                           -      \\n           06 DB2-DD                    PIC X(002).                      D      \\n           06 DB2-STREEP-3              PIC X.                           -      \\n           06 DB2-HH                    PIC X(002).                      U      \\n           06 DB2-DOT-1                 PIC X.                                  \\n       01  FILLER REDEFINES DB2-FORMAT-TS.                                      \\n           06 DB2-MIN                   PIC X(002).                             \\n           06 DB2-DOT-2                 PIC X.                                  \\n           06 DB2-SS                    PIC X(002).                             \\n           06 DB2-DOT-3                 PIC X.                                  \\n           06 DB2-MIL                   PIC 9(002).                             \\n           06 DB2-REST                  PIC X(04).                              '"
+          },
+          {
+            "source_label": "CBACT04C",
+            "field_name": "DB2-MIN",
+            "raw_text": "06 DB2-MIN                   PIC X(002).",
+            "reason": "Unsupported construct 'REDEFINES' detected in field declaration; per ADR-0002 this must route to a human gate, not be parsed: '           06 DB2-MIN                   PIC X(002).                             \\n       01  FILLER REDEFINES DB2-FORMAT-TS.                                      \\n           06 DB2-YYYY                  PIC X(004).                      E      \\n           06 DB2-STREEP-1              PIC X.                           -      \\n           06 DB2-MM                    PIC X(002).                      M      \\n           06 DB2-STREEP-2              PIC X.                           -      \\n           06 DB2-DD                    PIC X(002).                      D      \\n           06 DB2-STREEP-3              PIC X.                           -      \\n           06 DB2-HH                    PIC X(002).                      U      \\n           06 DB2-DOT-1                 PIC X.                                  \\n           06 DB2-DOT-2                 PIC X.                                  \\n           06 DB2-SS                    PIC X(002).                             \\n           06 DB2-DOT-3                 PIC X.                                  \\n           06 DB2-MIL                   PIC 9(002).                             \\n           06 DB2-REST                  PIC X(04).                              '"
+          },
+          {
+            "source_label": "CBACT04C",
+            "field_name": "DB2-DOT-2",
+            "raw_text": "06 DB2-DOT-2                 PIC X.",
+            "reason": "Unsupported construct 'REDEFINES' detected in field declaration; per ADR-0002 this must route to a human gate, not be parsed: '           06 DB2-DOT-2                 PIC X.                                  \\n       01  FILLER REDEFINES DB2-FORMAT-TS.                                      \\n           06 DB2-YYYY                  PIC X(004).                      E      \\n           06 DB2-STREEP-1              PIC X.                           -      \\n           06 DB2-MM                    PIC X(002).                      M      \\n           06 DB2-STREEP-2              PIC X.                           -      \\n           06 DB2-DD                    PIC X(002).                      D      \\n           06 DB2-STREEP-3              PIC X.                           -      \\n           06 DB2-HH                    PIC X(002).                      U      \\n           06 DB2-DOT-1                 PIC X.                                  \\n           06 DB2-MIN                   PIC X(002).                             \\n           06 DB2-SS                    PIC X(002).                             \\n           06 DB2-DOT-3                 PIC X.                                  \\n           06 DB2-MIL                   PIC 9(002).                             \\n           06 DB2-REST                  PIC X(04).                              '"
+          },
+          {
+            "source_label": "CBACT04C",
+            "field_name": "DB2-SS",
+            "raw_text": "06 DB2-SS                    PIC X(002).",
+            "reason": "Unsupported construct 'REDEFINES' detected in field declaration; per ADR-0002 this must route to a human gate, not be parsed: '           06 DB2-SS                    PIC X(002).                             \\n       01  FILLER REDEFINES DB2-FORMAT-TS.                                      \\n           06 DB2-YYYY                  PIC X(004).                      E      \\n           06 DB2-STREEP-1              PIC X.                           -      \\n           06 DB2-MM                    PIC X(002).                      M      \\n           06 DB2-STREEP-2              PIC X.                           -      \\n           06 DB2-DD                    PIC X(002).                      D      \\n           06 DB2-STREEP-3              PIC X.                           -      \\n           06 DB2-HH                    PIC X(002).                      U      \\n           06 DB2-DOT-1                 PIC X.                                  \\n           06 DB2-MIN                   PIC X(002).                             \\n           06 DB2-DOT-2                 PIC X.                                  \\n           06 DB2-DOT-3                 PIC X.                                  \\n           06 DB2-MIL                   PIC 9(002).                             \\n           06 DB2-REST                  PIC X(04).                              '"
+          },
+          {
+            "source_label": "CBACT04C",
+            "field_name": "DB2-DOT-3",
+            "raw_text": "06 DB2-DOT-3                 PIC X.",
+            "reason": "Unsupported construct 'REDEFINES' detected in field declaration; per ADR-0002 this must route to a human gate, not be parsed: '           06 DB2-DOT-3                 PIC X.                                  \\n       01  FILLER REDEFINES DB2-FORMAT-TS.                                      \\n           06 DB2-YYYY                  PIC X(004).                      E      \\n           06 DB2-STREEP-1              PIC X.                           -      \\n           06 DB2-MM                    PIC X(002).                      M      \\n           06 DB2-STREEP-2              PIC X.                           -      \\n           06 DB2-DD                    PIC X(002).                      D      \\n           06 DB2-STREEP-3              PIC X.                           -      \\n           06 DB2-HH                    PIC X(002).                      U      \\n           06 DB2-DOT-1                 PIC X.                                  \\n           06 DB2-MIN                   PIC X(002).                             \\n           06 DB2-DOT-2                 PIC X.                                  \\n           06 DB2-SS                    PIC X(002).                             \\n           06 DB2-MIL                   PIC 9(002).                             \\n           06 DB2-REST                  PIC X(04).                              '"
+          },
+          {
+            "source_label": "CBACT04C",
+            "field_name": "DB2-MIL",
+            "raw_text": "06 DB2-MIL                   PIC 9(002).",
+            "reason": "Unsupported construct 'REDEFINES' detected in field declaration; per ADR-0002 this must route to a human gate, not be parsed: '           06 DB2-MIL                   PIC 9(002).                             \\n       01  FILLER REDEFINES DB2-FORMAT-TS.                                      \\n           06 DB2-YYYY                  PIC X(004).                      E      \\n           06 DB2-STREEP-1              PIC X.                           -      \\n           06 DB2-MM                    PIC X(002).                      M      \\n           06 DB2-STREEP-2              PIC X.                           -      \\n           06 DB2-DD                    PIC X(002).                      D      \\n           06 DB2-STREEP-3              PIC X.                           -      \\n           06 DB2-HH                    PIC X(002).                      U      \\n           06 DB2-DOT-1                 PIC X.                                  \\n           06 DB2-MIN                   PIC X(002).                             \\n           06 DB2-DOT-2                 PIC X.                                  \\n           06 DB2-SS                    PIC X(002).                             \\n           06 DB2-DOT-3                 PIC X.                                  \\n           06 DB2-REST                  PIC X(04).                              '"
+          },
+          {
+            "source_label": "CBACT04C",
+            "field_name": "DB2-REST",
+            "raw_text": "06 DB2-REST                  PIC X(04).",
+            "reason": "Unsupported construct 'REDEFINES' detected in field declaration; per ADR-0002 this must route to a human gate, not be parsed: '           06 DB2-REST                  PIC X(04).                              \\n       01  FILLER REDEFINES DB2-FORMAT-TS.                                      \\n           06 DB2-YYYY                  PIC X(004).                      E      \\n           06 DB2-STREEP-1              PIC X.                           -      \\n           06 DB2-MM                    PIC X(002).                      M      \\n           06 DB2-STREEP-2              PIC X.                           -      \\n           06 DB2-DD                    PIC X(002).                      D      \\n           06 DB2-STREEP-3              PIC X.                           -      \\n           06 DB2-HH                    PIC X(002).                      U      \\n           06 DB2-DOT-1                 PIC X.                                  \\n           06 DB2-MIN                   PIC X(002).                             \\n           06 DB2-DOT-2                 PIC X.                                  \\n           06 DB2-SS                    PIC X(002).                             \\n           06 DB2-DOT-3                 PIC X.                                  \\n           06 DB2-MIL                   PIC 9(002).                             '"
+          }
+        ],
+        "injection_flags": [],
+        "spec_markdown": "# CBACT04C — Interest Calculator\n\n## Overview\n\nCBACT04C is a batch program that calculates monthly interest for credit-card accounts and posts it. It reads the transaction-category balance file (`TCATBAL-FILE`) in key sequence — the key is account ID + transaction type code + transaction category code — and for each category balance it looks up the interest rate that applies to that account's disclosure group and that type/category combination. It computes one month's interest on that category balance, writes an interest transaction record to the output transaction file, and accumulates the interest per account. When the account ID changes (a control break), it adds the accumulated interest for the previous account to that account's current balance, zeroes the current-cycle credit and debit totals, and rewrites the account master record. A fee-calculation step exists as an empty stub.\n\n## Paragraph flow\n\n### Main procedure (`PROCEDURE DIVISION USING EXTERNAL-PARMS`)\n\nThe program is entered with a linkage parameter area containing `PARM-LENGTH` and `PARM-DATE`; `PARM-DATE` is later used as the prefix of generated transaction IDs. It displays `'START OF EXECUTION OF PROGRAM CBACT04C'`, then opens all five files by performing `0000-TCATBALF-OPEN`, `0100-XREFFILE-OPEN`, `0200-DISCGRP-OPEN`, `0300-ACCTFILE-OPEN`, and `0400-TRANFILE-OPEN`.\n\nIt then runs the main loop `PERFORM UNTIL END-OF-FILE = 'Y'`. Inside each iteration:\n\n- If `END-OF-FILE = 'N'`, it performs `1000-TCATBALF-GET-NEXT` to read the next category-balance record. If the read did not hit end-of-file, it adds 1 to `WS-RECORD-COUNT`, displays the whole `TRAN-CAT-BAL-RECORD`, and then checks for a control break: `IF TRANCAT-ACCT-ID NOT= WS-LAST-ACCT-NUM`.\n  - On a control break, if `WS-FIRST-TIME` is not `'Y'` it performs `1050-UPDATE-ACCOUNT` to post the previous account's accumulated interest; otherwise (very first record) it just moves `'N'` to `WS-FIRST-TIME` and posts nothing. Either way it then moves 0 to `WS-TOTAL-INT`, saves `TRANCAT-ACCT-ID` into `WS-LAST-ACCT-NUM`, moves `TRANCAT-ACCT-ID` to `FD-ACCT-ID` and performs `1100-GET-ACCT-DATA`, then moves `TRANCAT-ACCT-ID` to `FD-XREF-ACCT-ID` and performs `1110-GET-XREF-DATA`.\n  - For every record (break or not), it builds the disclosure-group key: `ACCT-GROUP-ID` → `FD-DIS-ACCT-GROUP-ID`, `TRANCAT-CD` → `FD-DIS-TRAN-CAT-CD`, `TRANCAT-TYPE-CD` → `FD-DIS-TRAN-TYPE-CD`, and performs `1200-GET-INTEREST-RATE`.\n  - `IF DIS-INT-RATE NOT = 0` it performs `1300-COMPUTE-INTEREST` and then `1400-COMPUTE-FEES`. A zero rate means nothing is computed, nothing is written, and nothing is accumulated for that category.\n- The `ELSE` branch of `IF END-OF-FILE = 'N'` performs `1050-UPDATE-ACCOUNT`. Note as an observation: because the loop condition `UNTIL END-OF-FILE = 'Y'` is tested before each iteration, this `ELSE` branch can never be reached — once `1000-TCATBALF-GET-NEXT` sets `END-OF-FILE` to `'Y'`, the loop exits at the top of the next iteration. The practical consequence is that the interest accumulated for the **last** account in the file is never added to its account record.\n\nAfter the loop it performs the five close paragraphs (`9000-TCATBALF-CLOSE`, `9100-XREFFILE-CLOSE`, `9200-DISCGRP-CLOSE`, `9300-ACCTFILE-CLOSE`, `9400-TRANFILE-CLOSE`), displays `'END OF EXECUTION OF PROGRAM CBACT04C'`, and issues `GOBACK`.\n\n### 0000-TCATBALF-OPEN\n\nMoves 8 to `APPL-RESULT`, opens `TCATBAL-FILE` for input. If `TCATBALF-STATUS = '00'` it sets `APPL-RESULT` to 0 (condition `APPL-AOK`), otherwise 12. If not OK it displays `'ERROR OPENING TRANSACTION CATEGORY BALANCE'`, moves the file status to `IO-STATUS`, performs `9910-DISPLAY-IO-STATUS`, and performs `9999-ABEND-PROGRAM`.\n\n### 0100-XREFFILE-OPEN\n\nSame open-and-check pattern for the card cross-reference file `XREF-FILE`, opened `INPUT`. On failure it displays `'ERROR OPENING CROSS REF FILE'` together with `XREFFILE-STATUS`, then performs `9910-DISPLAY-IO-STATUS` and `9999-ABEND-PROGRAM`.\n\n### 0200-DISCGRP-OPEN\n\nSame pattern for `DISCGRP-FILE`, opened `INPUT`. Its failure message is `'ERROR OPENING DALY REJECTS FILE'` — an observation worth carrying forward: the message text is inaccurate (and misspelled) for the disclosure-group file; a Java port should not treat the wording as evidence about which file is being opened. Failure path: `9910-DISPLAY-IO-STATUS` then `9999-ABEND-PROGRAM`.\n\n### 0300-ACCTFILE-OPEN\n\nOpens `ACCOUNT-FILE` with `OPEN I-O` — read/write, because account records are rewritten in place later. On failure it displays `'ERROR OPENING ACCOUNT MASTER FILE'`, then performs `9910-DISPLAY-IO-STATUS` and `9999-ABEND-PROGRAM`.\n\n### 0400-TRANFILE-OPEN\n\nOpens `TRANSACT-FILE` with `OPEN OUTPUT` — the output transaction file is created fresh each run, so any prior contents are replaced. On failure it displays `'ERROR OPENING TRANSACTION FILE'`, then performs `9910-DISPLAY-IO-STATUS` and `9999-ABEND-PROGRAM`.\n\n### 1000-TCATBALF-GET-NEXT\n\n`READ TCATBAL-FILE INTO TRAN-CAT-BAL-RECORD` — a sequential read of the indexed file. Status `'00'` sets `APPL-RESULT` to 0; status `'10'` (end of file) sets it to 16, which satisfies the `APPL-EOF` condition; anything else sets 12. If `APPL-EOF`, it moves `'Y'` to `END-OF-FILE` and returns normally. Any other non-OK status displays `'ERROR READING TRANSACTION CATEGORY FILE'`, performs `9910-DISPLAY-IO-STATUS`, and performs `9999-ABEND-PROGRAM`.\n\n### 1050-UPDATE-ACCOUNT\n\nThe control-break posting step. It adds the accumulated interest to the account balance and clears the cycle totals:\n\n```\nADD WS-TOTAL-INT  TO ACCT-CURR-BAL\nMOVE 0 TO ACCT-CURR-CYC-CREDIT\nMOVE 0 TO ACCT-CURR-CYC-DEBIT\n```\n\nIn plain English: the account's current balance is increased by the sum of all monthly interest amounts computed for that account's category balances, and both the current-cycle credit total and current-cycle debit total are reset to zero. It then does `REWRITE FD-ACCTFILE-REC FROM ACCOUNT-RECORD` — writing back the account record that was read into `ACCOUNT-RECORD` by `1100-GET-ACCT-DATA`. Status `'00'` is OK; anything else displays `'ERROR RE-WRITING ACCOUNT FILE'` and goes to `9910-DISPLAY-IO-STATUS` then `9999-ABEND-PROGRAM`.\n\n### 1100-GET-ACCT-DATA\n\nRandom-reads `ACCOUNT-FILE` by `FD-ACCT-ID` into `ACCOUNT-RECORD`. On `INVALID KEY` it displays `'ACCOUNT NOT FOUND: '` with `FD-ACCT-ID`. Regardless of that display, it then tests `ACCTFILE-STATUS`: `'00'` sets `APPL-RESULT` to 0, anything else sets 12, and the not-OK path displays `'ERROR READING ACCOUNT FILE'`, performs `9910-DISPLAY-IO-STATUS`, and performs `9999-ABEND-PROGRAM`. So a missing account is displayed *and* then abends — the `INVALID KEY` clause does not let processing continue.\n\n### 1110-GET-XREF-DATA\n\nRandom-reads `XREF-FILE` into `CARD-XREF-RECORD` using the alternate key `FD-XREF-ACCT-ID`. On `INVALID KEY` it displays `'ACCOUNT NOT FOUND: '` with `FD-XREF-ACCT-ID`. It then applies the same status test as above: `'00'` OK, otherwise display `'ERROR READING XREF FILE'`, `9910-DISPLAY-IO-STATUS`, `9999-ABEND-PROGRAM`. The purpose of this read is to obtain `XREF-CARD-NUM`, which becomes the card number on the interest transaction written later.\n\n### 1200-GET-INTEREST-RATE\n\nRandom-reads `DISCGRP-FILE` into `DIS-GROUP-RECORD` using the key built from the account's group ID plus the transaction type and category codes. On `INVALID KEY` it displays `'DISCLOSURE GROUP RECORD MISSING'` and `'TRY WITH DEFAULT GROUP CODE'`.\n\nThe status test here is deliberately wider than elsewhere: `IF DISCGRP-STATUS = '00' OR '23'` sets `APPL-RESULT` to 0 — status `'23'` (record not found) is treated as acceptable, not an error. Any other status displays `'ERROR READING DISCLOSURE GROUP FILE'`, then `9910-DISPLAY-IO-STATUS` and `9999-ABEND-PROGRAM`. Then, if the status was `'23'`, it moves the literal `'DEFAULT'` into `FD-DIS-ACCT-GROUP-ID` and performs `1200-A-GET-DEFAULT-INT-RATE` to retry the lookup under the default group.\n\n### 1200-A-GET-DEFAULT-INT-RATE\n\nRe-reads `DISCGRP-FILE` into `DIS-GROUP-RECORD` with the key whose group ID is now `'DEFAULT'` (type code and category code unchanged). This read has no `INVALID KEY` clause, so only the status check applies: `'00'` is OK; anything else — including a missing default row — displays `'ERROR READING DEFAULT DISCLOSURE GROUP'`, performs `9910-DISPLAY-IO-STATUS`, and performs `9999-ABEND-PROGRAM`. In other words, a missing account-specific disclosure group is tolerated, but a missing default disclosure group is fatal.\n\n### 1300-COMPUTE-INTEREST\n\nThe core calculation:\n\n```\nCOMPUTE WS-MONTHLY-INT\n = ( TRAN-CAT-BAL * DIS-INT-RATE) / 1200\n```\n\nIn plain English: the category balance is multiplied by the annual interest rate (expressed as a percentage) and divided by 1200 — that is, divided by 100 to convert percent to a fraction and by 12 to convert an annual rate to a monthly one. There is no `ROUNDED` phrase, so the result is truncated when stored into `WS-MONTHLY-INT`, which is `S9(09)V99` (`BigDecimal`, precision 11, scale 2, signed) — i.e. truncated toward zero at two decimal places.\n\nIt then does `ADD WS-MONTHLY-INT TO WS-TOTAL-INT`, accumulating this category's interest into the per-account running total, and performs `1300-B-WRITE-TX`.\n\n### 1300-B-WRITE-TX\n\nBuilds and writes one interest transaction record. It adds 1 to `WS-TRANID-SUFFIX` (a program-wide counter, not reset per account), then builds the transaction ID:\n\n```\nSTRING PARM-DATE,\n       WS-TRANID-SUFFIX\n  DELIMITED BY SIZE\n  INTO TRAN-ID\n```\n\nThat concatenates the 10-character run date passed in via linkage with the 6-digit zero-padded sequence number, giving a 16-character `TRAN-ID`.\n\nIt then populates the rest of `TRAN-RECORD`: `'01'` into `TRAN-TYPE-CD`, `'05'` into `TRAN-CAT-CD`, `'System'` into `TRAN-SOURCE`, and a description built as\n\n```\nSTRING 'Int. for a/c ' ,\n       ACCT-ID\n       DELIMITED BY SIZE\n INTO TRAN-DESC\n```\n\n— the literal text `Int. for a/c ` followed by the 11-digit account ID. `WS-MONTHLY-INT` is moved to `TRAN-AMT` (both `S9(09)V99`, so the amount transfers without rescaling). Merchant fields are cleared: 0 into `TRAN-MERCHANT-ID`, spaces into `TRAN-MERCHANT-NAME`, `TRAN-MERCHANT-CITY`, and `TRAN-MERCHANT-ZIP`. `XREF-CARD-NUM` (from the cross-reference read) is moved to `TRAN-CARD-NUM`.\n\nIt performs `Z-GET-DB2-FORMAT-TIMESTAMP` and moves the resulting `DB2-FORMAT-TS` into both `TRAN-ORIG-TS` and `TRAN-PROC-TS` — origination and processing timestamps are identical.\n\nFinally `WRITE FD-TRANFILE-REC FROM TRAN-RECORD`. Status `'00'` is OK; anything else displays `'ERROR WRITING TRANSACTION RECORD'`, then `9910-DISPLAY-IO-STATUS` and `9999-ABEND-PROGRAM`.\n\n### 1400-COMPUTE-FEES\n\nA stub. The paragraph body is the comment `To be implemented` followed by `EXIT.` — it performs no work. A Java port should reproduce it as a no-op hook, not invent fee logic.\n\n### 9000-TCATBALF-CLOSE\n\nMoves 8 to `APPL-RESULT`, closes `TCATBAL-FILE`, checks for status `'00'`. On failure: displays `'ERROR CLOSING TRANSACTION BALANCE FILE'`, performs `9910-DISPLAY-IO-STATUS`, performs `9999-ABEND-PROGRAM`.\n\n### 9100-XREFFILE-CLOSE\n\nSame pattern for `XREF-FILE`; failure message `'ERROR CLOSING CROSS REF FILE'`.\n\n### 9200-DISCGRP-CLOSE\n\nSame pattern for `DISCGRP-FILE`; failure message `'ERROR CLOSING DISCLOSURE GROUP FILE'`.\n\n### 9300-ACCTFILE-CLOSE\n\nSame pattern for `ACCOUNT-FILE`; failure message `'ERROR CLOSING ACCOUNT FILE'`.\n\n### 9400-TRANFILE-CLOSE\n\nSame pattern for `TRANSACT-FILE`; failure message `'ERROR CLOSING TRANSACTION FILE'`.\n\n### Z-GET-DB2-FORMAT-TIMESTAMP\n\nMoves `FUNCTION CURRENT-DATE` into the `COBOL-TS` structure and reassembles its parts into the DB2 timestamp layout: year, month, day, hour, minute, second and hundredths are moved into the corresponding positions of `DB2-FORMAT-TS`, the literal `'0000'` is moved into the trailing `DB2-REST` positions, `'-'` is moved into the three date separators, and `'.'` into the three time separators. The result is a 26-character string of the shape `YYYY-MM-DD-HH.MM.SS.hh0000`. Note that all the target subfields of this paragraph live in a `REDEFINES` of `DB2-FORMAT-TS` and are therefore flagged for human review below; the observable output of the paragraph is nonetheless just the fully-formatted 26-character `DB2-FORMAT-TS`. A commented-out `DISPLAY` of the timestamp is present in the source.\n\n### 9999-ABEND-PROGRAM\n\nDisplays `'ABENDING PROGRAM'`, moves 0 to `TIMING` and 999 to `ABCODE`, then `CALL 'CEE3ABD' USING ABCODE, TIMING` — the Language Environment abend service. This terminates the program abnormally with user abend code 999 and immediate (non-retryable) timing; it does not return.\n\n### 9910-DISPLAY-IO-STATUS\n\nFormats a file status for display. If `IO-STATUS` is not numeric, or `IO-STAT1 = '9'`, it treats the status as the special two-byte form: it moves `IO-STAT1` into the first byte of `IO-STATUS-04`, zeroes `TWO-BYTES-BINARY`, moves `IO-STAT2` into `TWO-BYTES-RIGHT` (the low-order byte of the binary field via its `REDEFINES`), moves `TWO-BYTES-BINARY` into `IO-STATUS-0403`, and displays `'FILE STATUS IS: NNNN'` followed by `IO-STATUS-04` — i.e. it renders the second status byte as its numeric character value. Otherwise it moves `'0000'` to `IO-STATUS-04`, overlays the two status characters at positions 3–4, and displays the same message. This paragraph depends on the `TWO-BYTES-ALPHA` `REDEFINES` that is flagged for human review below.\n\n## Business rules\n\n- Input is processed in `TCATBAL-FILE` key order (account ID, transaction type code, transaction category code). The program relies on records for the same account being contiguous; the control-break logic is not correct otherwise.\n- Monthly interest per category balance is exactly `COMPUTE WS-MONTHLY-INT = ( TRAN-CAT-BAL * DIS-INT-RATE) / 1200`, with no `ROUNDED` clause — the result is **truncated**, not rounded, to two decimal places when stored into `WS-MONTHLY-INT` (`S9(09)V99`). A Java implementation must truncate toward zero at scale 2, not use half-up rounding.\n- Interest is computed and a transaction is written only when `DIS-INT-RATE NOT = 0`. A zero rate skips both `1300-COMPUTE-INTEREST` and `1400-COMPUTE-FEES` entirely — no transaction record, no accumulation.\n- Rate lookup is a two-step fallback: read the disclosure group by the account's own `ACCT-GROUP-ID` + type code + category code; if that returns file status `'23'` (not found), retry the same type/category under group ID `'DEFAULT'`. A missing account-specific group is tolerated; a missing `'DEFAULT'` group is a fatal error and abends.\n- On a change of account ID, the previous account's accumulated interest is posted with `ADD WS-TOTAL-INT TO ACCT-CURR-BAL`, and `ACCT-CURR-CYC-CREDIT` and `ACCT-CURR-CYC-DEBIT` are both set to 0, before the account record is rewritten. `WS-TOTAL-INT` is then reset to 0 for the new account.\n- The `WS-FIRST-TIME` flag (initial value `'Y'`) suppresses the update on the very first record, so no spurious account rewrite occurs before any interest has been accumulated.\n- End-of-file handling: `1000-TCATBALF-GET-NEXT` maps status `'10'` to `APPL-EOF` and sets `END-OF-FILE = 'Y'`; the main loop then exits. The `ELSE PERFORM 1050-UPDATE-ACCOUNT` branch intended to flush the final account is unreachable because the `PERFORM UNTIL` condition is evaluated first — as written, **the last account's accumulated interest is never posted to its account record**, even though its interest transactions were written. This behavior must be reproduced (or the divergence explicitly agreed) rather than silently \"fixed\".\n- Each interest transaction gets `TRAN-TYPE-CD = '01'`, `TRAN-CAT-CD = '05'`, `TRAN-SOURCE = 'System'`, all merchant fields blank/zero, `TRAN-CARD-NUM` taken from the cross-reference record for the account, and identical origination and processing timestamps.\n- `TRAN-ID` is `PARM-DATE` (10 characters from the linkage parm) concatenated with a 6-digit zero-padded `WS-TRANID-SUFFIX`. The suffix increments once per transaction written across the entire run and is never reset per account, so uniqueness depends on the run date differing between runs.\n- The output transaction file is opened `OUTPUT`, so each run replaces the file's previous contents; the account file is opened `I-O` and updated in place with `REWRITE`.\n- Any unexpected file status on open, read, rewrite, write, or close causes a display of the offending status via `9910-DISPLAY-IO-STATUS` followed by an abend with user code 999 via `CEE3ABD`. There is no skip-and-continue error path anywhere in the program.\n- `1400-COMPUTE-FEES` is an unimplemented stub and must remain a no-op.\n- Note on comparison shapes: `WS-LAST-ACCT-NUM` is `X(11)` (`String`) while `TRANCAT-ACCT-ID` is `9(11)` (`BigDecimal`, precision 11, scale 0). The control-break test compares a numeric field to an alphanumeric one; a Java port should compare the account IDs in a way that reproduces COBOL's character-by-character comparison of the 11-digit zero-padded representation.\n\n## Field reference\n\n| Field | PIC | Java type | Precision | Scale | Signed |\n|---|---|---|---|---|---|\n| FD-TRANCAT-ACCT-ID | 9(11) | BigDecimal | 11 | 0 | False |\n| FD-TRANCAT-TYPE-CD | X(02) | String | - | - | False |\n| FD-TRANCAT-CD | 9(04) | BigDecimal | 4 | 0 | False |\n| FD-FD-TRAN-CAT-DATA | X(33) | String | - | - | False |\n| FD-XREF-CARD-NUM | X(16) | String | - | - | False |\n| FD-XREF-CUST-NUM | 9(09) | BigDecimal | 9 | 0 | False |\n| FD-XREF-ACCT-ID | 9(11) | BigDecimal | 11 | 0 | False |\n| FD-XREF-FILLER | X(14) | String | - | - | False |\n| FD-DIS-ACCT-GROUP-ID | X(10) | String | - | - | False |\n| FD-DIS-TRAN-TYPE-CD | X(02) | String | - | - | False |\n| FD-DIS-TRAN-CAT-CD | 9(04) | BigDecimal | 4 | 0 | False |\n| FD-DISCGRP-DATA | X(34) | String | - | - | False |\n| FD-ACCT-ID | 9(11) | BigDecimal | 11 | 0 | False |\n| FD-ACCT-DATA | X(289) | String | - | - | False |\n| FD-TRANS-ID | X(16) | String | - | - | False |\n| FD-ACCT-DATA | X(334) | String | - | - | False |\n| TCATBALF-STAT1 | X | String | - | - | False |\n| TCATBALF-STAT2 | X | String | - | - | False |\n| XREFFILE-STAT1 | X | String | - | - | False |\n| XREFFILE-STAT2 | X | String | - | - | False |\n| DISCGRP-STAT1 | X | String | - | - | False |\n| DISCGRP-STAT2 | X | String | - | - | False |\n| ACCTFILE-STAT1 | X | String | - | - | False |\n| ACCTFILE-STAT2 | X | String | - | - | False |\n| TRANFILE-STAT1 | X | String | - | - | False |\n| TRANFILE-STAT2 | X | String | - | - | False |\n| IO-STAT1 | X | String | - | - | False |\n| IO-STAT2 | X | String | - | - | False |\n| TWO-BYTES-BINARY | 9(4) | BigDecimal | 4 | 0 | False |\n| IO-STATUS-0401 | 9 | BigDecimal | 1 | 0 | False |\n| IO-STATUS-0403 | 999 | BigDecimal | 3 | 0 | False |\n| APPL-RESULT | S9(9) | BigDecimal | 9 | 0 | True |\n| END-OF-FILE | X(01) | String | - | - | False |\n| ABCODE | S9(9) | BigDecimal | 9 | 0 | True |\n| TIMING | S9(9) | BigDecimal | 9 | 0 | True |\n| COB-YYYY | X(04) | String | - | - | False |\n| COB-MM | X(02) | String | - | - | False |\n| COB-DD | X(02) | String | - | - | False |\n| COB-HH | X(02) | String | - | - | False |\n| COB-MIN | X(02) | String | - | - | False |\n| COB-SS | X(02) | String | - | - | False |\n| COB-MIL | X(02) | String | - | - | False |\n| COB-REST | X(05) | String | - | - | False |\n| DB2-FORMAT-TS | X(26) | String | - | - | False |\n| WS-LAST-ACCT-NUM | X(11) | String | - | - | False |\n| WS-MONTHLY-INT | S9(09)V99 | BigDecimal | 11 | 2 | True |\n| WS-TOTAL-INT | S9(09)V99 | BigDecimal | 11 | 2 | True |\n| WS-FIRST-TIME | X(01) | String | - | - | False |\n| WS-RECORD-COUNT | 9(09) | BigDecimal | 9 | 0 | False |\n| WS-TRANID-SUFFIX | 9(06) | BigDecimal | 6 | 0 | False |\n| PARM-LENGTH | S9(04) | BigDecimal | 4 | 0 | True |\n| PARM-DATE | X(10) | String | - | - | False |\n| TRANCAT-ACCT-ID | 9(11) | BigDecimal | 11 | 0 | False |\n| TRANCAT-TYPE-CD | X(02) | String | - | - | False |\n| TRANCAT-CD | 9(04) | BigDecimal | 4 | 0 | False |\n| TRAN-CAT-BAL | S9(09)V99 | BigDecimal | 11 | 2 | True |\n| FILLER | X(22) | String | - | - | False |\n| XREF-CARD-NUM | X(16) | String | - | - | False |\n| XREF-CUST-ID | 9(09) | BigDecimal | 9 | 0 | False |\n| XREF-ACCT-ID | 9(11) | BigDecimal | 11 | 0 | False |\n| FILLER | X(14) | String | - | - | False |\n| DIS-ACCT-GROUP-ID | X(10) | String | - | - | False |\n| DIS-TRAN-TYPE-CD | X(02) | String | - | - | False |\n| DIS-TRAN-CAT-CD | 9(04) | BigDecimal | 4 | 0 | False |\n| DIS-INT-RATE | S9(04)V99 | BigDecimal | 6 | 2 | True |\n| FILLER | X(28) | String | - | - | False |\n| ACCT-ID | 9(11) | BigDecimal | 11 | 0 | False |\n| ACCT-ACTIVE-STATUS | X(01) | String | - | - | False |\n| ACCT-CURR-BAL | S9(10)V99 | BigDecimal | 12 | 2 | True |\n| ACCT-CREDIT-LIMIT | S9(10)V99 | BigDecimal | 12 | 2 | True |\n| ACCT-CASH-CREDIT-LIMIT | S9(10)V99 | BigDecimal | 12 | 2 | True |\n| ACCT-OPEN-DATE | X(10) | String | - | - | False |\n| ACCT-EXPIRAION-DATE | X(10) | String | - | - | False |\n| ACCT-REISSUE-DATE | X(10) | String | - | - | False |\n| ACCT-CURR-CYC-CREDIT | S9(10)V99 | BigDecimal | 12 | 2 | True |\n| ACCT-CURR-CYC-DEBIT | S9(10)V99 | BigDecimal | 12 | 2 | True |\n| ACCT-ADDR-ZIP | X(10) | String | - | - | False |\n| ACCT-GROUP-ID | X(10) | String | - | - | False |\n| FILLER | X(178) | String | - | - | False |\n| TRAN-ID | X(16) | String | - | - | False |\n| TRAN-TYPE-CD | X(02) | String | - | - | False |\n| TRAN-CAT-CD | 9(04) | BigDecimal | 4 | 0 | False |\n| TRAN-SOURCE | X(10) | String | - | - | False |\n| TRAN-DESC | X(100) | String | - | - | False |\n| TRAN-AMT | S9(09)V99 | BigDecimal | 11 | 2 | True |\n| TRAN-MERCHANT-ID | 9(09) | BigDecimal | 9 | 0 | False |\n| TRAN-MERCHANT-NAME | X(50) | String | - | - | False |\n| TRAN-MERCHANT-CITY | X(50) | String | - | - | False |\n| TRAN-MERCHANT-ZIP | X(10) | String | - | - | False |\n| TRAN-CARD-NUM | X(16) | String | - | - | False |\n| TRAN-ORIG-TS | X(26) | String | - | - | False |\n| TRAN-PROC-TS | X(26) | String | - | - | False |\n| FILLER | X(20) | String | - | - | False |\n\n## Flagged for human review\n\nPer ADR-0002, the parser deliberately does not map fields declared under a `REDEFINES`, because a redefinition gives the same storage two incompatible interpretations and no single Java shape can be derived safely. Each of these must be resolved by a human before the Java port can represent it.\n\n- **`TWO-BYTES-LEFT`** (CBACT04C) — declared inside `01 TWO-BYTES-ALPHA REDEFINES TWO-BYTES-BINARY`; it reinterprets the high-order byte of a `PIC 9(4) BINARY` field as a character. Requires a human decision on byte-level aliasing.\n- **`TWO-BYTES-RIGHT`** (CBACT04C) — same `REDEFINES` group; it reinterprets the low-order byte of `TWO-BYTES-BINARY` as a character. This one is actually used by `9910-DISPLAY-IO-STATUS` to convert a status character to its numeric value, so its resolution affects observable output.\n- **`DB2-YYYY`** (CBACT04C) — declared inside `01 FILLER REDEFINES DB2-FORMAT-TS`; a positional view over the 26-character timestamp string.\n- **`DB2-MIN`** (CBACT04C) — same `REDEFINES` over `DB2-FORMAT-TS`.\n- **`DB2-DOT-2`** (CBACT04C) — same `REDEFINES` over `DB2-FORMAT-TS`; a single separator character position.\n- **`DB2-SS`** (CBACT04C) — same `REDEFINES` over `DB2-FORMAT-TS`.\n- **`DB2-DOT-3`** (CBACT04C) — same `REDEFINES` over `DB2-FORMAT-TS`; a single separator character position.\n- **`DB2-MIL`** (CBACT04C) — same `REDEFINES` over `DB2-FORMAT-TS`; declared `PIC 9(002)`, a numeric view over characters of an alphanumeric field.\n- **`DB2-REST`** (CBACT04C) — same `REDEFINES` over `DB2-FORMAT-TS`; the trailing filler positions set to `'0000'`.\n\nNote for the human reviewer: the whole `DB2-FORMAT-TS` redefinition group is only used by `Z-GET-DB2-FORMAT-TIMESTAMP` to assemble one 26-character timestamp string. If the reviewer agrees, the simplest resolution is to treat `DB2-FORMAT-TS` as a single formatted string produced by a timestamp formatter, rather than porting each redefined subfield individually — but that is a human call, not one this narration makes.",
+        "complexity": {
+          "program_name": "CBACT04C",
+          "prompt_chars": 74230,
+          "paragraph_count": 22,
+          "mapped_field_count": 93,
+          "unsupported_field_count": 9,
+          "copybook_count": 5,
+          "tier": "complex",
+          "rationale": "complex: prompt 74,230 chars >= 60,000"
+        }
+      },
+      "critique": {
+        "program_name": "CBACT04C",
+        "fidelity_issues": [],
+        "rule_confidence": [
+          {
+            "rule": "TCATBAL-FILE is read in sequential key order with key being account ID + transaction type code + transaction category code",
+            "confidence": 1.0,
+            "rationale": "File definition shows ORGANIZATION IS INDEXED, ACCESS MODE IS SEQUENTIAL, RECORD KEY IS FD-TRAN-CAT-KEY which comprises TRANCAT-ACCT-ID (account), TRANCAT-TYPE-CD (type), and TRANCAT-CD (category) in that order."
+          },
+          {
+            "rule": "Monthly interest is computed exactly as COMPUTE WS-MONTHLY-INT = (TRAN-CAT-BAL * DIS-INT-RATE) / 1200 with no ROUNDED clause, truncating to scale 2",
+            "confidence": 1.0,
+            "rationale": "1300-COMPUTE-INTEREST shows this exact formula with no ROUNDED phrase. WS-MONTHLY-INT is PIC S9(09)V99. COBOL truncates toward zero when ROUNDED is absent."
+          },
+          {
+            "rule": "Interest computation and transaction writing are skipped entirely when DIS-INT-RATE = 0",
+            "confidence": 1.0,
+            "rationale": "Main loop contains IF DIS-INT-RATE NOT = 0 PERFORM 1300-COMPUTE-INTEREST PERFORM 1400-COMPUTE-FEES END-IF, so zero rate causes both paragraphs to be skipped."
+          },
+          {
+            "rule": "Disclosure group lookup falls back from account-specific group to DEFAULT group on file status '23'",
+            "confidence": 1.0,
+            "rationale": "1200-GET-INTEREST-RATE checks IF DISCGRP-STATUS = '00' OR '23', and then IF DISCGRP-STATUS = '23' MOVE 'DEFAULT' TO FD-DIS-ACCT-GROUP-ID PERFORM 1200-A-GET-DEFAULT-INT-RATE."
+          },
+          {
+            "rule": "On control break, WS-TOTAL-INT is added to ACCT-CURR-BAL, ACCT-CURR-CYC-CREDIT and ACCT-CURR-CYC-DEBIT are set to 0, and the account record is rewritten",
+            "confidence": 1.0,
+            "rationale": "1050-UPDATE-ACCOUNT performs exactly these three operations: ADD WS-TOTAL-INT TO ACCT-CURR-BAL, MOVE 0 to both cycle fields, REWRITE FD-ACCTFILE-REC FROM ACCOUNT-RECORD."
+          },
+          {
+            "rule": "WS-FIRST-TIME flag (initial value 'Y') suppresses the first control-break update",
+            "confidence": 1.0,
+            "rationale": "Working storage defines WS-FIRST-TIME PIC X(01) VALUE 'Y'. Main loop tests IF WS-FIRST-TIME NOT = 'Y' before performing 1050-UPDATE-ACCOUNT."
+          },
+          {
+            "rule": "The last account's accumulated interest is never posted because the loop condition is tested before the ELSE branch can execute",
+            "confidence": 1.0,
+            "rationale": "PERFORM UNTIL END-OF-FILE = 'Y' evaluates the condition at the top of each iteration. When 1000-TCATBALF-GET-NEXT sets END-OF-FILE to 'Y', the next iteration exits immediately, making the ELSE PERFORM 1050-UPDATE-ACCOUNT branch unreachable."
+          },
+          {
+            "rule": "Each interest transaction is written with TRAN-TYPE-CD='01', TRAN-CAT-CD='05', TRAN-SOURCE='System', zero/blank merchant fields, and TRAN-CARD-NUM from XREF-CARD-NUM",
+            "confidence": 1.0,
+            "rationale": "1300-B-WRITE-TX shows MOVE '01' TO TRAN-TYPE-CD, MOVE '05' TO TRAN-CAT-CD, MOVE 'System' TO TRAN-SOURCE, MOVE 0 to TRAN-MERCHANT-ID, MOVE SPACES to merchant name/city/zip, MOVE XREF-CARD-NUM TO TRAN-CARD-NUM."
+          },
+          {
+            "rule": "TRAN-ID is formed by concatenating PARM-DATE (10 chars) with WS-TRANID-SUFFIX (6 digits) via STRING with DELIMITED BY SIZE",
+            "confidence": 1.0,
+            "rationale": "1300-B-WRITE-TX shows STRING PARM-DATE, WS-TRANID-SUFFIX DELIMITED BY SIZE INTO TRAN-ID. PARM-DATE is X(10), WS-TRANID-SUFFIX is 9(06), both defined as such in WORKING-STORAGE and LINKAGE SECTION."
+          },
+          {
+            "rule": "WS-TRANID-SUFFIX increments once per transaction written and is never reset per account",
+            "confidence": 1.0,
+            "rationale": "1300-B-WRITE-TX shows ADD 1 TO WS-TRANID-SUFFIX. No per-account reset logic is present; the counter is program-wide."
+          },
+          {
+            "rule": "ACCOUNT-FILE is opened with OPEN I-O and updated via REWRITE; TRANSACT-FILE is opened with OPEN OUTPUT",
+            "confidence": 1.0,
+            "rationale": "0300-ACCTFILE-OPEN shows OPEN I-O ACCOUNT-FILE. 0400-TRANFILE-OPEN shows OPEN OUTPUT TRANSACT-FILE."
+          },
+          {
+            "rule": "Any file operation error (open/read/write/rewrite/close) causes display via 9910-DISPLAY-IO-STATUS and abend via CEE3ABD with code 999, with no skip-and-continue path",
+            "confidence": 1.0,
+            "rationale": "All open, read, and write paragraphs follow the pattern: check status, if not OK (and not EOF in 1000), display error via 9910-DISPLAY-IO-STATUS then PERFORM 9999-ABEND-PROGRAM. No path exists to continue after an unexpected error."
+          },
+          {
+            "rule": "1400-COMPUTE-FEES contains only a comment and EXIT with no implementation",
+            "confidence": 1.0,
+            "rationale": "1400-COMPUTE-FEES paragraph shows only comment '* To be implemented' followed by EXIT."
+          },
+          {
+            "rule": "WS-LAST-ACCT-NUM is PIC X(11) (alphanumeric) while TRANCAT-ACCT-ID is PIC 9(11) (numeric); control break compares these directly",
+            "confidence": 1.0,
+            "rationale": "Working storage defines WS-LAST-ACCT-NUM PIC X(11). TRAN-CAT-KEY in copybook defines TRANCAT-ACCT-ID PIC 9(11). Main loop compares IF TRANCAT-ACCT-ID NOT= WS-LAST-ACCT-NUM, causing COBOL to convert the numeric field to its string representation for comparison."
+          },
+          {
+            "rule": "Z-GET-DB2-FORMAT-TIMESTAMP moves FUNCTION CURRENT-DATE into COBOL-TS, then distributes its components into DB2-FORMAT-TS (26 chars) with separators '-' (3 occurrences) and '.' (3 occurrences) and '0000' in DB2-REST",
+            "confidence": 0.95,
+            "rationale": "Paragraph shows MOVE FUNCTION CURRENT-DATE TO COBOL-TS followed by moves of individual components (YYYY, MM, DD, HH, MIN, SS, MIL) into corresponding DB2 subfields, plus separator assignments. The overall shape is correct. Minor note: the spec calls COB-MIL 'hundredths' but CURRENT-DATE typically returns milliseconds; functionally the 2-char field is moved as shown."
+          },
+          {
+            "rule": "1110-GET-XREF-DATA reads XREF-FILE using alternate key FD-XREF-ACCT-ID",
+            "confidence": 1.0,
+            "rationale": "Paragraph shows READ XREF-FILE INTO CARD-XREF-RECORD KEY IS FD-XREF-ACCT-ID. File definition specifies ALTERNATE RECORD KEY IS FD-XREF-ACCT-ID."
+          },
+          {
+            "rule": "1200-GET-INTEREST-RATE treats file status '23' as acceptable; missing account-specific group triggers fallback to DEFAULT but missing DEFAULT group is fatal",
+            "confidence": 1.0,
+            "rationale": "Status check shows IF DISCGRP-STATUS = '00' OR '23' MOVE 0 TO APPL-RESULT, treating '23' as OK. When DISCGRP-STATUS = '23', it performs 1200-A-GET-DEFAULT-INT-RATE, which has no INVALID KEY and will abend on any non-'00' status."
+          },
+          {
+            "rule": "Main procedure opens TCATBAL-FILE, XREF-FILE, DISCGRP-FILE, ACCOUNT-FILE, and TRANSACT-FILE in that order, then closes them in reverse order (TCATBAL through TRANSACT)",
+            "confidence": 1.0,
+            "rationale": "Procedure division shows PERFORM 0000-TCATBALF-OPEN through 0400-TRANFILE-OPEN, then PERFORM 9000-TCATBALF-CLOSE through 9400-TRANFILE-CLOSE in the same forward sequence (not reverse)."
+          },
+          {
+            "rule": "Both TRAN-ORIG-TS and TRAN-PROC-TS are set to the same value (DB2-FORMAT-TS) for each interest transaction",
+            "confidence": 1.0,
+            "rationale": "1300-B-WRITE-TX shows PERFORM Z-GET-DB2-FORMAT-TIMESTAMP followed by MOVE DB2-FORMAT-TS TO TRAN-ORIG-TS and MOVE DB2-FORMAT-TS TO TRAN-PROC-TS."
+          },
+          {
+            "rule": "Input from TCATBAL-FILE assumes records for the same account are contiguous; the control-break logic will produce incorrect results if this is violated",
+            "confidence": 1.0,
+            "rationale": "Control-break accumulation in WS-TOTAL-INT is reset and the account is looked up fresh only when TRANCAT-ACCT-ID changes. Non-contiguous records would cause the same account to be processed multiple times with separate rewrite operations."
+          }
+        ],
+        "overall_confidence": 0.95
+      }
+    }
+  ],
+  "gate_items": [
+    {
+      "category": "unsupported_construct",
+      "program_name": "CBACT04C",
+      "summary": "Unsupported construct on field 'TWO-BYTES-LEFT'",
+      "detail": "Unsupported construct 'REDEFINES' detected in field declaration; per ADR-0002 this must route to a human gate, not be parsed: '           05  TWO-BYTES-LEFT      PIC X.                                       \\n       01  TWO-BYTES-ALPHA         REDEFINES TWO-BYTES-BINARY.                  \\n           05  TWO-BYTES-RIGHT     PIC X.                                       '"
+    },
+    {
+      "category": "unsupported_construct",
+      "program_name": "CBACT04C",
+      "summary": "Unsupported construct on field 'TWO-BYTES-RIGHT'",
+      "detail": "Unsupported construct 'REDEFINES' detected in field declaration; per ADR-0002 this must route to a human gate, not be parsed: '           05  TWO-BYTES-RIGHT     PIC X.                                       \\n       01  TWO-BYTES-ALPHA         REDEFINES TWO-BYTES-BINARY.                  \\n           05  TWO-BYTES-LEFT      PIC X.                                       '"
+    },
+    {
+      "category": "unsupported_construct",
+      "program_name": "CBACT04C",
+      "summary": "Unsupported construct on field 'DB2-YYYY'",
+      "detail": "Unsupported construct 'REDEFINES' detected in field declaration; per ADR-0002 this must route to a human gate, not be parsed: '           06 DB2-YYYY                  PIC X(004).                      E      \\n           06 DB2-STREEP-1              PIC X.                           -      \\n           06 DB2-MM                    PIC X(002).                      M      \\n           06 DB2-STREEP-2              PIC X.                           -      \\n           06 DB2-DD                    PIC X(002).                      D      \\n           06 DB2-STREEP-3              PIC X.                           -      \\n           06 DB2-HH                    PIC X(002).                      U      \\n           06 DB2-DOT-1                 PIC X.                                  \\n       01  FILLER REDEFINES DB2-FORMAT-TS.                                      \\n           06 DB2-MIN                   PIC X(002).                             \\n           06 DB2-DOT-2                 PIC X.                                  \\n           06 DB2-SS                    PIC X(002).                             \\n           06 DB2-DOT-3                 PIC X.                                  \\n           06 DB2-MIL                   PIC 9(002).                             \\n           06 DB2-REST                  PIC X(04).                              '"
+    },
+    {
+      "category": "unsupported_construct",
+      "program_name": "CBACT04C",
+      "summary": "Unsupported construct on field 'DB2-MIN'",
+      "detail": "Unsupported construct 'REDEFINES' detected in field declaration; per ADR-0002 this must route to a human gate, not be parsed: '           06 DB2-MIN                   PIC X(002).                             \\n       01  FILLER REDEFINES DB2-FORMAT-TS.                                      \\n           06 DB2-YYYY                  PIC X(004).                      E      \\n           06 DB2-STREEP-1              PIC X.                           -      \\n           06 DB2-MM                    PIC X(002).                      M      \\n           06 DB2-STREEP-2              PIC X.                           -      \\n           06 DB2-DD                    PIC X(002).                      D      \\n           06 DB2-STREEP-3              PIC X.                           -      \\n           06 DB2-HH                    PIC X(002).                      U      \\n           06 DB2-DOT-1                 PIC X.                                  \\n           06 DB2-DOT-2                 PIC X.                                  \\n           06 DB2-SS                    PIC X(002).                             \\n           06 DB2-DOT-3                 PIC X.                                  \\n           06 DB2-MIL                   PIC 9(002).                             \\n           06 DB2-REST                  PIC X(04).                              '"
+    },
+    {
+      "category": "unsupported_construct",
+      "program_name": "CBACT04C",
+      "summary": "Unsupported construct on field 'DB2-DOT-2'",
+      "detail": "Unsupported construct 'REDEFINES' detected in field declaration; per ADR-0002 this must route to a human gate, not be parsed: '           06 DB2-DOT-2                 PIC X.                                  \\n       01  FILLER REDEFINES DB2-FORMAT-TS.                                      \\n           06 DB2-YYYY                  PIC X(004).                      E      \\n           06 DB2-STREEP-1              PIC X.                           -      \\n           06 DB2-MM                    PIC X(002).                      M      \\n           06 DB2-STREEP-2              PIC X.                           -      \\n           06 DB2-DD                    PIC X(002).                      D      \\n           06 DB2-STREEP-3              PIC X.                           -      \\n           06 DB2-HH                    PIC X(002).                      U      \\n           06 DB2-DOT-1                 PIC X.                                  \\n           06 DB2-MIN                   PIC X(002).                             \\n           06 DB2-SS                    PIC X(002).                             \\n           06 DB2-DOT-3                 PIC X.                                  \\n           06 DB2-MIL                   PIC 9(002).                             \\n           06 DB2-REST                  PIC X(04).                              '"
+    },
+    {
+      "category": "unsupported_construct",
+      "program_name": "CBACT04C",
+      "summary": "Unsupported construct on field 'DB2-SS'",
+      "detail": "Unsupported construct 'REDEFINES' detected in field declaration; per ADR-0002 this must route to a human gate, not be parsed: '           06 DB2-SS                    PIC X(002).                             \\n       01  FILLER REDEFINES DB2-FORMAT-TS.                                      \\n           06 DB2-YYYY                  PIC X(004).                      E      \\n           06 DB2-STREEP-1              PIC X.                           -      \\n           06 DB2-MM                    PIC X(002).                      M      \\n           06 DB2-STREEP-2              PIC X.                           -      \\n           06 DB2-DD                    PIC X(002).                      D      \\n           06 DB2-STREEP-3              PIC X.                           -      \\n           06 DB2-HH                    PIC X(002).                      U      \\n           06 DB2-DOT-1                 PIC X.                                  \\n           06 DB2-MIN                   PIC X(002).                             \\n           06 DB2-DOT-2                 PIC X.                                  \\n           06 DB2-DOT-3                 PIC X.                                  \\n           06 DB2-MIL                   PIC 9(002).                             \\n           06 DB2-REST                  PIC X(04).                              '"
+    },
+    {
+      "category": "unsupported_construct",
+      "program_name": "CBACT04C",
+      "summary": "Unsupported construct on field 'DB2-DOT-3'",
+      "detail": "Unsupported construct 'REDEFINES' detected in field declaration; per ADR-0002 this must route to a human gate, not be parsed: '           06 DB2-DOT-3                 PIC X.                                  \\n       01  FILLER REDEFINES DB2-FORMAT-TS.                                      \\n           06 DB2-YYYY                  PIC X(004).                      E      \\n           06 DB2-STREEP-1              PIC X.                           -      \\n           06 DB2-MM                    PIC X(002).                      M      \\n           06 DB2-STREEP-2              PIC X.                           -      \\n           06 DB2-DD                    PIC X(002).                      D      \\n           06 DB2-STREEP-3              PIC X.                           -      \\n           06 DB2-HH                    PIC X(002).                      U      \\n           06 DB2-DOT-1                 PIC X.                                  \\n           06 DB2-MIN                   PIC X(002).                             \\n           06 DB2-DOT-2                 PIC X.                                  \\n           06 DB2-SS                    PIC X(002).                             \\n           06 DB2-MIL                   PIC 9(002).                             \\n           06 DB2-REST                  PIC X(04).                              '"
+    },
+    {
+      "category": "unsupported_construct",
+      "program_name": "CBACT04C",
+      "summary": "Unsupported construct on field 'DB2-MIL'",
+      "detail": "Unsupported construct 'REDEFINES' detected in field declaration; per ADR-0002 this must route to a human gate, not be parsed: '           06 DB2-MIL                   PIC 9(002).                             \\n       01  FILLER REDEFINES DB2-FORMAT-TS.                                      \\n           06 DB2-YYYY                  PIC X(004).                      E      \\n           06 DB2-STREEP-1              PIC X.                           -      \\n           06 DB2-MM                    PIC X(002).                      M      \\n           06 DB2-STREEP-2              PIC X.                           -      \\n           06 DB2-DD                    PIC X(002).                      D      \\n           06 DB2-STREEP-3              PIC X.                           -      \\n           06 DB2-HH                    PIC X(002).                      U      \\n           06 DB2-DOT-1                 PIC X.                                  \\n           06 DB2-MIN                   PIC X(002).                             \\n           06 DB2-DOT-2                 PIC X.                                  \\n           06 DB2-SS                    PIC X(002).                             \\n           06 DB2-DOT-3                 PIC X.                                  \\n           06 DB2-REST                  PIC X(04).                              '"
+    },
+    {
+      "category": "unsupported_construct",
+      "program_name": "CBACT04C",
+      "summary": "Unsupported construct on field 'DB2-REST'",
+      "detail": "Unsupported construct 'REDEFINES' detected in field declaration; per ADR-0002 this must route to a human gate, not be parsed: '           06 DB2-REST                  PIC X(04).                              \\n       01  FILLER REDEFINES DB2-FORMAT-TS.                                      \\n           06 DB2-YYYY                  PIC X(004).                      E      \\n           06 DB2-STREEP-1              PIC X.                           -      \\n           06 DB2-MM                    PIC X(002).                      M      \\n           06 DB2-STREEP-2              PIC X.                           -      \\n           06 DB2-DD                    PIC X(002).                      D      \\n           06 DB2-STREEP-3              PIC X.                           -      \\n           06 DB2-HH                    PIC X(002).                      U      \\n           06 DB2-DOT-1                 PIC X.                                  \\n           06 DB2-MIN                   PIC X(002).                             \\n           06 DB2-DOT-2                 PIC X.                                  \\n           06 DB2-SS                    PIC X(002).                             \\n           06 DB2-DOT-3                 PIC X.                                  \\n           06 DB2-MIL                   PIC 9(002).                             '"
+    }
+  ],
+  "unified_design": {
+    "domain_entities": [
+      {
+        "name": "TranCatBal",
+        "source_copybook": "CVTRA01Y",
+        "record_length": 50,
+        "used_by_programs": [
+          "CBACT04C"
+        ],
+        "fields": [
+          {
+            "java_field_name": "trancatAcctId",
+            "cobol_field_name": "TRANCAT-ACCT-ID",
+            "java_type": "BigDecimal",
+            "precision": 11,
+            "scale": 0,
+            "length": null,
+            "signed": false,
+            "byte_offset": 0
+          },
+          {
+            "java_field_name": "trancatTypeCd",
+            "cobol_field_name": "TRANCAT-TYPE-CD",
+            "java_type": "String",
+            "precision": null,
+            "scale": null,
+            "length": 2,
+            "signed": false,
+            "byte_offset": 11
+          },
+          {
+            "java_field_name": "trancatCd",
+            "cobol_field_name": "TRANCAT-CD",
+            "java_type": "BigDecimal",
+            "precision": 4,
+            "scale": 0,
+            "length": null,
+            "signed": false,
+            "byte_offset": 13
+          },
+          {
+            "java_field_name": "tranCatBal",
+            "cobol_field_name": "TRAN-CAT-BAL",
+            "java_type": "BigDecimal",
+            "precision": 11,
+            "scale": 2,
+            "length": null,
+            "signed": true,
+            "byte_offset": 17
+          }
+        ]
+      },
+      {
+        "name": "CardXref",
+        "source_copybook": "CVACT03Y",
+        "record_length": 50,
+        "used_by_programs": [
+          "CBACT04C"
+        ],
+        "fields": [
+          {
+            "java_field_name": "xrefCardNum",
+            "cobol_field_name": "XREF-CARD-NUM",
+            "java_type": "String",
+            "precision": null,
+            "scale": null,
+            "length": 16,
+            "signed": false,
+            "byte_offset": 0
+          },
+          {
+            "java_field_name": "xrefCustId",
+            "cobol_field_name": "XREF-CUST-ID",
+            "java_type": "BigDecimal",
+            "precision": 9,
+            "scale": 0,
+            "length": null,
+            "signed": false,
+            "byte_offset": 16
+          },
+          {
+            "java_field_name": "xrefAcctId",
+            "cobol_field_name": "XREF-ACCT-ID",
+            "java_type": "BigDecimal",
+            "precision": 11,
+            "scale": 0,
+            "length": null,
+            "signed": false,
+            "byte_offset": 25
+          }
+        ]
+      },
+      {
+        "name": "DisGroup",
+        "source_copybook": "CVTRA02Y",
+        "record_length": 50,
+        "used_by_programs": [
+          "CBACT04C"
+        ],
+        "fields": [
+          {
+            "java_field_name": "disAcctGroupId",
+            "cobol_field_name": "DIS-ACCT-GROUP-ID",
+            "java_type": "String",
+            "precision": null,
+            "scale": null,
+            "length": 10,
+            "signed": false,
+            "byte_offset": 0
+          },
+          {
+            "java_field_name": "disTranTypeCd",
+            "cobol_field_name": "DIS-TRAN-TYPE-CD",
+            "java_type": "String",
+            "precision": null,
+            "scale": null,
+            "length": 2,
+            "signed": false,
+            "byte_offset": 10
+          },
+          {
+            "java_field_name": "disTranCatCd",
+            "cobol_field_name": "DIS-TRAN-CAT-CD",
+            "java_type": "BigDecimal",
+            "precision": 4,
+            "scale": 0,
+            "length": null,
+            "signed": false,
+            "byte_offset": 12
+          },
+          {
+            "java_field_name": "disIntRate",
+            "cobol_field_name": "DIS-INT-RATE",
+            "java_type": "BigDecimal",
+            "precision": 6,
+            "scale": 2,
+            "length": null,
+            "signed": true,
+            "byte_offset": 16
+          }
+        ]
+      },
+      {
+        "name": "Account",
+        "source_copybook": "CVACT01Y",
+        "record_length": 300,
+        "used_by_programs": [
+          "CBACT04C"
+        ],
+        "fields": [
+          {
+            "java_field_name": "acctId",
+            "cobol_field_name": "ACCT-ID",
+            "java_type": "BigDecimal",
+            "precision": 11,
+            "scale": 0,
+            "length": null,
+            "signed": false,
+            "byte_offset": 0
+          },
+          {
+            "java_field_name": "acctActiveStatus",
+            "cobol_field_name": "ACCT-ACTIVE-STATUS",
+            "java_type": "String",
+            "precision": null,
+            "scale": null,
+            "length": 1,
+            "signed": false,
+            "byte_offset": 11
+          },
+          {
+            "java_field_name": "acctCurrBal",
+            "cobol_field_name": "ACCT-CURR-BAL",
+            "java_type": "BigDecimal",
+            "precision": 12,
+            "scale": 2,
+            "length": null,
+            "signed": true,
+            "byte_offset": 12
+          },
+          {
+            "java_field_name": "acctCreditLimit",
+            "cobol_field_name": "ACCT-CREDIT-LIMIT",
+            "java_type": "BigDecimal",
+            "precision": 12,
+            "scale": 2,
+            "length": null,
+            "signed": true,
+            "byte_offset": 24
+          },
+          {
+            "java_field_name": "acctCashCreditLimit",
+            "cobol_field_name": "ACCT-CASH-CREDIT-LIMIT",
+            "java_type": "BigDecimal",
+            "precision": 12,
+            "scale": 2,
+            "length": null,
+            "signed": true,
+            "byte_offset": 36
+          },
+          {
+            "java_field_name": "acctOpenDate",
+            "cobol_field_name": "ACCT-OPEN-DATE",
+            "java_type": "String",
+            "precision": null,
+            "scale": null,
+            "length": 10,
+            "signed": false,
+            "byte_offset": 48
+          },
+          {
+            "java_field_name": "acctExpiraionDate",
+            "cobol_field_name": "ACCT-EXPIRAION-DATE",
+            "java_type": "String",
+            "precision": null,
+            "scale": null,
+            "length": 10,
+            "signed": false,
+            "byte_offset": 58
+          },
+          {
+            "java_field_name": "acctReissueDate",
+            "cobol_field_name": "ACCT-REISSUE-DATE",
+            "java_type": "String",
+            "precision": null,
+            "scale": null,
+            "length": 10,
+            "signed": false,
+            "byte_offset": 68
+          },
+          {
+            "java_field_name": "acctCurrCycCredit",
+            "cobol_field_name": "ACCT-CURR-CYC-CREDIT",
+            "java_type": "BigDecimal",
+            "precision": 12,
+            "scale": 2,
+            "length": null,
+            "signed": true,
+            "byte_offset": 78
+          },
+          {
+            "java_field_name": "acctCurrCycDebit",
+            "cobol_field_name": "ACCT-CURR-CYC-DEBIT",
+            "java_type": "BigDecimal",
+            "precision": 12,
+            "scale": 2,
+            "length": null,
+            "signed": true,
+            "byte_offset": 90
+          },
+          {
+            "java_field_name": "acctAddrZip",
+            "cobol_field_name": "ACCT-ADDR-ZIP",
+            "java_type": "String",
+            "precision": null,
+            "scale": null,
+            "length": 10,
+            "signed": false,
+            "byte_offset": 102
+          },
+          {
+            "java_field_name": "acctGroupId",
+            "cobol_field_name": "ACCT-GROUP-ID",
+            "java_type": "String",
+            "precision": null,
+            "scale": null,
+            "length": 10,
+            "signed": false,
+            "byte_offset": 112
+          }
+        ]
+      },
+      {
+        "name": "Tran",
+        "source_copybook": "CVTRA05Y",
+        "record_length": 350,
+        "used_by_programs": [
+          "CBACT04C"
+        ],
+        "fields": [
+          {
+            "java_field_name": "tranId",
+            "cobol_field_name": "TRAN-ID",
+            "java_type": "String",
+            "precision": null,
+            "scale": null,
+            "length": 16,
+            "signed": false,
+            "byte_offset": 0
+          },
+          {
+            "java_field_name": "tranTypeCd",
+            "cobol_field_name": "TRAN-TYPE-CD",
+            "java_type": "String",
+            "precision": null,
+            "scale": null,
+            "length": 2,
+            "signed": false,
+            "byte_offset": 16
+          },
+          {
+            "java_field_name": "tranCatCd",
+            "cobol_field_name": "TRAN-CAT-CD",
+            "java_type": "BigDecimal",
+            "precision": 4,
+            "scale": 0,
+            "length": null,
+            "signed": false,
+            "byte_offset": 18
+          },
+          {
+            "java_field_name": "tranSource",
+            "cobol_field_name": "TRAN-SOURCE",
+            "java_type": "String",
+            "precision": null,
+            "scale": null,
+            "length": 10,
+            "signed": false,
+            "byte_offset": 22
+          },
+          {
+            "java_field_name": "tranDesc",
+            "cobol_field_name": "TRAN-DESC",
+            "java_type": "String",
+            "precision": null,
+            "scale": null,
+            "length": 100,
+            "signed": false,
+            "byte_offset": 32
+          },
+          {
+            "java_field_name": "tranAmt",
+            "cobol_field_name": "TRAN-AMT",
+            "java_type": "BigDecimal",
+            "precision": 11,
+            "scale": 2,
+            "length": null,
+            "signed": true,
+            "byte_offset": 132
+          },
+          {
+            "java_field_name": "tranMerchantId",
+            "cobol_field_name": "TRAN-MERCHANT-ID",
+            "java_type": "BigDecimal",
+            "precision": 9,
+            "scale": 0,
+            "length": null,
+            "signed": false,
+            "byte_offset": 143
+          },
+          {
+            "java_field_name": "tranMerchantName",
+            "cobol_field_name": "TRAN-MERCHANT-NAME",
+            "java_type": "String",
+            "precision": null,
+            "scale": null,
+            "length": 50,
+            "signed": false,
+            "byte_offset": 152
+          },
+          {
+            "java_field_name": "tranMerchantCity",
+            "cobol_field_name": "TRAN-MERCHANT-CITY",
+            "java_type": "String",
+            "precision": null,
+            "scale": null,
+            "length": 50,
+            "signed": false,
+            "byte_offset": 202
+          },
+          {
+            "java_field_name": "tranMerchantZip",
+            "cobol_field_name": "TRAN-MERCHANT-ZIP",
+            "java_type": "String",
+            "precision": null,
+            "scale": null,
+            "length": 10,
+            "signed": false,
+            "byte_offset": 252
+          },
+          {
+            "java_field_name": "tranCardNum",
+            "cobol_field_name": "TRAN-CARD-NUM",
+            "java_type": "String",
+            "precision": null,
+            "scale": null,
+            "length": 16,
+            "signed": false,
+            "byte_offset": 262
+          },
+          {
+            "java_field_name": "tranOrigTs",
+            "cobol_field_name": "TRAN-ORIG-TS",
+            "java_type": "String",
+            "precision": null,
+            "scale": null,
+            "length": 26,
+            "signed": false,
+            "byte_offset": 278
+          },
+          {
+            "java_field_name": "tranProcTs",
+            "cobol_field_name": "TRAN-PROC-TS",
+            "java_type": "String",
+            "precision": null,
+            "scale": null,
+            "length": 26,
+            "signed": false,
+            "byte_offset": 304
+          }
+        ]
+      }
+    ],
+    "file_access_paths": [
+      {
+        "program_name": "CBACT04C",
+        "entity_name": "TranCatBal",
+        "record_name": "TRAN-CAT-BAL-RECORD",
+        "select_name": "TCATBAL-FILE",
+        "assign_to": "TCATBALF",
+        "organization": "INDEXED",
+        "access_mode": "SEQUENTIAL",
+        "effective_key": null,
+        "declared_record_key": "FD-TRAN-CAT-KEY",
+        "alternate_record_keys": [],
+        "is_keyed_lookup": false,
+        "written_entity_name": "",
+        "write_mode": null,
+        "write_lines": [],
+        "key_parts": [],
+        "select_line": 28,
+        "read_line": 326
+      },
+      {
+        "program_name": "CBACT04C",
+        "entity_name": "CardXref",
+        "record_name": "CARD-XREF-RECORD",
+        "select_name": "XREF-FILE",
+        "assign_to": "XREFFILE",
+        "organization": "INDEXED",
+        "access_mode": "RANDOM",
+        "effective_key": "FD-XREF-ACCT-ID",
+        "declared_record_key": "FD-XREF-CARD-NUM",
+        "alternate_record_keys": [
+          "FD-XREF-ACCT-ID"
+        ],
+        "is_keyed_lookup": true,
+        "written_entity_name": "",
+        "write_mode": null,
+        "write_lines": [],
+        "key_parts": [
+          {
+            "key_field": "FD-XREF-ACCT-ID",
+            "source_field": "TRANCAT-ACCT-ID",
+            "literal": null,
+            "is_fallback": false,
+            "key_offset": 25,
+            "key_width": 11,
+            "source_line": 204
+          }
+        ],
+        "select_line": 34,
+        "read_line": 394
+      },
+      {
+        "program_name": "CBACT04C",
+        "entity_name": "Account",
+        "record_name": "ACCOUNT-RECORD",
+        "select_name": "ACCOUNT-FILE",
+        "assign_to": "ACCTFILE",
+        "organization": "INDEXED",
+        "access_mode": "RANDOM",
+        "effective_key": "FD-ACCT-ID",
+        "declared_record_key": "FD-ACCT-ID",
+        "alternate_record_keys": [],
+        "is_keyed_lookup": true,
+        "written_entity_name": "Account",
+        "write_mode": "replace",
+        "write_lines": [
+          356
+        ],
+        "key_parts": [
+          {
+            "key_field": "FD-ACCT-ID",
+            "source_field": "TRANCAT-ACCT-ID",
+            "literal": null,
+            "is_fallback": false,
+            "key_offset": 0,
+            "key_width": 11,
+            "source_line": 202
+          }
+        ],
+        "select_line": 41,
+        "read_line": 373
+      },
+      {
+        "program_name": "CBACT04C",
+        "entity_name": "DisGroup",
+        "record_name": "DIS-GROUP-RECORD",
+        "select_name": "DISCGRP-FILE",
+        "assign_to": "DISCGRP",
+        "organization": "INDEXED",
+        "access_mode": "RANDOM",
+        "effective_key": "FD-DISCGRP-KEY",
+        "declared_record_key": "FD-DISCGRP-KEY",
+        "alternate_record_keys": [],
+        "is_keyed_lookup": true,
+        "written_entity_name": "",
+        "write_mode": null,
+        "write_lines": [],
+        "key_parts": [
+          {
+            "key_field": "FD-DIS-ACCT-GROUP-ID",
+            "source_field": "ACCT-GROUP-ID",
+            "literal": null,
+            "is_fallback": false,
+            "key_offset": 0,
+            "key_width": 10,
+            "source_line": 210
+          },
+          {
+            "key_field": "FD-DIS-ACCT-GROUP-ID",
+            "source_field": null,
+            "literal": "DEFAULT",
+            "is_fallback": true,
+            "key_offset": 0,
+            "key_width": 10,
+            "source_line": 437
+          },
+          {
+            "key_field": "FD-DIS-TRAN-TYPE-CD",
+            "source_field": "TRANCAT-TYPE-CD",
+            "literal": null,
+            "is_fallback": false,
+            "key_offset": 10,
+            "key_width": 2,
+            "source_line": 212
+          },
+          {
+            "key_field": "FD-DIS-TRAN-CAT-CD",
+            "source_field": "TRANCAT-CD",
+            "literal": null,
+            "is_fallback": false,
+            "key_offset": 12,
+            "key_width": 4,
+            "source_line": 211
+          }
+        ],
+        "select_line": 47,
+        "read_line": 416
+      },
+      {
+        "program_name": "CBACT04C",
+        "entity_name": "",
+        "record_name": "",
+        "select_name": "TRANSACT-FILE",
+        "assign_to": "TRANSACT",
+        "organization": "SEQUENTIAL",
+        "access_mode": "SEQUENTIAL",
+        "effective_key": null,
+        "declared_record_key": null,
+        "alternate_record_keys": [],
+        "is_keyed_lookup": false,
+        "written_entity_name": "Tran",
+        "write_mode": "append",
+        "write_lines": [
+          500
+        ],
+        "key_parts": [],
+        "select_line": 53,
+        "read_line": null
+      }
+    ],
+    "batch_jobs": [
+      {
+        "program_name": "CBACT04C",
+        "job_name": "interestCalculatorJob",
+        "domain_entities": [
+          "TranCatBal",
+          "CardXref",
+          "DisGroup",
+          "Account",
+          "Tran"
+        ],
+        "steps": [
+          {
+            "step_name": "openInterestFiles",
+            "source_paragraphs": [
+              "0000-TCATBALF-OPEN",
+              "0100-XREFFILE-OPEN",
+              "0200-DISCGRP-OPEN",
+              "0300-ACCTFILE-OPEN",
+              "0400-TRANFILE-OPEN"
+            ],
+            "role": "tasklet",
+            "description": "Opens the category-balance, cross-reference, disclosure-group, account (I-O) and transaction (OUTPUT) resources, abending on any status other than '00'.",
+            "input_type": "TranCatBal",
+            "output_type": "TranCatBal",
+            "guard_condition": null,
+            "control_break": null,
+            "job_parameters": [],
+            "reads_own_writes": false,
+            "optional_lookups": []
+          },
+          {
+            "step_name": "computeCategoryFees",
+            "source_paragraphs": [
+              "1400-COMPUTE-FEES"
+            ],
+            "role": "processor",
+            "description": "No-op hook reproducing the unimplemented fee-calculation stub, passing the rated category balance through unchanged.",
+            "input_type": "RatedCategoryBalance",
+            "output_type": "RatedCategoryBalance",
+            "guard_condition": "IF DIS-INT-RATE NOT = 0",
+            "control_break": null,
+            "job_parameters": [],
+            "reads_own_writes": false,
+            "optional_lookups": []
+          },
+          {
+            "step_name": "computeMonthlyInterest",
+            "source_paragraphs": [
+              "1000-TCATBALF-GET-NEXT",
+              "1100-GET-ACCT-DATA",
+              "1110-GET-XREF-DATA",
+              "1200-GET-INTEREST-RATE",
+              "1200-A-GET-DEFAULT-INT-RATE",
+              "1300-COMPUTE-INTEREST"
+            ],
+            "role": "processor",
+            "description": "Reads each category balance in key order together with its keyed account, cross-reference and disclosure-group (with 'DEFAULT' group fallback on status '23') lookups and computes (TRAN-CAT-BAL * DIS-INT-RATE) / 1200 truncated to scale 2.",
+            "input_type": "RatedCategoryBalance",
+            "output_type": "AccruedCategoryInterest",
+            "guard_condition": "IF DIS-INT-RATE NOT = 0",
+            "control_break": null,
+            "job_parameters": [],
+            "reads_own_writes": false,
+            "optional_lookups": []
+          },
+          {
+            "step_name": "writeInterestTransaction",
+            "source_paragraphs": [
+              "1300-B-WRITE-TX",
+              "Z-GET-DB2-FORMAT-TIMESTAMP"
+            ],
+            "role": "processor",
+            "description": "Builds the interest transaction record — TRAN-ID from PARM-DATE plus the incremented six-digit suffix, type '01', category 5, source 'System', amount from the accrued monthly interest, card number from the cross-reference, blank merchant fields and identical origination/processing timestamps — and writes it.",
+            "input_type": "AccruedCategoryInterest",
+            "output_type": "Tran",
+            "guard_condition": "IF DIS-INT-RATE NOT = 0",
+            "control_break": null,
+            "job_parameters": [],
+            "reads_own_writes": false,
+            "optional_lookups": []
+          },
+          {
+            "step_name": "postAccountInterest",
+            "source_paragraphs": [
+              "1050-UPDATE-ACCOUNT"
+            ],
+            "role": "processor",
+            "description": "On an account control break, adds the account's accumulated interest to ACCT-CURR-BAL, zeroes ACCT-CURR-CYC-CREDIT and ACCT-CURR-CYC-DEBIT, and rewrites the account record.",
+            "input_type": "AccountInterestTotal",
+            "output_type": "Account",
+            "guard_condition": "IF TRANCAT-ACCT-ID NOT= WS-LAST-ACCT-NUM AND WS-FIRST-TIME NOT = 'Y'",
+            "control_break": {
+              "break_key_field": "TRANCAT-ACCT-ID",
+              "accumulator_field": "WS-TOTAL-INT",
+              "accumulated_from_field": "WS-MONTHLY-INT",
+              "landing_field": "TRAN-AMT",
+              "performed_paragraph": "1050-UPDATE-ACCOUNT",
+              "test_line": 194,
+              "add_line": 467
+            },
+            "job_parameters": [],
+            "reads_own_writes": false,
+            "optional_lookups": []
+          },
+          {
+            "step_name": "closeInterestFiles",
+            "source_paragraphs": [
+              "9000-TCATBALF-CLOSE",
+              "9100-XREFFILE-CLOSE",
+              "9200-DISCGRP-CLOSE",
+              "9300-ACCTFILE-CLOSE",
+              "9400-TRANFILE-CLOSE"
+            ],
+            "role": "tasklet",
+            "description": "Closes all five resources, abending on any close status other than '00'.",
+            "input_type": "Account",
+            "output_type": "Account",
+            "guard_condition": null,
+            "control_break": null,
+            "job_parameters": [],
+            "reads_own_writes": false,
+            "optional_lookups": []
+          }
+        ],
+        "job_parameters": []
+      }
+    ],
+    "rest_endpoints": [
+      {
+        "method": "POST",
+        "path": "/api/v1/batch/interest-calculator/runs",
+        "domain_entity": "TranCatBal",
+        "description": "Launches the interest calculator batch job for a supplied run date and returns the created run identifier."
+      },
+      {
+        "method": "GET",
+        "path": "/api/v1/batch/interest-calculator/runs/{runId}",
+        "domain_entity": "TranCatBal",
+        "description": "Returns the execution status, timings and step-level counts for one interest calculator batch run."
+      },
+      {
+        "method": "GET",
+        "path": "/api/v1/accounts/{acctId}",
+        "domain_entity": "Account",
+        "description": "Point lookup of a single account master record, including its current balance and cycle totals after interest posting."
+      },
+      {
+        "method": "GET",
+        "path": "/api/v1/accounts/{acctId}/category-balances",
+        "domain_entity": "TranCatBal",
+        "description": "Point lookup of the transaction-category balances currently held for one account."
+      },
+      {
+        "method": "GET",
+        "path": "/api/v1/accounts/{acctId}/card-xref",
+        "domain_entity": "CardXref",
+        "description": "Point lookup of the card cross-reference record that supplies an account's card number."
+      },
+      {
+        "method": "GET",
+        "path": "/api/v1/disclosure-groups/{groupId}/{tranTypeCd}/{tranCatCd}",
+        "domain_entity": "DisGroup",
+        "description": "Point lookup of the disclosure-group interest rate for a group, transaction type and category combination."
+      },
+      {
+        "method": "GET",
+        "path": "/api/v1/transactions/{tranId}",
+        "domain_entity": "Tran",
+        "description": "Point lookup of a single generated transaction record by its transaction identifier."
+      }
+    ],
+    "composite_types": [
+      {
+        "name": "RatedCategoryBalance",
+        "components": [
+          {
+            "field_name": "categoryBalance",
+            "entity_name": "TranCatBal"
+          },
+          {
+            "field_name": "account",
+            "entity_name": "Account"
+          },
+          {
+            "field_name": "cardXref",
+            "entity_name": "CardXref"
+          },
+          {
+            "field_name": "disclosureGroup",
+            "entity_name": "DisGroup"
+          }
+        ],
+        "computed_fields": []
+      },
+      {
+        "name": "AccruedCategoryInterest",
+        "components": [
+          {
+            "field_name": "categoryBalance",
+            "entity_name": "TranCatBal"
+          },
+          {
+            "field_name": "account",
+            "entity_name": "Account"
+          },
+          {
+            "field_name": "cardXref",
+            "entity_name": "CardXref"
+          },
+          {
+            "field_name": "disclosureGroup",
+            "entity_name": "DisGroup"
+          }
+        ],
+        "computed_fields": [
+          {
+            "field_name": "monthlyInterest",
+            "cobol_field_name": "WS-MONTHLY-INT"
+          }
+        ]
+      },
+      {
+        "name": "AccountInterestTotal",
+        "components": [
+          {
+            "field_name": "account",
+            "entity_name": "Account"
+          }
+        ],
+        "computed_fields": [
+          {
+            "field_name": "totalInterest",
+            "cobol_field_name": "WS-TOTAL-INT"
+          }
+        ]
+      }
+    ],
+    "computed_values": [
+      {
+        "program_name": "CBACT04C",
+        "cobol_field_name": "WS-MONTHLY-INT",
+        "java_type": "BigDecimal",
+        "precision": 11,
+        "scale": 2,
+        "signed": true,
+        "computed_in_paragraphs": [
+          "1300-COMPUTE-INTEREST"
+        ],
+        "escapes_to": [
+          "1300-B-WRITE-TX"
+        ],
+        "lands_in_field": "TRAN-AMT"
+      },
+      {
+        "program_name": "CBACT04C",
+        "cobol_field_name": "WS-TOTAL-INT",
+        "java_type": "BigDecimal",
+        "precision": 11,
+        "scale": 2,
+        "signed": true,
+        "computed_in_paragraphs": [
+          "1300-COMPUTE-INTEREST"
+        ],
+        "escapes_to": [
+          "1050-UPDATE-ACCOUNT"
+        ],
+        "lands_in_field": null
+      },
+      {
+        "program_name": "CBACT04C",
+        "cobol_field_name": "WS-TRANID-SUFFIX",
+        "java_type": "BigDecimal",
+        "precision": 6,
+        "scale": 0,
+        "signed": false,
+        "computed_in_paragraphs": [
+          "1300-B-WRITE-TX"
+        ],
+        "escapes_to": [],
+        "lands_in_field": null
+      }
+    ]
+  },
+  "cost": {
+    "model_calls": 3,
+    "input_tokens": 14,
+    "output_tokens": 33567,
+    "cache_creation_input_tokens": 85713,
+    "cache_read_input_tokens": 4418,
+    "notional_cost_usd": 1.203481,
+    "calls_without_reported_cost": 0
+  }
+}

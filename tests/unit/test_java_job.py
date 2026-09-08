@@ -363,14 +363,22 @@ def _step56_job():
 
 
 def _readers(job, design):
-    """`{step name: the reader parameter its bean declares}` for every rendered step."""
+    """`{step name: the reader parameter its bean declares}` for every rendered step.
+
+    The parameter list runs to the `)` that precedes the method body, **not** to the first `)` in
+    it: since ADR-0078 a file reader is injected as `@Qualifier("...") ItemReader<T> reader`, and a
+    pattern stopping at the first `)` cut the parameter in half and reported the qualifier as the
+    whole of it. The `@Qualifier` is stripped afterwards so this returns what it always returned --
+    which bean a step reads from -- rather than making every caller restate the annotation.
+    """
     source = render_job_configuration(
         job, design, "CBACT04C",
         package="j", domain_package="dom", processor_package="p", reader_package="r",
     )
     found = {}
-    for match in re.finditer(r"Step (\w+)Step\(([^)]*)\)", source):
-        params = [p.strip() for p in " ".join(match.group(2).split()).split(",")]
+    for match in re.finditer(r"Step (\w+)Step\((.*?)\)\s*\{", source, re.DOTALL):
+        flat = " ".join(match.group(2).split())
+        params = [re.sub(r'@Qualifier\("\w+"\)\s*', "", p.strip()) for p in flat.split(",")]
         # The two infrastructure parameters come first and are the same on every bean.
         found[match.group(1)] = params[2]
     return found
@@ -571,3 +579,69 @@ def test_skipping_the_join_would_leave_a_store_nothing_fills():
         "cobol.file.acctfile",
         "cobol.file.transact",
     }
+
+
+# --- ADR-0078: a passthrough head collides with its own store -------------------------------------
+#
+# The sixth thing behind "the last thing in the way", and the first one a live *run* caught rather
+# than pre-flight. Run `step60-cbact04c-20260908-080040` compiled, reported every renderable step
+# wired, and could not start: `computeCategoryFees` is a passthrough at the head of the chain, so
+# the file reader it reads from and the store it writes to were both `ItemReader<RatedCategoryBalance>`.
+
+STEP60_DESIGN = (
+    Path(__file__).parent.parent / "fixtures" / "live_designs" / "cbact04c-design-step60.json"
+)
+
+
+def _step60_job():
+    """The second live design written under prompt `v1_6_0`, pinned unaltered.
+
+    Kept because it is the only design in this repository whose head step is a *passthrough*, which
+    is the one shape that produces this collision. The `step59` design orders a type-changing step
+    first and never reaches it.
+    """
+    document = DesignDocument.model_validate_json(STEP60_DESIGN.read_text(encoding="utf-8"))
+    design = document.unified_design
+    return design, design.batch_jobs[0]
+
+
+def test_a_passthrough_head_does_not_share_a_reader_type_with_its_own_store():
+    """The precondition, asserted first: this design really does put both beans in scope.
+
+    Without this the test below would pass against any design at all, including one where nothing
+    could ever have collided -- which is how a check that cannot fail gets written.
+    """
+    design, job = _step60_job()
+    renderable, _skipped, staged = plan_steps(job, design, "CBACT04C")
+
+    head = renderable[0]
+    assert head.input_type == head.output_type, "the head of this design must be a passthrough"
+    assert head.step_name in {step.step_name for step in staged}, (
+        "the head must also fill a store, or there is no second ItemReader to collide with"
+    )
+    assert reads_a_file(head, design, "CBACT04C", job), "the head must also read a file"
+
+
+def test_an_injected_reader_or_writer_names_the_bean_it_wants():
+    """Every step bean's reader and writer resolve to exactly one candidate.
+
+    Asserted as a property over the whole configuration rather than on the one step that failed: a
+    staging store `implements ItemWriter<T>, ItemReader<T>`, so any step whose file reader or writer
+    carries a staged type has the same ambiguity available to it. A parameter is unambiguous when it
+    either names a concrete staging class or carries a `@Qualifier`.
+    """
+    design, job = _step60_job()
+    source = render_job_configuration(
+        job, design, "CBACT04C",
+        package="j", domain_package="dom", processor_package="p", reader_package="rd",
+    )
+
+    flat = " ".join(source.split())
+    interfaces = re.findall(r"(@Qualifier\(\"\w+\"\) )?Item(?:Reader|Writer)<[\w.]+> \w+", flat)
+    assert interfaces, "no reader or writer parameters were rendered at all"
+    unqualified = [match for match in interfaces if not match]
+    assert unqualified == [], (
+        f"{len(unqualified)} reader/writer parameter(s) resolve by type alone, and a staging store "
+        "satisfies both interfaces"
+    )
+    assert "import org.springframework.beans.factory.annotation.Qualifier;" in source
