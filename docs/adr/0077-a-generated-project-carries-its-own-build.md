@@ -2,7 +2,9 @@
 
 ## Status
 
-**Accepted** (2026-09-07). Extends
+**Superseded** (2026-09-08) by [ADR-0079](0079-ci-belongs-to-the-output-repository-not-the-generated-project.md), which keeps this record's goal and moves the workflow out of the template. The first delivery after this shipped could not be pushed at all: GitHub refuses a PAT push that creates a `.github/workflows/*` file without `workflow` scope. The mechanism was also unnecessary -- for `pull_request`, the workflow is resolved from the base branch, so a delivered branch never needed to carry one.
+
+Originally accepted (2026-09-07). Extends
 [ADR-0055](0055-control-plane-obtains-this-cli-as-a-pinned-wheel.md), which moved the baseline
 template under the package, and
 [ADR-0058](0058-the-wheel-carries-what-the-repository-tracks.md), which made the wheel carry what
