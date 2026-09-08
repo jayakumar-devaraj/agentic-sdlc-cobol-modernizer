@@ -189,3 +189,46 @@ def test_the_arithmetic_helper_exists_where_generated_code_will_import_it() -> N
     source = helper.read_text(encoding="utf-8")
     assert "RoundingMode.DOWN" in source, "truncation must be toward zero, not FLOOR"
     assert "RoundingMode.HALF_UP" in source, "ROUNDED is nearest-away-from-zero"
+
+
+def test_the_generated_project_carries_its_own_ci_workflow(pom_properties: dict[str, str]) -> None:
+    """The delivered artifact is answerable in the repository it lands in, not only upstream.
+
+    Everything this pipeline verifies happens inside the specialist container, which then discards
+    the workspace. Four projects had been delivered to an output repository that had never run a
+    workflow -- so the only evidence any of them built was a log line on a machine that no longer
+    had the code. `verify` rather than `test`, because `BaselineStackTest` is the check that the
+    Spring context can start at all.
+
+    The JDK is asserted against the pom rather than as a literal, for the reason the sibling check
+    on this repository's own CI gives: a runner on an older release proves nothing about the one
+    the pom pins, and a hardcoded expectation drifts silently when the pin moves.
+    """
+    workflow = (TEMPLATE_ROOT / ".github" / "workflows" / "build.yml").read_text(encoding="utf-8")
+
+    assert f"java-version: '{pom_properties['java.version']}'" in workflow
+    assert "./mvnw -B verify" in workflow
+    assert "run: mvn " not in workflow, "the wrapper pins Maven; a bare mvn is whatever the runner has"
+
+
+def test_the_generated_projects_workflow_cannot_pass_by_running_no_tests() -> None:
+    """`-Dsurefire.failIfNoSpecifiedTests=false` must not reach the delivered project's own build.
+
+    The pipeline passes that flag when it runs one narrowed test, and it makes a build that matched
+    *no test* exit 0 exactly like one that passed -- ADR-0075 records it as the reason a job-run
+    verdict is conditioned on an output file rather than an exit code. An unnarrowed `verify` in the
+    delivered repository has no such excuse, and inheriting the flag would make this workflow green
+    on a project whose tests had all been deleted.
+    """
+    workflow = (TEMPLATE_ROOT / ".github" / "workflows" / "build.yml").read_text(encoding="utf-8")
+    # The commands, not the whole file: the header explains *why* the flag is absent and names it
+    # to do so. Asserting over the prose would make this check fail on its own rationale, and
+    # splitting the file on a heading to dodge that is the kind of cleverness that breaks when
+    # somebody reorders two blocks.
+    commands = [
+        line.split("run:", 1)[1]
+        for line in workflow.splitlines()
+        if line.strip().startswith("run:")
+    ]
+    assert commands, "the workflow runs nothing"
+    assert not any("failIfNoSpecifiedTests" in command for command in commands)
