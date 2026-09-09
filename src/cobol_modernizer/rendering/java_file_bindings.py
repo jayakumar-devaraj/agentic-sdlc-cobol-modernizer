@@ -22,18 +22,25 @@ exists so the project starts and so every file the job touches is visible in one
 convention, never a claim about where a tenant's data is; a wrong one surfaces as a missing file at
 read time with the path in the message.
 
-**`@Lazy`, and it is load-bearing rather than a performance choice.** A rendered reader opens its
-files *in its constructor*, and `BatchApplication` component-scans this package -- so an eagerly
-instantiated binding reads from disk while the Spring context is still starting, and every
-`@SpringBootTest` in the generated project dies looking for a file that has nothing to do with it.
-That is not hypothetical: the baseline template ships `BaselineStackTest`, and the first ungated
-version of this renderer broke it in CI. The hand-written stopgap avoided the same collision with a
-`@Profile`, and said so in its own docstring.
+**`@Lazy`, and it is no longer what keeps a generated project startable.** It was: a rendered reader
+used to open its files *in its constructor*, and `BatchApplication` component-scans this package, so
+an eagerly instantiated binding read from disk while the Spring context was still starting and every
+`@SpringBootTest` in the generated project died looking for a file that had nothing to do with it.
+The baseline template ships `BaselineStackTest`, and the first ungated version of this renderer broke
+it in CI. The hand-written stopgap avoided the same collision with a `@Profile`.
+
+**That defence was defeated, and the reason is why the fix is elsewhere.** `@Lazy` defers *when* a
+bean is built; Spring Boot's `jobOperator` resolves every `Job` eagerly, which forces the steps,
+which forces the readers -- so a full Boot context built them anyway and failed on
+`NoSuchFileException` (ADR-0080's Consequences measured it; ADR-0081 fixed it). The readers and
+writers now implement `ItemStream` and touch the disk in `open`, which a chunk step calls at step
+start. So a missing file is a job-start failure rather than a context-startup one *by the class's own
+lifecycle*, not by how this configuration is annotated.
 
 A profile would work and was rejected: a job that runs only under a non-default profile is not the
-program (ADR-0066). Deferring construction achieves the same isolation without that cost, and moves
-a missing file from a context-startup failure to a job-start failure -- which is both later and more
-honest, because it fails when something actually wanted the data.
+program (ADR-0066). `@Lazy` is kept because deferring construction is still right for beans that
+resolve `@Value` paths, and removing it is a change with its own risk that this record does not need
+to take.
 """
 
 from __future__ import annotations

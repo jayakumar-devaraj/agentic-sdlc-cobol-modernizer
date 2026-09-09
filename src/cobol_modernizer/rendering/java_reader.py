@@ -415,18 +415,25 @@ def render_item_reader(
     )
     held = [name for name in order if name not in shared]
 
+    path_parameters = reader_path_parameters(step, design, program_name)
     parameters = ", ".join(
         ([f"{working_set} state"] if shared else [])
-        + [f"Path {_camel(name)}" for name in reader_path_parameters(step, design, program_name)]
+        + [f"Path {_camel(name)}" for name in path_parameters]
     )
+    # **The constructor takes the paths; `open` reads them** (ADR-0081). These were one list, and
+    # every file was opened while the bean was being created -- so Spring Boot's `jobOperator`,
+    # which resolves every `Job` eagerly, forced the steps, forced this reader, and the context
+    # died on a file no test had asked for. `@Lazy` on the bindings could not help: it defers
+    # *when* the bean is built, and the job graph is built during startup regardless.
+    assignments = ([f"{_INDENT * 2}this.state = state;"] if shared else []) + [
+        f"{_INDENT * 2}this.{_camel(name)} = {_camel(name)};" for name in path_parameters
+    ]
     loads = [
         (
-            f"{_INDENT * 2}this.drivingRecords = CobolRecord.fixedRecords("
+            f"{_INDENT * 3}this.drivingRecords = CobolRecord.fixedRecords("
             f"{_camel(paths[driving].assign_to)}, {entities[driving].record_length});"
         )
     ]
-    if shared:
-        loads.insert(0, f"{_INDENT * 2}this.state = state;")
     for name in held:
         path = paths[name]
         key_offset = path.key_parts[0].key_offset
@@ -434,11 +441,11 @@ def render_item_reader(
             part.key_width or 0 for part in path.key_parts if not part.is_fallback
         )
         loads.append(
-            f"{_INDENT * 2}for (String row : CobolRecord.fixedRecords("
+            f"{_INDENT * 3}for (String row : CobolRecord.fixedRecords("
             f"{_camel(path.assign_to)}, {entities[name].record_length})) {{\n"
-            f"{_INDENT * 3}this.{_camel(name)}Records.put("
+            f"{_INDENT * 4}this.{_camel(name)}Records.put("
             f"CobolRecord.text(row, {key_offset}, {key_width}), row);\n"
-            f"{_INDENT * 2}}}"
+            f"{_INDENT * 3}}}"
         )
 
     body: list[str] = [
@@ -521,6 +528,7 @@ def render_item_reader(
 
     maps = "\n".join(
         ([f"{_INDENT}private final {working_set} state;"] if shared else [])
+        + [f"{_INDENT}private final Path {_camel(name)};" for name in path_parameters]
         + [
             f"{_INDENT}private final Map<String, String> {_camel(name)}Records = new HashMap<>();"
             for name in held
@@ -540,7 +548,10 @@ import java.nio.file.Path;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import org.springframework.batch.infrastructure.item.ExecutionContext;
 import org.springframework.batch.infrastructure.item.ItemReader;
+import org.springframework.batch.infrastructure.item.ItemStream;
+import org.springframework.batch.infrastructure.item.ItemStreamException;
 
 /**
  * {class_name} -- the reader for batch step "{step.step_name}".
@@ -551,15 +562,31 @@ import org.springframework.batch.infrastructure.item.ItemReader;
  * <p>Nothing here was inferred. A fact the design did not carry would have been a refusal
  * (UnrenderableReaderError) rather than a guess, because a guessed join produces plausible rows and
  * a silently wrong result.
+ *
+ * <p><b>The files are opened when the step runs, not when this bean is built</b> (ADR-0081). A
+ * chunk step registers an {{@code ItemStream}} reader automatically, so {{@code open}} runs at step
+ * start and a missing file fails the step that wanted it rather than the application context.
  */
-public class {class_name} implements ItemReader<{domain_package}.{step.input_type}> {{
+public class {class_name}
+{_INDENT * 2}implements ItemReader<{domain_package}.{step.input_type}>, ItemStream {{
 
-{_INDENT}private final List<String> drivingRecords;
 {maps}
+{_INDENT}private List<String> drivingRecords;
 {_INDENT}private int next;
 
-{_INDENT}public {class_name}({parameters}) throws IOException {{
+{_INDENT}public {class_name}({parameters}) {{
+{chr(10).join(assignments)}
+{_INDENT}}}
+
+{_INDENT}@Override
+{_INDENT}public void open(ExecutionContext executionContext) throws ItemStreamException {{
+{_INDENT * 2}next = 0;
+{_INDENT * 2}try {{
 {chr(10).join(loads)}
+{_INDENT * 2}}} catch (IOException e) {{
+{_INDENT * 3}throw new ItemStreamException(
+{_INDENT * 4}"{step.step_name} could not open its input files", e);
+{_INDENT * 2}}}
 {_INDENT}}}
 
 {_INDENT}@Override

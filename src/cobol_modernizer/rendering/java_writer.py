@@ -241,13 +241,14 @@ def render_item_writer(
             f"{_INDENT}private final Path output;\n"
             f"{_INDENT}private final Map<String, String> records = new LinkedHashMap<>();"
         )
-        constructor_body = (
-            f"{_INDENT * 2}this.output = {parameter};\n"
-            f"{_INDENT * 2}for (String existing : CobolRecord.fixedRecords({parameter}, "
+        constructor_body = f"{_INDENT * 2}this.output = {parameter};"
+        open_body = (
+            f"{_INDENT * 3}records.clear();\n"
+            f"{_INDENT * 3}for (String existing : CobolRecord.fixedRecords(output, "
             f"{entity.record_length})) {{\n"
-            f"{_INDENT * 3}records.put(CobolRecord.text(existing, {key_offset}, {key_width}), "
+            f"{_INDENT * 4}records.put(CobolRecord.text(existing, {key_offset}, {key_width}), "
             "existing);\n"
-            f"{_INDENT * 2}}}"
+            f"{_INDENT * 3}}}"
         )
         write_body = (
             f"{_INDENT * 2}for ({qualified} item : chunk.getItems()) {{\n"
@@ -274,10 +275,14 @@ def render_item_writer(
         )
     else:
         state = f"{_INDENT}private final Path output;"
-        constructor_body = (
-            f"{_INDENT * 2}this.output = {parameter};\n"
-            f"{_INDENT * 2}Files.createDirectories({parameter}.toAbsolutePath().getParent());\n"
-            f"{_INDENT * 2}Files.deleteIfExists({parameter});"
+        constructor_body = f"{_INDENT * 2}this.output = {parameter};"
+        # **Truncating the output belongs to the step, not to the context** (ADR-0081). This ran in
+        # the constructor, so merely refreshing a Spring context -- which Boot does while resolving
+        # the job graph, and every `@SpringBootTest` in the generated project does -- deleted the
+        # file this job exists to produce, before anything had decided to run.
+        open_body = (
+            f"{_INDENT * 3}Files.createDirectories(output.toAbsolutePath().getParent());\n"
+            f"{_INDENT * 3}Files.deleteIfExists(output);"
         )
         write_body = (
             f"{_INDENT * 2}StringBuilder batch = new StringBuilder();\n"
@@ -302,6 +307,9 @@ import java.nio.file.StandardOpenOption;
 import java.util.LinkedHashMap;
 import java.util.Map;
 import org.springframework.batch.infrastructure.item.Chunk;
+import org.springframework.batch.infrastructure.item.ExecutionContext;
+import org.springframework.batch.infrastructure.item.ItemStream;
+import org.springframework.batch.infrastructure.item.ItemStreamException;
 import org.springframework.batch.infrastructure.item.ItemWriter;
 
 /**
@@ -312,13 +320,26 @@ import org.springframework.batch.infrastructure.item.ItemWriter;
  * {entity.name} at {_lines(path.write_lines)}.
  *
  * <p>{mode}.
+ *
+ * <p><b>The file is touched when the step runs, not when this bean is built</b> (ADR-0081). A chunk
+ * step registers an {{@code ItemStream}} writer automatically, so {{@code open}} runs at step start.
  */
-public class {class_name} implements ItemWriter<{qualified}> {{
+public class {class_name} implements ItemWriter<{qualified}>, ItemStream {{
 
 {state}
 
-{_INDENT}public {class_name}(Path {parameter}) throws IOException {{
+{_INDENT}public {class_name}(Path {parameter}) {{
 {constructor_body}
+{_INDENT}}}
+
+{_INDENT}@Override
+{_INDENT}public void open(ExecutionContext executionContext) throws ItemStreamException {{
+{_INDENT * 2}try {{
+{open_body}
+{_INDENT * 2}}} catch (IOException e) {{
+{_INDENT * 3}throw new ItemStreamException(
+{_INDENT * 4}"{step.step_name} could not open " + output, e);
+{_INDENT * 2}}}
 {_INDENT}}}
 
 {_INDENT}@Override
@@ -364,6 +385,7 @@ def _render_composite_writer(
     fields: list[str] = [f"{_INDENT}private final {working_set} state;"]
     parameters: list[str] = [f"{working_set} state"]
     assignments: list[str] = [f"{_INDENT * 2}this.state = state;"]
+    opens: list[str] = []
     puts: list[str] = []
     appends: list[str] = []
     flushes: list[str] = []
@@ -404,10 +426,12 @@ def _render_composite_writer(
             buffer = f"{_camel(entity.name)}Batch"
             fields.append(f"{_INDENT}private final Path {parameter};")
             parameters.append(f"Path {parameter}")
-            assignments.append(
-                f"{_INDENT * 2}this.{parameter} = {parameter};\n"
-                f"{_INDENT * 2}Files.createDirectories({parameter}.toAbsolutePath().getParent());\n"
-                f"{_INDENT * 2}Files.deleteIfExists({parameter});"
+            assignments.append(f"{_INDENT * 2}this.{parameter} = {parameter};")
+            # Truncation moves to `open` for the reason ADR-0081 gives: doing it here deleted the
+            # step's own output every time a Spring context refreshed.
+            opens.append(
+                f"{_INDENT * 3}Files.createDirectories({parameter}.toAbsolutePath().getParent());\n"
+                f"{_INDENT * 3}Files.deleteIfExists({parameter});"
             )
             appends.append(
                 f"{_INDENT * 2}StringBuilder {buffer} = new StringBuilder();"
@@ -433,6 +457,34 @@ def _render_composite_writer(
         ]
     )
 
+    # **Only a writer with a file to truncate is an `ItemStream`.** Every component of this
+    # composite can be read-modify-written, in which case the working set holds all of them and
+    # nothing here touches disk before `write`. Rendering `open` anyway would emit an empty `try`
+    # with a `catch (IOException)`, which javac rejects as an exception never thrown -- so the
+    # condition is the same one that decides whether `opens` has anything in it.
+    stream_import = (
+        "import org.springframework.batch.infrastructure.item.ExecutionContext;\n"
+        "import org.springframework.batch.infrastructure.item.ItemStream;\n"
+        "import org.springframework.batch.infrastructure.item.ItemStreamException;\n"
+        if opens
+        else ""
+    )
+    stream_interface = ", ItemStream" if opens else ""
+    open_method = (
+        f"""
+{_INDENT}@Override
+{_INDENT}public void open(ExecutionContext executionContext) throws ItemStreamException {{
+{_INDENT * 2}try {{
+{chr(10).join(opens)}
+{_INDENT * 2}}} catch (IOException e) {{
+{_INDENT * 3}throw new ItemStreamException("{step.step_name} could not open its output files", e);
+{_INDENT * 2}}}
+{_INDENT}}}
+"""
+        if opens
+        else ""
+    )
+
     return f"""package {package};
 
 import com.modernized.batch.cobol.CobolRecord;
@@ -443,7 +495,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardOpenOption;
 import org.springframework.batch.infrastructure.item.Chunk;
-import org.springframework.batch.infrastructure.item.ItemWriter;
+{stream_import}import org.springframework.batch.infrastructure.item.ItemWriter;
 
 /**
  * {class_name} -- writes every record step "{step.step_name}" produces from one item.
@@ -462,14 +514,14 @@ import org.springframework.batch.infrastructure.item.ItemWriter;
  * <p>An item the processor rejected never reaches this class -- Spring Batch drops a null before
  * the writer -- so a rejected transaction is absent from every one of these files by one mechanism.
  */
-public class {class_name} implements ItemWriter<{qualified}> {{
+public class {class_name} implements ItemWriter<{qualified}>{stream_interface} {{
 
 {chr(10).join(fields)}
 
-{_INDENT}public {class_name}({", ".join(parameters)}) throws IOException {{
+{_INDENT}public {class_name}({", ".join(parameters)}) {{
 {chr(10).join(assignments)}
 {_INDENT}}}
-
+{open_method}
 {_INDENT}@Override
 {_INDENT}public void write(Chunk<? extends {qualified}> chunk) throws IOException {{
 {body}

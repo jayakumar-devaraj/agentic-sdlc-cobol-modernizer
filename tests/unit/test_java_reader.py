@@ -87,7 +87,41 @@ def render(design: UnifiedDesign) -> str:
 
 def test_the_class_name_is_mechanical(design):
     assert reader_class_name(STEP) == "ComputeInterestItemReader"
-    assert "public class ComputeInterestItemReader implements ItemReader<" in render(design)
+    assert "public class ComputeInterestItemReader\n        implements ItemReader<" in render(
+        design
+    )
+
+
+def test_the_constructor_takes_the_paths_and_opens_nothing(design):
+    """ADR-0081: building this bean must not touch the disk.
+
+    Stated as a biconditional over the constructor body rather than "somewhere there is an
+    `open`", because the broken version had every one of these reads *and* would satisfy a
+    weaker assertion that merely looked for `fixedRecords` in the file.
+    """
+    java = render(design)
+    constructor = java.split("public ComputeInterestItemReader(")[1].split("\n    }")[0]
+    assert "fixedRecords" not in constructor
+    assert "throws IOException" not in constructor
+    assert constructor.count("this.") == constructor.count(" = ")
+
+
+def test_the_files_are_opened_when_the_step_starts(design):
+    """The reads live in `ItemStream.open`, which a chunk step calls at step start.
+
+    `implements ... ItemStream` and the reads being *inside* `open` are one fact in two halves:
+    a class that declared the interface and kept its reads in the constructor would defer
+    nothing, and Spring Batch would register a stream that had already done its work.
+    """
+    java = render(design)
+    assert "ItemStream {" in java
+    assert "import org.springframework.batch.infrastructure.item.ItemStream;" in java
+    opened = java.split("public void open(ExecutionContext executionContext)")[1].split(
+        "\n    }"
+    )[0]
+    assert "CobolRecord.fixedRecords(tcatbalf, 50)" in opened
+    assert "throw new ItemStreamException(" in opened
+    assert "next = 0;" in opened
 
 
 def test_the_driving_file_is_read_at_its_own_record_length(design):

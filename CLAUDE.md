@@ -28,7 +28,10 @@ the opposite of a process reproducible by anyone who clones it.
   one commit at the end — that's exactly the failure mode this rule exists to prevent.
 - Each commit should be small enough to describe honestly in its own message — if the message
   needs "and" three times, it's probably more than one commit.
-- Author: Jayakumar Devaraj <jayakumar.d10@gmail.com>. Never add Co-Authored-By or "Generated
+- Author: Jayakumar Devaraj <18530526+jayakumar-devaraj@users.noreply.github.com> — the address
+  every commit in this repository actually uses, and the only one that works: the account has
+  email-privacy enabled, so a push authored with the plain address is rejected outright with
+  *"push declined due to email privacy restrictions"*. Never add Co-Authored-By or "Generated
   with" trailers/footers of any kind.
 - Fresh `git init` per repo, no monolith history preserved.
 - **Push after every commit.** These repositories are reviewed via GitHub only, so an unpushed
